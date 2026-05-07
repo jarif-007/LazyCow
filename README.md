@@ -1,6 +1,6 @@
 # LazyCow
 
-LazyCow is a Linux workspace automation tool.
+LazyCow is a workspace automation tool.
 
 It launches applications, opens browser tabs, and prepares predefined study/work environments automatically.
 
@@ -9,4 +9,4 @@ It launches applications, opens browser tabs, and prepares predefined study/work
 - Open multiple applications
 - Open browser tabs automatically
 - Workspace automation
-- Linux-based workflow launcher
+- Workflow launcher
