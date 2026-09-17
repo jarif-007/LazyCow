@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="
+        default-src 'self';
+        script-src 'self' 'unsafe-inline';
+        style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+        font-src 'self' https://fonts.gstatic.com;
+        img-src 'self' data:;
+        connect-src 'self' ws:;
+      "
+    />
+    <title>LazyCow</title>
+    
+    <!-- Preload fonts for faster loading -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" />
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" />
+    
+    <!-- Material Symbols for Icons -->
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    
+    <style>
+      /* Splash screen styles */
+      #splash-screen {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: #F5F2ED;
+        transition: opacity 0.4s ease-out, visibility 0.4s ease-out;
+      }
+      
+      .dark #splash-screen,
+      body.dark #splash-screen {
+        background-color: #1a1410;
+      }
+      
+      #splash-screen.hidden {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      
+      .splash-content {
+        text-align: center;
+      }
+      
+      .splash-logo {
+        font-size: 48px;
+        margin-bottom: 16px;
+        animation: pulse 1.5s ease-in-out infinite;
+      }
+      
+      .splash-title {
+        font-family: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-size: 28px;
+        font-weight: 700;
+        color: #5C3A1E;
+        margin-bottom: 12px;
+      }
+      
+      .dark .splash-title,
+      body.dark .splash-title {
+        color: #D4A574;
+      }
+      
+      .splash-loader {
+        width: 40px;
+        height: 4px;
+        background: #E0D5C7;
+        border-radius: 2px;
+        margin: 0 auto;
+        overflow: hidden;
+      }
+      
+      .dark .splash-loader,
+      body.dark .splash-loader {
+        background: #3D2A1A;
+      }
+      
+      .splash-loader-bar {
+        width: 40%;
+        height: 100%;
+        background: #8B5E3C;
+        border-radius: 2px;
+        animation: loading 1s ease-in-out infinite;
+      }
+      
+      .dark .splash-loader-bar,
+      body.dark .splash-loader-bar {
+        background: #D4A574;
+      }
+      
+      @keyframes pulse {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.1); }
+      }
+      
+      @keyframes loading {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(350%); }
+      }
+    </style>
+  </head>
+  <body class="theme-coffee">
+    <!-- Splash Screen -->
+    <div id="splash-screen">
+      <div class="splash-content">
+        <div class="splash-logo">🐮</div>
+        <div class="splash-title">LazyCow</div>
+        <div class="splash-loader">
+          <div class="splash-loader-bar"></div>
+        </div>
+      </div>
+    </div>
+    
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

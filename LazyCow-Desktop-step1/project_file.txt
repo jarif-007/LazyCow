@@ -1,0 +1,38 @@
+
+FullName
+--------
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\.claude
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\doc
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\project_file.txt
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\README.md
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\.claude\settings.json
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\doc\Group 8 [109, 142, 147, 152].pdf
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\doc\Proposal Presentation.pdf
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\electron
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\public
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\src
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\.eslintrc.cjs
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\index.html
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\package-lock.json
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\package.json
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\postcss.config.js
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\README.md
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\tailwind.config.js
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\tsconfig.json
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\tsconfig.node.json
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\vite.config.ts
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\electron\electron-env.d.ts
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\electron\main.ts
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\electron\preload.ts
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\public\electron-vite.animate.svg
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\public\electron-vite.svg
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\public\vite.svg
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\src\assets
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\src\App.css
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\src\App.tsx
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\src\index.css
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\src\main.tsx
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\src\vite-env.d.ts
+D:\IUT 4th sem\Presentation Finals\Phase 1\Repo_LazyCow\LazyCow\lazycoww\src\assets\react.svg
+
