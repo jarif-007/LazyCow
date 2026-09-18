@@ -17,9 +17,12 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
     JSON.parse(localStorage.getItem('lazycow-shortcuts') || '[]')
   );
 
+  const [failedHotkeys, setFailedHotkeys] = useState<Set<string>>(new Set());
+
   const refreshShortcuts = useCallback(() => {
     const loaded: SavedShortcut[] = JSON.parse(localStorage.getItem('lazycow-shortcuts') || '[]');
     setShortcuts(loaded);
+    setFailedHotkeys(new Set());
     // Keep the main process's global-hotkey registrations in sync with
     // whatever's currently saved (renaming/deleting/saving all land here).
     window.electronAPI?.syncHotkeys(loaded.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions })));
@@ -27,7 +30,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
 
   useEffect(() => { refreshShortcuts(); }, [refreshShortcuts]);
 
-  const [executions, setExecutions] = useState<Record<string, { status: 'idle' | 'running' | 'success' | 'error'; currentStepIndex: number; errors?: string[] }>>({});
+  const [executions, setExecutions] = useState<Record<string, { status: 'idle' | 'running' | 'success' | 'error'; currentStepIndex: number; errors?: string[]; durationMs?: number }>>({});
   const resetTimers = useRef<Record<string, NodeJS.Timeout>>({});
   useEffect(() => () => { Object.values(resetTimers.current).forEach(clearTimeout); }, []);
 
@@ -71,7 +74,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
       setExecutions((p) => ({ ...p, [shortcutId]: { status: 'running', currentStepIndex: stepIndex } }));
     });
 
-    const offComplete = window.electronAPI?.onShortcutComplete(({ shortcutId, results }) => {
+    const offComplete = window.electronAPI?.onShortcutComplete(({ shortcutId, results, durationMs }) => {
       const failed = results.filter((r) => !r.success);
       setExecutions((p) => ({
         ...p,
@@ -79,11 +82,16 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
           status: failed.length ? 'error' : 'success',
           currentStepIndex: results.length,
           errors: failed.map((f) => f.error || 'Unknown error'),
+          durationMs,
         },
       }));
       resetTimers.current[shortcutId] = setTimeout(() => {
         setExecutions((p) => ({ ...p, [shortcutId]: { status: 'idle', currentStepIndex: -1 } }));
       }, 10000);
+    });
+
+    const offFailed = window.electronAPI?.onHotkeyRegisterFailed(({ shortcutId }) => {
+      setFailedHotkeys((p) => new Set(p).add(shortcutId));
     });
 
     // Non-script shortcuts triggered by their global hotkey are already
@@ -94,7 +102,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
 
     // Script-containing shortcuts triggered by hotkey: main hasn't run
     // anything yet, it's waiting on us to confirm.
-    const offHotkeyConfirm = window.electronAPI?.onHotkeyNeedsConfirm((shortcutId) => {
+    const offHotkeyNeedsConfirm = window.electronAPI?.onHotkeyNeedsConfirm((shortcutId) => {
       setShortcuts((current) => {
         const card = current.find((s) => s.id === shortcutId);
         if (card) setConfirmRun(card);
@@ -102,7 +110,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
       });
     });
 
-    return () => { offProgress?.(); offComplete?.(); offHotkey?.(); offHotkeyConfirm?.(); };
+    return () => { offProgress?.(); offComplete?.(); offFailed?.(); offHotkey?.(); offHotkeyNeedsConfirm?.(); };
   }, []);
 
   const [cardShades, setCardShades] = useState<Record<string, 'light' | 'medium' | 'dark'>>({});
@@ -142,6 +150,30 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
       window.electronAPI?.syncHotkeys(updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions })));
     }
     setDeleteId(null);
+  };
+
+  const handleDuplicate = (card: SavedShortcut) => {
+    let copyIndex = 1;
+    let candidateName = `${card.name} (Copy)`;
+    while (shortcuts.some((s) => s.name.toLowerCase() === candidateName.toLowerCase())) {
+      copyIndex++;
+      candidateName = `${card.name} (Copy ${copyIndex})`;
+    }
+    const duplicated: SavedShortcut = {
+      ...card,
+      id: crypto.randomUUID(),
+      name: candidateName,
+      hotkey: '', // Unassigned so it does not conflict immediately
+      createdAt: new Date().toISOString(),
+      actions: card.actions.map((a) => ({
+        ...a,
+        id: crypto.randomUUID(),
+      })),
+    };
+    const updated = [duplicated, ...shortcuts];
+    setShortcuts(updated);
+    localStorage.setItem('lazycow-shortcuts', JSON.stringify(updated));
+    window.electronAPI?.syncHotkeys(updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions })));
   };
 
   const filtered = shortcuts.filter((s) =>
@@ -196,6 +228,8 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
             onRename={handleRename}
             onDelete={setDeleteId}
             onRun={runShortcut}
+            onDuplicate={handleDuplicate}
+            hasHotkeyConflict={failedHotkeys.has(card.id)}
             execution={executions[card.id]}
             customColorMode={customColorMode}
           />

@@ -35,8 +35,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('shortcut-progress', listener)
   },
 
-  onShortcutComplete: (callback: (e: { shortcutId: string; results: { actionId: string; success: boolean; error?: string }[] }) => void) => {
-    const listener = (_event: unknown, data: { shortcutId: string; results: { actionId: string; success: boolean; error?: string }[] }) => callback(data)
+  onShortcutComplete: (callback: (e: { shortcutId: string; results: { actionId: string; success: boolean; error?: string }[]; durationMs?: number }) => void) => {
+    const listener = (_event: unknown, data: { shortcutId: string; results: { actionId: string; success: boolean; error?: string }[]; durationMs?: number }) => callback(data)
     ipcRenderer.on('shortcut-complete', listener)
     return () => ipcRenderer.removeListener('shortcut-complete', listener)
   },

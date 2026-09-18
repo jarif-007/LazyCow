@@ -9,12 +9,14 @@ interface ShortcutCardProps {
   onRename: (id: string) => void;
   onDelete: (id: string) => void;
   onRun: (id: string) => void;
-  execution?: { status: 'idle' | 'running' | 'success' | 'error'; currentStepIndex: number; errors?: string[] };
+  onDuplicate: (s: SavedShortcut) => void;
+  hasHotkeyConflict?: boolean;
+  execution?: { status: 'idle' | 'running' | 'success' | 'error'; currentStepIndex: number; errors?: string[]; durationMs?: number };
   customColorMode: boolean;
 }
 
 export const ShortcutCard: React.FC<ShortcutCardProps> = ({
-  shortcut, shade, onShadeChange, onEditFlow, onRename, onDelete, onRun, execution, customColorMode,
+  shortcut, shade, onShadeChange, onEditFlow, onRename, onDelete, onRun, onDuplicate, hasHotkeyConflict, execution, customColorMode,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const execState = execution || { status: 'idle' as const, currentStepIndex: -1, errors: [] as string[] };
@@ -61,6 +63,9 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
               <button onClick={() => { setMenuOpen(false); onEditFlow(shortcut); }} className="w-full text-left px-4 py-2.5 text-body-sm text-foreground hover:bg-muted/50 flex items-center gap-2">
                 <span className="material-symbols-outlined text-[18px]">edit</span> Edit Flow
               </button>
+              <button onClick={() => { setMenuOpen(false); onDuplicate(shortcut); }} className="w-full text-left px-4 py-2.5 text-body-sm text-foreground hover:bg-muted/50 flex items-center gap-2">
+                <span className="material-symbols-outlined text-[18px]">content_copy</span> Duplicate
+              </button>
               <button onClick={() => { setMenuOpen(false); onRename(shortcut.id); }} className="w-full text-left px-4 py-2.5 text-body-sm text-foreground hover:bg-muted/50 flex items-center gap-2">
                 <span className="material-symbols-outlined text-[18px]">drive_file_rename_outline</span> Rename
               </button>
@@ -86,10 +91,15 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
       </div>
 
       {/* Hotkey */}
-      <div className="flex">
+      <div className="flex items-center gap-2">
         <span className="font-code-sm font-medium bg-background/50 border border-border/50 px-3 py-1.5 rounded-md shadow-sm">
-          {shortcut.hotkey}
+          {shortcut.hotkey || 'No Hotkey'}
         </span>
+        {hasHotkeyConflict && (
+          <span className="inline-flex items-center gap-1 bg-amber-500/15 text-amber-500 border border-amber-500/30 text-[11px] font-medium px-2 py-0.5 rounded-md" title="Hotkey conflict: Failed to register global shortcut">
+            <span className="material-symbols-outlined text-[13px]">warning</span> Conflict
+          </span>
+        )}
       </div>
 
       {/* Execution Log */}
@@ -104,16 +114,30 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
             return <span key={idx} className={`transition-all duration-300 ${cls}`}>{step}</span>;
           })}
           {execState.status === 'success' && (
-            <div className="mt-2 pt-2 border-t border-white/10 flex items-center gap-2 text-green-400 font-semibold">
-              <span className="material-symbols-outlined text-[16px]">check_circle</span>
-              <span className="text-[12px] uppercase tracking-wider">Sequence Complete</span>
+            <div className="mt-2 pt-2 border-t border-white/10 flex items-center justify-between text-green-400 font-semibold">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                <span className="text-[12px] uppercase tracking-wider">Sequence Complete</span>
+              </div>
+              {execState.durationMs !== undefined && (
+                <span className="text-[12px] font-normal opacity-80">
+                  {(execState.durationMs / 1000).toFixed(1)}s
+                </span>
+              )}
             </div>
           )}
           {execState.status === 'error' && (
             <div className="mt-2 pt-2 border-t border-white/10 flex flex-col gap-1 text-red-400 font-semibold">
-              <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-[16px]">error</span>
-                <span className="text-[12px] uppercase tracking-wider">One or more steps failed</span>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[16px]">error</span>
+                  <span className="text-[12px] uppercase tracking-wider">One or more steps failed</span>
+                </div>
+                {execState.durationMs !== undefined && (
+                  <span className="text-[12px] font-normal opacity-80">
+                    {(execState.durationMs / 1000).toFixed(1)}s
+                  </span>
+                )}
               </div>
               {(execState.errors || []).map((err, i) => (
                 <span key={i} className="text-[11px] font-normal opacity-80 normal-case">{err}</span>

@@ -150,6 +150,11 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
           if (isNaN(val) || val < 0 || val > 100 || !Number.isInteger(val)) {
             errors[card.id] = `${card.type === 'set_volume' ? 'Volume' : 'Brightness'} must be an integer between 0 and 100`;
           }
+        } else if (card.type === 'delay') {
+          const ms = Number(card.value);
+          if (isNaN(ms) || ms < 50 || ms > 60000 || !Number.isInteger(ms)) {
+            errors[card.id] = 'Delay must be an integer between 50 and 60000 ms';
+          }
         } else if (card.type === 'run_script') {
           if (!card.value.trim()) errors[card.id] = 'Script command cannot be empty';
         }
@@ -286,7 +291,22 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
                 )}
               </label>
 
-              {card.type === 'set_volume' || card.type === 'set_brightness' ? (
+              {card.type === 'delay' ? (
+                <div className="flex items-center gap-4">
+                  <input
+                    type="range"
+                    min="250"
+                    max="10000"
+                    step="250"
+                    value={card.value}
+                    onChange={(e) => onUpdateValue(card.id, e.target.value)}
+                    className="flex-1 accent-primary"
+                  />
+                  <span className="font-body-sm font-semibold w-16 text-right text-foreground font-code-sm">
+                    {(Number(card.value) / 1000).toFixed(1)}s
+                  </span>
+                </div>
+              ) : card.type === 'set_volume' || card.type === 'set_brightness' ? (
                 <div className="flex items-center gap-4">
                   <input
                     type="range"

@@ -45,7 +45,7 @@ interface Window {
     runShortcut: (shortcut: ShortcutForIPC) => Promise<ActionResult[]>
     syncHotkeys: (shortcuts: ShortcutForIPC[]) => void
     onShortcutProgress: (callback: (e: ShortcutProgressEvent) => void) => () => void
-    onShortcutComplete: (callback: (e: { shortcutId: string; results: ActionResult[] }) => void) => () => void
+    onShortcutComplete: (callback: (e: { shortcutId: string; results: ActionResult[]; durationMs?: number }) => void) => () => void
     onHotkeyTriggered: (callback: (shortcutId: string) => void) => () => void
     onHotkeyNeedsConfirm: (callback: (shortcutId: string) => void) => () => void
     onHotkeyRegisterFailed: (callback: (info: { shortcutId: string; hotkey: string }) => void) => () => void

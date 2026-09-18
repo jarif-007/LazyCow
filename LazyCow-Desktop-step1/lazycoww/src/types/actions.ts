@@ -4,7 +4,7 @@
 
 export interface ActionItem {
   id: string;
-  type: 'launch_app' | 'open_url' | 'open_folder' | 'open_file' | 'set_volume' | 'toggle_dnd' | 'toggle_nightlight' | 'open_vscode' | 'run_script' | 'set_brightness' | 'arrange_windows';
+  type: 'launch_app' | 'open_url' | 'open_folder' | 'open_file' | 'set_volume' | 'toggle_dnd' | 'toggle_nightlight' | 'open_vscode' | 'run_script' | 'set_brightness' | 'arrange_windows' | 'delay';
   title: string;
   icon: string;
   colorClass: string;
@@ -48,6 +48,7 @@ export const actionCatalog: CatalogItem[] = [
   { type: 'toggle_dnd', title: 'Toggle DND', icon: 'do_not_disturb_on', category: 'System Control', colorClass: 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400', defaultValue: 'toggle' },
   { type: 'toggle_nightlight', title: 'Night Light', icon: 'nights_stay', category: 'System Control', colorClass: 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400', defaultValue: 'toggle' },
   { type: 'set_brightness', title: 'Set Brightness', icon: 'brightness_medium', category: 'System Control', colorClass: 'bg-amber-500/10 text-amber-600 dark:text-amber-400', defaultValue: '50' },
+  { type: 'delay', title: 'Wait / Delay', icon: 'schedule', category: 'System Control', colorClass: 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400', defaultValue: '1000' },
 
   // ── Developer Tools ──
   { type: 'run_script', title: 'Run Script', icon: 'code', category: 'Developer Tools', colorClass: 'bg-gray-500/10 text-gray-600 dark:text-gray-400', defaultValue: 'npm run start' },
@@ -69,6 +70,7 @@ export const getFieldLabel = (type: ActionItem['type']): string => {
     case 'open_vscode': return 'Folder Path (opens in VS Code)';
     case 'run_script': return 'Terminal Command';
     case 'set_brightness': return 'Brightness Level';
+    case 'delay': return 'Delay Duration (ms)';
     default: return 'Value';
   }
 };

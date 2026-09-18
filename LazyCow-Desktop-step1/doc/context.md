@@ -131,11 +131,12 @@ LazyCow/
     - 2.4-second polling retry loop for newly launched apps to render before positioning.
     - Automatic `ShowWindow(hwnd, SW_RESTORE)` to un-maximize or un-minimize windows before resizing.
     - Active window fallback skipping LazyCow, with optional target app name input in the UI.
+  - **`delay`**: Pauses sequence execution for a configurable duration (`ms`) via `await new Promise(r => setTimeout(r, ms))` so launched applications or scripts have time to initialize before subsequent steps.
   - **`run_script`**: Spawns commands in `cmd.exe` with process tree kill capability (`taskkill /pid /t /f`).
-- **OS Notifications:** Emits native Windows desktop toast notifications (`new Notification(...)`) upon shortcut success or failure.
+- **OS Notifications:** Emits native Windows desktop toast notifications (`new Notification(...)`) upon shortcut success or failure with elapsed execution duration (e.g. `Completed in 1.4s`).
 - **Path Dialogs (`select-path`):** Invokes `dialog.showOpenDialog` for native application (`.exe`), directory, or file selection.
 - **Path Checking (`check-path-exists`):** Verifies file/directory existence using `fs.existsSync`.
-- **Global Hotkey Registration:** Listens for registered shortcut keys, checks for dangerous actions, emits `hotkey-needs-confirm` or runs shortcut, and notifies on registration failures.
+- **Global Hotkey Registration:** Listens for registered shortcut keys, checks for dangerous actions, emits `hotkey-needs-confirm` or runs shortcut, and notifies on registration failures via `onHotkeyRegisterFailed`.
 
 #### 2. `electron/preload.ts` & `electron/electron-env.d.ts`
 - Securely exposes `window.electronAPI`:
@@ -146,14 +147,14 @@ LazyCow/
   - `updateGeneralSettings(settings: { startAtLogin?: boolean; keepInTray?: boolean; executionNotifications?: boolean })`
   - `checkPathExists(path): Promise<boolean>`
   - `selectPath(type: 'app' | 'file' | 'folder'): Promise<string | null>`
-  - `onShortcutProgress(callback)` / `onShortcutComplete(callback)`
+  - `onShortcutProgress(callback)` / `onShortcutComplete(callback)` (with `durationMs` analytics)
   - `onHotkeyTriggered(callback)` / `onHotkeyNeedsConfirm(callback)` / `onHotkeyRegisterFailed(callback)`
 
 ---
 
 ### B. Action Catalog & Types (`src/types/actions.ts`)
 
-- **11 Supported Action Types (All Active):**
+- **12 Supported Action Types (All Active):**
   1. `launch_app` — Application Path
   2. `open_url` — Website URL
   3. `open_folder` — Folder Path
@@ -163,17 +164,19 @@ LazyCow/
   7. `toggle_dnd` — DND Configuration (Toggle, Enable, Disable)
   8. `toggle_nightlight` — Night Light Mode (Toggle, Enable, Disable)
   9. `set_brightness` — Brightness Level (0–100% Slider)
-  10. `run_script` — Terminal Command
-  11. `open_vscode` — Folder Path (opens in VS Code)
+  10. `delay` — Wait / Delay Duration (100ms–60,000ms, with 0.25s–10.0s interactive step slider)
+  11. `run_script` — Terminal Command
+  12. `open_vscode` — Folder Path (opens in VS Code)
 - **Blocked System Triggers:** 17 protected default Windows shortcuts (`Alt+F4`, `Ctrl+Alt+Del`, `Win+L`, `Win+D`, `Win+R`, `Win+E`, etc.).
 
 ---
 
 ### C. UI & Components
 
-- **`ActionSequence.tsx`:** Drag-and-drop action cards with visual flow preview, direct slider controls for Volume and Brightness, dropdown controls for DND and Night Light, visual window layout configuration, debounced path validation, and native **"Browse"** file pickers.
+- **`ActionSequence.tsx`:** Drag-and-drop action cards with visual flow preview, direct slider controls for Volume, Brightness, and Delay duration, dropdown controls for DND and Night Light, visual window layout configuration, debounced path validation, and native **"Browse"** file pickers.
 - **`Builder.tsx`:** Shortcut builder with real-time name uniqueness checking, hotkey conflict detection, modifier-first validation, and unsaved changes safety modal.
-- **`Library.tsx`:** Shortcut card dashboard with live step progress ring, execution log, search filter, and dropdown management (Edit, Rename, Delete).
+- **`ShortcutCard.tsx`:** Dashboard shortcut card with 3-dot dropdown menu (Edit Flow, Duplicate, Rename, Delete), hotkey conflict warning badge (`onHotkeyRegisterFailed`), elapsed duration analytics (`Sequence Complete • 1.4s`), and live step execution log.
+- **`Library.tsx`:** Shortcut card dashboard with live step progress ring, execution log, search filter, duplicate workflow generator (`(Copy)` naming & hotkey decoupling), and dropdown management.
 - **`Settings.tsx` & Subcomponents:** Manages appearance, theme switching, startup launch, system tray minimization, execution notifications, blocked triggers, and factory reset.
 
 ---

@@ -35,22 +35,28 @@ Construct multi-step automated sequences with precise ordering, validation, and 
   - ☀️ **Display Brightness**: Adjust monitor backlight levels (0–100%) via Windows WMI (`WmiMonitorBrightnessMethods`).
   - 🔕 **Toggle DND (Focus Assist)**: Toggle, enable, or disable Windows Focus Assist toast notifications via the Windows Registry.
   - 🌙 **Night Light**: Toggle, enable, or disable Windows Blue Light Reduction state directly via Windows CloudStore registry stores.
+  - ⏳ **Wait / Delay**: Introduce configurable pauses (100ms–60,000ms with interactive 0.25s–10.0s step slider) to give heavy desktop applications time to initialize before subsequent actions run.
 - **Developer Tools**:
   - 💻 **Run Terminal Script**: Execute arbitrary shell commands in `cmd.exe` with real-time process tree termination (`taskkill /pid /t /f`) on cancellation.
   - 📝 **Open in VS Code**: Open any directory or workspace directly in Visual Studio Code (`code.cmd`).
 
 ### 2. Global Hotkey Engine & Trigger Safety
 - Register system-wide global hotkeys using a keyboard recorder hook or dropdown-based **ComboBuilder**.
+- **Conflict Badging**: Visually flags shortcuts whose global keybindings conflict with existing registered system hotkeys.
 - **Blocked System Triggers**: Built-in protection against overriding critical Windows shortcuts (e.g., `Alt+F4`, `Win+L`, `Ctrl+Alt+Del`, `Win+D`, `Win+Tab`, clipboard shortcuts).
 - **Dangerous Action Protection**: Shortcuts containing arbitrary scripts or executables trigger a confirmation dialog before running when activated via global hotkeys.
 
-### 3. Native Windows Experience & Fluent Design
+### 3. Workflow Management & Analytics
+- 📋 **Duplicate / Clone Flow**: 1-click duplication of any workflow via the card's 3-dot dropdown menu, auto-generating safe `(Copy)` naming and unassigning the hotkey to prevent collisions.
+- ⏱️ **Execution Duration Analytics**: Displays precise elapsed runtime (e.g. `Sequence Complete • 1.4s`) on card logs and Windows native notifications.
+
+### 4. Native Windows Experience & Fluent Design
 - **System Accent Matching**: Automatically queries the Windows Registry (`AccentPalette`) to seamlessly blend LazyCow's UI with your Windows 11/10 system accent color.
 - **Custom Color Themes**: Optional Coffee, Ocean, and Forest palettes with fine-grained light, medium, and dark shade gradients.
 - **ClearType Optimization**: Configured with subpixel antialiasing and GPU-accelerated scrolling containers for crisp typography on Windows displays.
 - **Tray & Startup Support**: Run on Windows startup (`app.setLoginItemSettings`) and minimize/hide to the Windows System Notification Tray.
 - **Native File Pickers**: Integrated "Browse" buttons for executables, folders, and files using Windows native file dialogs.
-- **Toast Notifications**: Native Windows notifications on shortcut completion or failure.
+- **Toast Notifications**: Native Windows notifications on shortcut completion or failure with execution elapsed time.
 
 ---
 

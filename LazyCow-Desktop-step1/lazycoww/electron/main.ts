@@ -661,12 +661,21 @@ async function runAction(action: ShortcutActionData): Promise<void> {
       }
       return
     }
+    case 'delay': {
+      const ms = Number(action.value)
+      if (isNaN(ms) || ms < 50 || ms > 60000) {
+        throw new Error('Delay must be between 50 and 60000 milliseconds')
+      }
+      await new Promise((resolve) => setTimeout(resolve, ms))
+      return
+    }
     default:
       throw new Error(`Unknown action type: ${action.type}`)
   }
 }
 
 async function runShortcutActions(shortcut: ShortcutData): Promise<ActionResult[]> {
+  const startTime = Date.now()
   const results: ActionResult[] = []
   
   if (runningShortcuts.has(shortcut.id)) {
@@ -689,7 +698,8 @@ async function runShortcutActions(shortcut: ShortcutData): Promise<ActionResult[
     runningShortcuts.delete(shortcut.id)
   }
   
-  win?.webContents.send('shortcut-complete', { shortcutId: shortcut.id, results })
+  const durationMs = Date.now() - startTime
+  win?.webContents.send('shortcut-complete', { shortcutId: shortcut.id, results, durationMs })
 
   // Dispatch native Windows notification if enabled
   const failed = results.filter((r) => !r.success)
@@ -699,7 +709,7 @@ async function runShortcutActions(shortcut: ShortcutData): Promise<ActionResult[
       const notif = new Notification({
         title: allSucceeded ? `LazyCow: ${shortcut.name}` : `LazyCow: ${shortcut.name} (Failed)`,
         body: allSucceeded
-          ? `All ${shortcut.actions.length} action(s) completed successfully.`
+          ? `All ${shortcut.actions.length} action(s) completed in ${(durationMs / 1000).toFixed(1)}s.`
           : `Failed on ${failed.length} action(s): ${failed.map((f) => f.error).filter(Boolean).join('; ')}`,
         icon: getAppIconPath(),
         silent: false,
