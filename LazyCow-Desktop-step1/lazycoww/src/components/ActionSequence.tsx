@@ -329,6 +329,16 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
                         <option value="quad">Quad Grid (4 Specific Apps)</option>
                       </select>
 
+                      {['snap_left', 'snap_right', 'maximize'].includes(arrangeData.layout) && (
+                        <input
+                          type="text"
+                          placeholder="Target App or Window Title (leave blank for active window)"
+                          value={arrangeData.apps.tl || ''}
+                          onChange={e => updateArrange({ apps: { ...arrangeData.apps, tl: e.target.value } })}
+                          className="w-full bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50"
+                        />
+                      )}
+
                       {arrangeData.layout === 'split_specific' && (
                         <>
                           <select
@@ -340,8 +350,8 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
                             <option value="horizontal">Horizontal Split (Top / Bottom)</option>
                           </select>
                           <div className="grid grid-cols-2 gap-2 mt-1">
-                            <input type="text" placeholder={arrangeData.orientation === 'horizontal' ? "Top App" : "Left App"} value={arrangeData.apps.tl} onChange={e => updateArrange({apps: {...arrangeData.apps, tl: e.target.value}})} className="bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
-                            <input type="text" placeholder={arrangeData.orientation === 'horizontal' ? "Bottom App" : "Right App"} value={arrangeData.apps.tr} onChange={e => updateArrange({apps: {...arrangeData.apps, tr: e.target.value}})} className="bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
+                            <input type="text" placeholder={arrangeData.orientation === 'horizontal' ? "Top App / Title (e.g. chrome)" : "Left App / Title (e.g. chrome)"} value={arrangeData.apps.tl} onChange={e => updateArrange({apps: {...arrangeData.apps, tl: e.target.value}})} className="bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
+                            <input type="text" placeholder={arrangeData.orientation === 'horizontal' ? "Bottom App / Title (e.g. facebook)" : "Right App / Title (e.g. facebook)"} value={arrangeData.apps.tr} onChange={e => updateArrange({apps: {...arrangeData.apps, tr: e.target.value}})} className="bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
                           </div>
                         </>
                       )}

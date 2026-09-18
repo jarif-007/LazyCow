@@ -263,40 +263,55 @@ async function runAction(action: ShortcutActionData): Promise<void> {
       if (!Number.isInteger(volume) || volume < 0 || volume > 100) {
         throw new Error('Volume must be an integer between 0 and 100')
       }
-      const scalar = (volume / 100).toFixed(2)
+      const scalar = (volume / 100).toFixed(4)
       const script = `
       Add-Type -TypeDefinition @'
+      using System;
       using System.Runtime.InteropServices;
+
       [Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
       interface IAudioEndpointVolume {
-          int f1(); int f2(); int f3(); int f4(); int f5(); int f6(); int f7();
+          int f(); int g(); int h(); int i();
           int SetMasterVolumeLevelScalar(float fLevel, System.Guid pguidEventContext);
-          int f9();
+          int j();
           int GetMasterVolumeLevelScalar(out float pfLevel);
+          int k(); int l(); int m(); int n();
+          int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, System.Guid pguidEventContext);
+          int GetMute(out bool pbMute);
       }
+
       [Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
       interface IMMDevice {
-          int Activate(ref System.Guid id, int clsCtx, System.IntPtr pActivationParams, [MarshalAs(UnmanagedType.IUnknown)] out object ppInterface);
+          int Activate(ref System.Guid id, int clsCtx, int activationParams, out IAudioEndpointVolume aev);
       }
+
       [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
       interface IMMDeviceEnumerator {
-          int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice ppDevice);
+          int f();
+          int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice endpoint);
       }
-      [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumeratorComObject { }
-      public class AudioHelper {
-          public static void SetVolume(float vol) {
+
+      [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
+      class MMDeviceEnumeratorComObject { }
+
+      public class AudioController {
+          public static void SetVolume(double level) {
               var enumerator = new MMDeviceEnumeratorComObject() as IMMDeviceEnumerator;
-              IMMDevice dev;
-              enumerator.GetDefaultAudioEndpoint(0, 1, out dev);
-              var epvGuid = typeof(IAudioEndpointVolume).GUID;
-              object epvObj;
-              dev.Activate(ref epvGuid, 23, System.IntPtr.Zero, out epvObj);
-              var epv = epvObj as IAudioEndpointVolume;
-              epv.SetMasterVolumeLevelScalar(vol, System.Guid.Empty);
+              IMMDevice dev = null;
+              Marshal.ThrowExceptionForHR(enumerator.GetDefaultAudioEndpoint(0, 1, out dev));
+              IAudioEndpointVolume epv = null;
+              var epvid = typeof(IAudioEndpointVolume).GUID;
+              Marshal.ThrowExceptionForHR(dev.Activate(ref epvid, 23, 0, out epv));
+              float fLevel = (float)Math.Max(0.0, Math.Min(1.0, level));
+              Marshal.ThrowExceptionForHR(epv.SetMasterVolumeLevelScalar(fLevel, Guid.Empty));
+              if (fLevel > 0.0f) {
+                  epv.SetMute(false, Guid.Empty);
+              }
           }
       }
       '@ -ErrorAction SilentlyContinue
-      [AudioHelper]::SetVolume(${scalar})
+
+      [AudioController]::SetVolume(${scalar})
       `
       const encoded = Buffer.from(script, 'utf16le').toString('base64')
       await execAsync(`powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}`, { windowsHide: true })
@@ -308,15 +323,76 @@ async function runAction(action: ShortcutActionData): Promise<void> {
         throw new Error('Brightness must be an integer between 0 and 100')
       }
       const script = `
+      $target = [Math]::Max(0, [Math]::Min(100, ${brightness}))
+      $success = $false
+
+      # 1. Try WMI (Laptops & Integrated Displays)
       try {
-          $monitors = Get-CimInstance -Namespace root/wmi -ClassName WmiMonitorBrightnessMethods -ErrorAction Stop
-          if ($monitors) {
-              $monitors | ForEach-Object { $_.WmiSetBrightness(1, ${brightness}) }
-          } else {
-              Write-Error "No internal monitor found (laptop screen required)."
+          $wmi = Get-WmiObject -Namespace root/wmi -Class WmiMonitorBrightnessMethods -ErrorAction Stop
+          if ($wmi) {
+              $wmi.WmiSetBrightness(0, $target)
+              $success = $true
           }
-      } catch {
-          Write-Error "Display brightness control requires a built-in laptop screen."
+      } catch { }
+
+      # 2. Try Modern CIM (Windows 10/11)
+      if (-not $success) {
+          try {
+              $cim = Get-CimInstance -Namespace root/wmi -ClassName WmiMonitorBrightnessMethods -ErrorAction Stop
+              if ($cim) {
+                  Invoke-CimMethod -InputObject $cim -MethodName WmiSetBrightness -Arguments @{ Brightness = [uint32]$target; Timeout = 0 } -ErrorAction Stop | Out-Null
+                  $success = $true
+              }
+          } catch { }
+      }
+
+      # 3. Try DDC/CI via dxva2.dll (External Desktop Monitors)
+      if (-not $success) {
+          try {
+              $code = @'
+              using System;
+              using System.Runtime.InteropServices;
+              public class DdcMonitorHelper {
+                  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+                  public struct PHYSICAL_MONITOR {
+                      public IntPtr hPhysicalMonitor;
+                      [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+                      public string szPhysicalMonitorDescription;
+                  }
+                  public struct RECT { public int left, top, right, bottom; }
+                  [DllImport("user32.dll")] public static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr lprcClip, MonitorEnumDelegate lpfnEnum, IntPtr dwData);
+                  public delegate bool MonitorEnumDelegate(IntPtr hMonitor, IntPtr hdcMonitor, ref RECT lprcMonitor, IntPtr dwData);
+                  [DllImport("dxva2.dll", SetLastError = true)] public static extern bool GetNumberOfPhysicalMonitorsFromHMONITOR(IntPtr hMonitor, out uint count);
+                  [DllImport("dxva2.dll", SetLastError = true)] public static extern bool GetPhysicalMonitorsFromHMONITOR(IntPtr hMonitor, uint size, [Out] PHYSICAL_MONITOR[] monitors);
+                  [DllImport("dxva2.dll", SetLastError = true)] public static extern bool SetPhysicalMonitorBrightness(IntPtr hMonitor, uint brightness);
+                  [DllImport("dxva2.dll", SetLastError = true)] public static extern bool DestroyPhysicalMonitors(uint size, PHYSICAL_MONITOR[] monitors);
+
+                  public static bool SetAll(uint brightness) {
+                      bool any = false;
+                      EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, delegate(IntPtr hMon, IntPtr hdc, ref RECT rc, IntPtr data) {
+                          uint count = 0;
+                          if (GetNumberOfPhysicalMonitorsFromHMONITOR(hMon, out count) && count > 0) {
+                              var pms = new PHYSICAL_MONITOR[count];
+                              if (GetPhysicalMonitorsFromHMONITOR(hMon, count, pms)) {
+                                  foreach (var pm in pms) {
+                                      if (SetPhysicalMonitorBrightness(pm.hPhysicalMonitor, brightness)) { any = true; }
+                                  }
+                                  DestroyPhysicalMonitors(count, pms);
+                              }
+                          }
+                          return true;
+                      }, IntPtr.Zero);
+                      return any;
+                  }
+              }
+'@
+              Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue
+              $success = [DdcMonitorHelper]::SetAll([uint32]$target)
+          } catch { }
+      }
+
+      if (-not $success) {
+          Write-Warning "Brightness could not be adjusted (display does not support WMI or DDC/CI commands)."
       }
       `
       const encoded = Buffer.from(script, 'utf16le').toString('base64')
@@ -403,68 +479,152 @@ async function runAction(action: ShortcutActionData): Promise<void> {
       const script = `
       Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
       $code = @"
-      using System; using System.Runtime.InteropServices;
-      public class W {
-        [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-        [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int h, bool r);
-        [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int nCmdShow);
+      using System;
+      using System.Text;
+      using System.Collections.Generic;
+      using System.Runtime.InteropServices;
+
+      public class WinManager {
+          public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+          [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
+          [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+          [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder strText, int maxCount);
+          [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr hWnd);
+          [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+          [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
+          [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+          [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+          [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+
+          public class WinItem {
+              public IntPtr Handle;
+              public string Title;
+              public string ProcessName;
+          }
+
+          public static List<WinItem> GetWindows() {
+              var list = new List<WinItem>();
+              EnumWindows((hWnd, lParam) => {
+                  if (!IsWindowVisible(hWnd)) return true;
+                  int len = GetWindowTextLength(hWnd);
+                  if (len == 0) return true;
+
+                  var sb = new StringBuilder(len + 1);
+                  GetWindowText(hWnd, sb, sb.Capacity);
+                  string title = sb.ToString();
+
+                  uint pid = 0;
+                  GetWindowThreadProcessId(hWnd, out pid);
+                  string procName = "";
+                  try {
+                      var p = System.Diagnostics.Process.GetProcessById((int)pid);
+                      procName = p.ProcessName;
+                  } catch {}
+
+                  if (procName.Equals("explorer", StringComparison.OrdinalIgnoreCase) && 
+                     (title.Equals("Program Manager", StringComparison.OrdinalIgnoreCase) || title.Length == 0)) {
+                      return true;
+                  }
+
+                  list.Add(new WinItem { Handle = hWnd, Title = title, ProcessName = procName });
+                  return true;
+              }, IntPtr.Zero);
+              return list;
+          }
       }
-      "@
+"@
       Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue
+
       $area = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
       $halfW = [math]::Floor($area.Width / 2)
       $halfH = [math]::Floor($area.Height / 2)
       $layout = "${layout}"
       $ori = "${orientation}"
 
-      function MoveApp($n, $x, $y, $w, $h) {
-          if (-not $n) { return }
-          $escaped = [regex]::Escape($n)
-          $p = Get-Process | Where-Object { $_.MainWindowTitle -match $escaped -or $_.Name -match $escaped } | Select-Object -First 1
-          if ($p -and $p.MainWindowHandle) {
-              [W]::ShowWindow($p.MainWindowHandle, 9)
-              [W]::MoveWindow($p.MainWindowHandle, $x, $y, $w, $h, $true)
+      $usedHandles = [System.Collections.Generic.HashSet[IntPtr]]::new()
+
+      function PositionWindow($hwnd, $x, $y, $w, $h) {
+          if ($hwnd -and $hwnd -ne [IntPtr]::Zero) {
+              [WinManager]::ShowWindow($hwnd, 9)
+              Start-Sleep -Milliseconds 60
+              [WinManager]::MoveWindow($hwnd, $x, $y, $w, $h, $true)
+              [WinManager]::SetForegroundWindow($hwnd)
+          }
+      }
+
+      function FindAndMove($targetName, $x, $y, $w, $h) {
+          if (-not $targetName -or $targetName.Trim() -eq "") { return }
+          $clean = $targetName.Trim()
+
+          for ($attempt = 0; $attempt -lt 6; $attempt++) {
+              $windows = [WinManager]::GetWindows()
+              $match = $null
+              foreach ($w in $windows) {
+                  if ($usedHandles.Contains($w.Handle)) { continue }
+                  if ($w.ProcessName -match [regex]::Escape($clean) -or $w.Title -match [regex]::Escape($clean)) {
+                      $match = $w
+                      break
+                  }
+              }
+              if ($match) {
+                  $usedHandles.Add($match.Handle) | Out-Null
+                  PositionWindow $match.Handle $x $y $w $h
+                  return
+              }
+              Start-Sleep -Milliseconds 400
           }
       }
 
       if ($layout -eq "quad") {
-          MoveApp "${apps.tl}" $area.Left $area.Top $halfW $halfH
-          MoveApp "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $halfH
-          MoveApp "${apps.bl}" $area.Left ($area.Top + $halfH) $halfW $halfH
-          MoveApp "${apps.br}" ($area.Left + $halfW) ($area.Top + $halfH) $halfW $halfH
+          FindAndMove "${apps.tl}" $area.Left $area.Top $halfW $halfH
+          FindAndMove "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $halfH
+          FindAndMove "${apps.bl}" $area.Left ($area.Top + $halfH) $halfW $halfH
+          FindAndMove "${apps.br}" ($area.Left + $halfW) ($area.Top + $halfH) $halfW $halfH
       } elseif ($layout -eq "split_specific") {
           if ($ori -eq "horizontal") {
-              MoveApp "${apps.tl}" $area.Left $area.Top $area.Width $halfH
-              MoveApp "${apps.tr}" $area.Left ($area.Top + $halfH) $area.Width $halfH
+              FindAndMove "${apps.tl}" $area.Left $area.Top $area.Width $halfH
+              FindAndMove "${apps.tr}" $area.Left ($area.Top + $halfH) $area.Width $halfH
           } else {
-              MoveApp "${apps.tl}" $area.Left $area.Top $halfW $area.Height
-              MoveApp "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $area.Height
+              FindAndMove "${apps.tl}" $area.Left $area.Top $halfW $area.Height
+              FindAndMove "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $area.Height
           }
       } elseif ($layout -eq "tri") {
           if ($ori -eq "main_right") {
-              MoveApp "${apps.tl}" $area.Left $area.Top $halfW $halfH
-              MoveApp "${apps.bl}" $area.Left ($area.Top + $halfH) $halfW $halfH
-              MoveApp "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $area.Height
+              FindAndMove "${apps.tl}" $area.Left $area.Top $halfW $halfH
+              FindAndMove "${apps.bl}" $area.Left ($area.Top + $halfH) $halfW $halfH
+              FindAndMove "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $area.Height
           } elseif ($ori -eq "main_top") {
-              MoveApp "${apps.tl}" $area.Left $area.Top $area.Width $halfH
-              MoveApp "${apps.bl}" $area.Left ($area.Top + $halfH) $halfW $halfH
-              MoveApp "${apps.br}" ($area.Left + $halfW) ($area.Top + $halfH) $halfW $halfH
+              FindAndMove "${apps.tl}" $area.Left $area.Top $area.Width $halfH
+              FindAndMove "${apps.bl}" $area.Left ($area.Top + $halfH) $halfW $halfH
+              FindAndMove "${apps.br}" ($area.Left + $halfW) ($area.Top + $halfH) $halfW $halfH
           } elseif ($ori -eq "main_bottom") {
-              MoveApp "${apps.tl}" $area.Left $area.Top $halfW $halfH
-              MoveApp "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $halfH
-              MoveApp "${apps.bl}" $area.Left ($area.Top + $halfH) $area.Width $halfH
+              FindAndMove "${apps.tl}" $area.Left $area.Top $halfW $halfH
+              FindAndMove "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $halfH
+              FindAndMove "${apps.bl}" $area.Left ($area.Top + $halfH) $area.Width $halfH
           } else {
-              MoveApp "${apps.tl}" $area.Left $area.Top $halfW $area.Height
-              MoveApp "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $halfH
-              MoveApp "${apps.br}" ($area.Left + $halfW) ($area.Top + $halfH) $halfW $halfH
+              FindAndMove "${apps.tl}" $area.Left $area.Top $halfW $area.Height
+              FindAndMove "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $halfH
+              FindAndMove "${apps.br}" ($area.Left + $halfW) ($area.Top + $halfH) $halfW $halfH
           }
       } else {
-          $hwnd = [W]::GetForegroundWindow()
-          if ($hwnd) {
-              [W]::ShowWindow($hwnd, 9)
-              if ($layout -eq "snap_left") { [W]::MoveWindow($hwnd, $area.Left, $area.Top, $halfW, $area.Height, $true) }
-              if ($layout -eq "snap_right") { [W]::MoveWindow($hwnd, $area.Left + $halfW, $area.Top, $halfW, $area.Height, $true) }
-              if ($layout -eq "maximize") { [W]::MoveWindow($hwnd, $area.Left, $area.Top, $area.Width, $area.Height, $true) }
+          if ("${apps.tl}" -and "${apps.tl}".Trim() -ne "") {
+              if ($layout -eq "snap_left") { FindAndMove "${apps.tl}" $area.Left $area.Top $halfW $area.Height }
+              elseif ($layout -eq "snap_right") { FindAndMove "${apps.tl}" ($area.Left + $halfW) $area.Top $halfW $area.Height }
+              elseif ($layout -eq "maximize") { FindAndMove "${apps.tl}" $area.Left $area.Top $area.Width $area.Height }
+          } else {
+              $windows = [WinManager]::GetWindows()
+              $targetHwnd = [IntPtr]::Zero
+              foreach ($w in $windows) {
+                  if ($w.ProcessName -match "lazycow|electron" -or $w.Title -match "LazyCow") { continue }
+                  $targetHwnd = $w.Handle
+                  break
+              }
+              if ($targetHwnd -ne [IntPtr]::Zero) {
+                  if ($layout -eq "snap_left") { PositionWindow $targetHwnd $area.Left $area.Top $halfW $area.Height }
+                  elseif ($layout -eq "snap_right") { PositionWindow $targetHwnd ($area.Left + $halfW) $area.Top $halfW $area.Height }
+                  elseif ($layout -eq "maximize") { PositionWindow $targetHwnd $area.Left $area.Top $area.Width $area.Height }
+              }
           }
       }
       `
