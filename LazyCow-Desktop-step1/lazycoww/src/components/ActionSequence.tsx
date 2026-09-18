@@ -136,21 +136,19 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
           if (card.value && !/^https?:\/\//i.test(card.value)) {
             errors[card.id] = 'URL must start with http:// or https://';
           }
-        } else if (card.type === 'launch_app' || card.type === 'open_folder' || card.type === 'open_file') {
+        } else if (card.type === 'launch_app' || card.type === 'open_folder' || card.type === 'open_file' || card.type === 'open_vscode') {
           if (card.value) {
-            // @ts-ignore
             if (window.electronAPI?.checkPathExists) {
-              // @ts-ignore
               const exists = await window.electronAPI.checkPathExists(card.value);
               if (!exists) errors[card.id] = 'Path does not exist';
             }
           } else {
             errors[card.id] = 'Path is required';
           }
-        } else if (card.type === 'set_volume') {
-          const vol = Number(card.value);
-          if (isNaN(vol) || vol < 0 || vol > 100 || !Number.isInteger(vol)) {
-            errors[card.id] = 'Volume must be an integer between 0 and 100';
+        } else if (card.type === 'set_volume' || card.type === 'set_brightness') {
+          const val = Number(card.value);
+          if (isNaN(val) || val < 0 || val > 100 || !Number.isInteger(val)) {
+            errors[card.id] = `${card.type === 'set_volume' ? 'Volume' : 'Brightness'} must be an integer between 0 and 100`;
           }
         } else if (card.type === 'run_script') {
           if (!card.value.trim()) errors[card.id] = 'Script command cannot be empty';
@@ -288,7 +286,7 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
                 )}
               </label>
 
-              {card.type === 'set_volume' ? (
+              {card.type === 'set_volume' || card.type === 'set_brightness' ? (
                 <div className="flex items-center gap-4">
                   <input
                     type="range"
@@ -415,12 +413,31 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
                   <option value="disable">Always Turn Off</option>
                 </select>
               ) : (
-                <input
-                  type="text"
-                  value={card.value}
-                  onChange={(e) => onUpdateValue(card.id, e.target.value)}
-                  className={`w-full bg-background/50 border text-foreground rounded-md px-3 py-2 font-body-sm focus:outline-none shadow-inner ${validationErrors[card.id] ? 'border-red-500/50 focus:ring-red-500' : 'border-border/50 focus:ring-primary'}`}
-                />
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={card.value}
+                    onChange={(e) => onUpdateValue(card.id, e.target.value)}
+                    className={`flex-1 bg-background/50 border text-foreground rounded-md px-3 py-2 font-body-sm focus:outline-none shadow-inner ${validationErrors[card.id] ? 'border-red-500/50 focus:ring-red-500' : 'border-border/50 focus:ring-primary'}`}
+                  />
+                  {['launch_app', 'open_folder', 'open_file', 'open_vscode'].includes(card.type) && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const pickerType = card.type === 'launch_app' ? 'app' : (card.type === 'open_file' ? 'file' : 'folder');
+                        const selected = await window.electronAPI?.selectPath(pickerType);
+                        if (selected) {
+                          onUpdateValue(card.id, selected);
+                        }
+                      }}
+                      className="px-3 py-2 bg-card hover:bg-card-light border border-border text-foreground rounded-md font-body-sm flex items-center gap-1.5 transition-colors shrink-0 cursor-pointer shadow-sm hover:border-primary/50"
+                      title="Browse..."
+                    >
+                      <span className="material-symbols-outlined text-[18px]">folder_open</span>
+                      <span>Browse</span>
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           </div>

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, nativeTheme, shell, globalShortcut, Tray, Menu, nativeImage, systemPreferences, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, nativeTheme, shell, globalShortcut, Tray, Menu, nativeImage, systemPreferences, dialog, Notification } from 'electron'
 import { exec, execFile } from 'child_process'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
@@ -35,17 +35,21 @@ let tray: Tray | null = null
 let keepInTray = true
 let isQuitting = false
 let lastAccentColor = '#0078D4'
+let executionNotifications = true
 
 app.on('before-quit', () => {
   isQuitting = true
 })
 
-ipcMain.on('update-general-settings', (_event, settings: { startAtLogin?: boolean; keepInTray?: boolean }) => {
+ipcMain.on('update-general-settings', (_event, settings: { startAtLogin?: boolean; keepInTray?: boolean; executionNotifications?: boolean }) => {
   if (typeof settings.keepInTray === 'boolean') {
     keepInTray = settings.keepInTray
   }
   if (typeof settings.startAtLogin === 'boolean') {
     app.setLoginItemSettings({ openAtLogin: settings.startAtLogin })
+  }
+  if (typeof settings.executionNotifications === 'boolean') {
+    executionNotifications = settings.executionNotifications
   }
 })
 
@@ -209,15 +213,9 @@ interface ActionResult {
 // officially-documented Windows CLI/API. Rather than ship a hacky
 // registry/SendKeys workaround and call it "done", these are left as clear
 // not-yet-implemented stubs — see the LazyCow remaining-work notes.
-const UNIMPLEMENTED_TYPES = new Set(['toggle_dnd', 'toggle_nightlight', 'set_brightness'])
-
 const runningShortcuts = new Set<string>()
 
 async function runAction(action: ShortcutActionData): Promise<void> {
-  if (UNIMPLEMENTED_TYPES.has(action.type)) {
-    throw new Error(`"${action.type}" isn't implemented yet`)
-  }
-
   switch (action.type) {
     case 'launch_app': {
       let stat
@@ -265,7 +263,111 @@ async function runAction(action: ShortcutActionData): Promise<void> {
       if (!Number.isInteger(volume) || volume < 0 || volume > 100) {
         throw new Error('Volume must be an integer between 0 and 100')
       }
-      throw new Error(`"${action.type}" isn't implemented yet`)
+      const scalar = (volume / 100).toFixed(2)
+      const script = `
+      Add-Type -TypeDefinition @'
+      using System.Runtime.InteropServices;
+      [Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+      interface IAudioEndpointVolume {
+          int f1(); int f2(); int f3(); int f4(); int f5(); int f6(); int f7();
+          int SetMasterVolumeLevelScalar(float fLevel, System.Guid pguidEventContext);
+          int f9();
+          int GetMasterVolumeLevelScalar(out float pfLevel);
+      }
+      [Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+      interface IMMDevice {
+          int Activate(ref System.Guid id, int clsCtx, System.IntPtr pActivationParams, [MarshalAs(UnmanagedType.IUnknown)] out object ppInterface);
+      }
+      [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+      interface IMMDeviceEnumerator {
+          int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice ppDevice);
+      }
+      [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumeratorComObject { }
+      public class AudioHelper {
+          public static void SetVolume(float vol) {
+              var enumerator = new MMDeviceEnumeratorComObject() as IMMDeviceEnumerator;
+              IMMDevice dev;
+              enumerator.GetDefaultAudioEndpoint(0, 1, out dev);
+              var epvGuid = typeof(IAudioEndpointVolume).GUID;
+              object epvObj;
+              dev.Activate(ref epvGuid, 23, System.IntPtr.Zero, out epvObj);
+              var epv = epvObj as IAudioEndpointVolume;
+              epv.SetMasterVolumeLevelScalar(vol, System.Guid.Empty);
+          }
+      }
+      '@ -ErrorAction SilentlyContinue
+      [AudioHelper]::SetVolume(${scalar})
+      `
+      const encoded = Buffer.from(script, 'utf16le').toString('base64')
+      await execAsync(`powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}`, { windowsHide: true })
+      return
+    }
+    case 'set_brightness': {
+      const brightness = Number(action.value)
+      if (!Number.isInteger(brightness) || brightness < 0 || brightness > 100) {
+        throw new Error('Brightness must be an integer between 0 and 100')
+      }
+      const script = `
+      try {
+          $monitors = Get-CimInstance -Namespace root/wmi -ClassName WmiMonitorBrightnessMethods -ErrorAction Stop
+          if ($monitors) {
+              $monitors | ForEach-Object { $_.WmiSetBrightness(1, ${brightness}) }
+          } else {
+              Write-Error "No internal monitor found (laptop screen required)."
+          }
+      } catch {
+          Write-Error "Display brightness control requires a built-in laptop screen."
+      }
+      `
+      const encoded = Buffer.from(script, 'utf16le').toString('base64')
+      await execAsync(`powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}`, { windowsHide: true })
+      return
+    }
+    case 'toggle_dnd': {
+      const mode = action.value || 'toggle'
+      const script = `
+      $path = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings"
+      if (-not (Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
+      $current = (Get-ItemProperty -Path $path -Name "NOC_GLOBAL_SETTING_ALLOW_TOASTS" -ErrorAction SilentlyContinue).NOC_GLOBAL_SETTING_ALLOW_TOASTS
+      if ($null -eq $current) { $current = 1 }
+      
+      $target = 1
+      if ("${mode}" -eq "enable") {
+          $target = 0
+      } elseif ("${mode}" -eq "disable") {
+          $target = 1
+      } else {
+          if ($current -eq 0) { $target = 1 } else { $target = 0 }
+      }
+      Set-ItemProperty -Path $path -Name "NOC_GLOBAL_SETTING_ALLOW_TOASTS" -Value $target -Type DWord
+      `
+      const encoded = Buffer.from(script, 'utf16le').toString('base64')
+      await execAsync(`powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}`, { windowsHide: true })
+      return
+    }
+    case 'toggle_nightlight': {
+      const mode = action.value || 'toggle'
+      const script = `
+      $path = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\DefaultAccount\\Current\\default\`$windows.data.bluelightreduction.bluelightreductionstate\\windows.data.bluelightreduction.bluelightreductionstate"
+      if (Test-Path $path) {
+          $data = (Get-ItemProperty -Path $path -Name "Data" -ErrorAction SilentlyContinue).Data
+          if ($data -and $data.Length -ge 19) {
+              $isOn = $data[18] -eq 0x15
+              $turnOn = if ("${mode}" -eq "enable") { $true } elseif ("${mode}" -eq "disable") { $false } else { -not $isOn }
+              if ($turnOn -ne $isOn) {
+                  if ($turnOn) {
+                      $data[18] = 0x15
+                  } else {
+                      $data[18] = 0x13
+                  }
+                  Set-ItemProperty -Path $path -Name "Data" -Value $data
+              }
+          }
+      }
+      `
+      const encoded = Buffer.from(script, 'utf16le').toString('base64')
+      await execAsync(`powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}`, { windowsHide: true })
+      return
     }
     case 'arrange_windows': {
       let layout = 'snap_left'
@@ -427,6 +529,26 @@ async function runShortcutActions(shortcut: ShortcutData): Promise<ActionResult[
   }
   
   win?.webContents.send('shortcut-complete', { shortcutId: shortcut.id, results })
+
+  // Dispatch native Windows notification if enabled
+  const failed = results.filter((r) => !r.success)
+  const allSucceeded = failed.length === 0
+  if (executionNotifications && Notification.isSupported()) {
+    try {
+      const notif = new Notification({
+        title: allSucceeded ? `LazyCow: ${shortcut.name}` : `LazyCow: ${shortcut.name} (Failed)`,
+        body: allSucceeded
+          ? `All ${shortcut.actions.length} action(s) completed successfully.`
+          : `Failed on ${failed.length} action(s): ${failed.map((f) => f.error).filter(Boolean).join('; ')}`,
+        icon: getAppIconPath(),
+        silent: false,
+      })
+      notif.show()
+    } catch (err) {
+      console.warn('Failed to display OS notification:', err)
+    }
+  }
+
   return results
 }
 
@@ -446,6 +568,36 @@ ipcMain.handle('check-path-exists', async (_event, targetPath: string) => {
   } catch {
     return false
   }
+})
+
+ipcMain.handle('select-path', async (_event, type: 'app' | 'file' | 'folder') => {
+  if (!win) return null
+  let properties: ('openFile' | 'openDirectory')[] = ['openFile']
+  let filters: { name: string; extensions: string[] }[] = []
+
+  if (type === 'app') {
+    properties = ['openFile']
+    filters = [
+      { name: 'Windows Applications & Executables (*.exe, *.lnk, *.bat, *.cmd)', extensions: ['exe', 'lnk', 'bat', 'cmd'] },
+      { name: 'All Files (*.*)', extensions: ['*'] }
+    ]
+  } else if (type === 'folder') {
+    properties = ['openDirectory']
+  } else {
+    properties = ['openFile']
+    filters = [{ name: 'All Files (*.*)', extensions: ['*'] }]
+  }
+
+  const res = await dialog.showOpenDialog(win, {
+    title: type === 'app' ? 'Select Application Executable' : type === 'folder' ? 'Select Folder' : 'Select File',
+    properties,
+    filters: filters.length ? filters : undefined,
+  })
+
+  if (!res.canceled && res.filePaths.length > 0) {
+    return res.filePaths[0]
+  }
+  return null
 })
 
 const DANGEROUS_EXTENSIONS = new Set(['.exe', '.cmd', '.bat', '.ps1', '.vbs', '.js', '.wsf', '.msi'])

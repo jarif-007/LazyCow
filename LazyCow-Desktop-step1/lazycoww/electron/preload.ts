@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   checkPathExists: (path: string) => ipcRenderer.invoke('check-path-exists', path),
+  selectPath: (type: 'app' | 'file' | 'folder') => ipcRenderer.invoke('select-path', type),
 
   // Each `on*` returns an unsubscribe function — call it from a useEffect cleanup.
   onShortcutProgress: (callback: (e: { shortcutId: string; stepIndex: number }) => void) => {

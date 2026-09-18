@@ -37,6 +37,10 @@ interface Window {
     getSystemAccent: () => Promise<string>
     onSystemTheme: (callback: (theme: 'light' | 'dark') => void) => void
     onSystemAccent: (callback: (color: string) => void) => void
+    // ── Settings, Path, & Pickers ──
+    updateGeneralSettings: (settings: { startAtLogin?: boolean; keepInTray?: boolean; executionNotifications?: boolean }) => void
+    checkPathExists: (path: string) => Promise<boolean>
+    selectPath: (type: 'app' | 'file' | 'folder') => Promise<string | null>
     // ── Real execution + global hotkeys. Each `on*` returns an unsubscribe function. ──
     runShortcut: (shortcut: ShortcutForIPC) => Promise<ActionResult[]>
     syncHotkeys: (shortcuts: ShortcutForIPC[]) => void

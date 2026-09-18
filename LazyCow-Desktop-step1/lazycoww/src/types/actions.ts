@@ -47,7 +47,7 @@ export const actionCatalog: CatalogItem[] = [
   { type: 'set_volume', title: 'Set Volume', icon: 'volume_up', category: 'System Control', colorClass: 'bg-purple-500/10 text-purple-600 dark:text-purple-400', defaultValue: '50' },
   { type: 'toggle_dnd', title: 'Toggle DND', icon: 'do_not_disturb_on', category: 'System Control', colorClass: 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400', defaultValue: 'toggle' },
   { type: 'toggle_nightlight', title: 'Night Light', icon: 'nights_stay', category: 'System Control', colorClass: 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400', defaultValue: 'toggle' },
-  { type: 'set_brightness', title: 'Set Brightness', icon: 'brightness_medium', category: 'System Control', colorClass: 'bg-gray-500/10 text-gray-400', defaultValue: '50', disabled: true, disabledLabel: 'Laptop Only' },
+  { type: 'set_brightness', title: 'Set Brightness', icon: 'brightness_medium', category: 'System Control', colorClass: 'bg-amber-500/10 text-amber-600 dark:text-amber-400', defaultValue: '50' },
 
   // ── Developer Tools ──
   { type: 'run_script', title: 'Run Script', icon: 'code', category: 'Developer Tools', colorClass: 'bg-gray-500/10 text-gray-600 dark:text-gray-400', defaultValue: 'npm run start' },
