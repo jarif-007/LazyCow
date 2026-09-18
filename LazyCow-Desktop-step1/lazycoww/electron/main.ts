@@ -1,12 +1,24 @@
-import { app, BrowserWindow, ipcMain, nativeTheme, shell, globalShortcut, Tray, Menu, nativeImage } from 'electron'
-import { exec } from 'child_process'
+import { app, BrowserWindow, ipcMain, nativeTheme, shell, globalShortcut, Tray, Menu, nativeImage, systemPreferences, dialog } from 'electron'
+import { exec, execFile } from 'child_process'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs'
 import { z } from 'zod'
 
+// ── OS Lock: LazyCow is exclusively designed for Microsoft Windows ──
+if (process.platform !== 'win32') {
+  app.whenReady().then(() => {
+    dialog.showErrorBox(
+      'Unsupported Operating System',
+      'LazyCow is designed exclusively for Microsoft Windows and cannot run on this operating system.'
+    )
+    app.quit()
+  })
+}
+
 const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -37,12 +49,22 @@ ipcMain.on('update-general-settings', (_event, settings: { startAtLogin?: boolea
   }
 })
 
+function getAppIconPath(): string {
+  const pngPath = path.join(process.env.VITE_PUBLIC, 'icon.png')
+  if (fs.existsSync(pngPath)) return pngPath
+  return path.join(process.env.VITE_PUBLIC, 'electron-vite.svg')
+}
+
+function getTrayIconPath(): string {
+  const trayPngPath = path.join(process.env.VITE_PUBLIC, 'icon-32.png')
+  if (fs.existsSync(trayPngPath)) return trayPngPath
+  return getAppIconPath()
+}
+
 function createTray() {
-  const iconPath = path.join(process.env.VITE_PUBLIC, 'electron-vite.svg')
+  const iconPath = getTrayIconPath()
   let icon = nativeImage.createFromPath(iconPath)
   
-  // macOS often fails to load SVGs directly into the Tray. 
-  // We use a small generated fallback PNG if it's empty.
   if (icon.isEmpty()) {
     const fallbackBase64 = 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAGFJREFUOE9jZKAQMFKon2HUAAaGGyA2N/8H4sFozEg3AKYIrzFIBgP5sBqMboBsM0hxiG4ATHHIAcMFGBmRzCBF3FAzSAEDAwOjgOERx8AoGoRygxgXY2REYvFIM4iSAQAA7X0/wT9P1JcAAAAASUVORK5CYII='
     icon = nativeImage.createFromDataURL(`data:image/png;base64,${fallbackBase64}`)
@@ -63,7 +85,8 @@ function createTray() {
 
 function createWindow() {
   win = new BrowserWindow({
-    icon: path.join(process.env.VITE_PUBLIC, 'electron-vite.svg'),
+    icon: getAppIconPath(),
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
       contextIsolation: true,
@@ -111,19 +134,24 @@ nativeTheme.on('updated', () => {
 // ── System accent color ──
 function getWindowsAccentColor(): Promise<string> {
   return new Promise((resolve) => {
-    // Read AccentPalette and extract the actual accent color (index 3 = the main accent)
-    const cmd = `powershell.exe -Command "$bytes = (Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Accent' -Name AccentPalette).AccentPalette; $r = $bytes[12]; $g = $bytes[13]; $b = $bytes[14]; '{0:X2}{1:X2}{2:X2}' -f $r, $g, $b"`
-    exec(cmd, { windowsHide: true, timeout: 5000 }, (error, stdout) => {
-      if (!error && stdout) {
-        const hex = stdout.trim().toUpperCase()
-        if (/^[0-9A-F]{6}$/.test(hex)) {
-          console.log('AccentPalette index 3 color:', hex)
-          resolve(`#${hex}`)
-          return
+    if (process.platform === 'win32') {
+      try {
+        if (typeof systemPreferences.getAccentColor === 'function') {
+          const accent = systemPreferences.getAccentColor()
+          if (accent && accent.length >= 6) {
+            // Electron's getAccentColor() returns hex RRGGBBAA or RRGGBB
+            const hex = accent.slice(0, 6).toUpperCase()
+            if (/^[0-9A-F]{6}$/.test(hex)) {
+              resolve(`#${hex}`)
+              return
+            }
+          }
         }
+      } catch (err) {
+        console.warn('systemPreferences.getAccentColor failed, falling back:', err)
       }
-      resolve(lastAccentColor)
-    })
+    }
+    resolve(lastAccentColor)
   })
 }
 
@@ -194,11 +222,12 @@ async function runAction(action: ShortcutActionData): Promise<void> {
     case 'launch_app': {
       let stat
       try { stat = fs.statSync(action.value) } catch { throw new Error('Path does not exist or is inaccessible') }
-      if (stat.isDirectory()) throw new Error('Path is a directory, not an application')
-      
+      if (stat.isDirectory()) {
+        throw new Error('Path is a directory, not a Windows executable')
+      }
       const ext = path.extname(action.value).toLowerCase()
-      if (!['.exe', '.cmd', '.bat', '.app'].includes(ext) && process.platform === 'win32') {
-        throw new Error('Path is not a recognized executable extension')
+      if (!['.exe', '.cmd', '.bat', '.lnk'].includes(ext)) {
+        throw new Error('Path is not a recognized Windows executable (.exe, .cmd, .bat, .lnk)')
       }
       
       const err = await shell.openPath(action.value)
@@ -219,15 +248,16 @@ async function runAction(action: ShortcutActionData): Promise<void> {
       return
     }
     case 'open_vscode': {
+      try { fs.statSync(action.value) } catch { throw new Error('Target folder or file does not exist') }
+
       try {
-        const checkCmd = process.platform === 'win32' ? 'where code' : 'which code'
-        await execAsync(checkCmd, { windowsHide: true })
-      } catch {
-        throw new Error('VS Code CLI "code" is not available in PATH')
+        await execFileAsync('code.cmd', [action.value], { windowsHide: true, timeout: 15000, shell: true })
+      } catch (err: any) {
+        if (err.code === 'ENOENT' || String(err).includes('not recognized')) {
+          throw new Error('VS Code CLI "code" is not available in Windows PATH')
+        }
+        throw new Error(`Failed to open in VS Code: ${err.message || String(err)}`)
       }
-      // execFile-style quoting: the path is passed as a single argument,
-      // not concatenated into a shell string.
-      await execAsync(`code "${action.value.replace(/"/g, '\\"')}"`, { windowsHide: true, timeout: 15000 })
       return
     }
     case 'set_volume': {
@@ -240,145 +270,104 @@ async function runAction(action: ShortcutActionData): Promise<void> {
     case 'arrange_windows': {
       let layout = 'snap_left'
       let orientation = 'vertical'
-      let apps = { tl: '', tr: '', bl: '', br: '' }
+      let apps: Record<'tl' | 'tr' | 'bl' | 'br', string> = { tl: '', tr: '', bl: '', br: '' }
       try {
         if (action.value.startsWith('{')) {
           const parsed = JSON.parse(action.value)
           layout = parsed.layout || 'snap_left'
           orientation = parsed.orientation || 'vertical'
-          apps = parsed.apps || apps
+          apps = { ...apps, ...(parsed.apps || {}) }
         } else {
           layout = action.value
         }
       } catch { /* fallback to defaults */ }
 
-      if (process.platform === 'darwin') {
-        const script = `
-        tell application "Finder"
-            set desktopBounds to bounds of window of desktop
-            set screenW to item 3 of desktopBounds
-            set screenH to item 4 of desktopBounds
-        end tell
-        set halfW to screenW / 2
-        set halfH to screenH / 2
-        tell application "System Events"
-            if "${layout}" = "quad" then
-                ${apps.tl ? `try \n set p to first application process whose name contains "${apps.tl}" \n set position of front window of p to {0, 25} \n set size of front window of p to {halfW, halfH - 12} \n end try` : ''}
-                ${apps.tr ? `try \n set p to first application process whose name contains "${apps.tr}" \n set position of front window of p to {halfW, 25} \n set size of front window of p to {halfW, halfH - 12} \n end try` : ''}
-                ${apps.bl ? `try \n set p to first application process whose name contains "${apps.bl}" \n set position of front window of p to {0, 25 + halfH - 12} \n set size of front window of p to {halfW, halfH - 12} \n end try` : ''}
-                ${apps.br ? `try \n set p to first application process whose name contains "${apps.br}" \n set position of front window of p to {halfW, 25 + halfH - 12} \n set size of front window of p to {halfW, halfH - 12} \n end try` : ''}
-            else if "${layout}" = "split_specific" then
-                if "${orientation}" = "horizontal" then
-                    ${apps.tl ? `try \n set p to first application process whose name contains "${apps.tl}" \n set position of front window of p to {0, 25} \n set size of front window of p to {screenW, halfH - 12} \n end try` : ''}
-                    ${apps.tr ? `try \n set p to first application process whose name contains "${apps.tr}" \n set position of front window of p to {0, 25 + halfH - 12} \n set size of front window of p to {screenW, halfH - 12} \n end try` : ''}
-                else
-                    ${apps.tl ? `try \n set p to first application process whose name contains "${apps.tl}" \n set position of front window of p to {0, 25} \n set size of front window of p to {halfW, screenH - 25} \n end try` : ''}
-                    ${apps.tr ? `try \n set p to first application process whose name contains "${apps.tr}" \n set position of front window of p to {halfW, 25} \n set size of front window of p to {halfW, screenH - 25} \n end try` : ''}
-                end if
-            else if "${layout}" = "tri" then
-                if "${orientation}" = "main_right" then
-                    ${apps.tl ? `try \n set p to first application process whose name contains "${apps.tl}" \n set position of front window of p to {0, 25} \n set size of front window of p to {halfW, halfH - 12} \n end try` : ''}
-                    ${apps.bl ? `try \n set p to first application process whose name contains "${apps.bl}" \n set position of front window of p to {0, 25 + halfH - 12} \n set size of front window of p to {halfW, halfH - 12} \n end try` : ''}
-                    ${apps.tr ? `try \n set p to first application process whose name contains "${apps.tr}" \n set position of front window of p to {halfW, 25} \n set size of front window of p to {halfW, screenH - 25} \n end try` : ''}
-                else if "${orientation}" = "main_top" then
-                    ${apps.tl ? `try \n set p to first application process whose name contains "${apps.tl}" \n set position of front window of p to {0, 25} \n set size of front window of p to {screenW, halfH - 12} \n end try` : ''}
-                    ${apps.bl ? `try \n set p to first application process whose name contains "${apps.bl}" \n set position of front window of p to {0, 25 + halfH - 12} \n set size of front window of p to {halfW, halfH - 12} \n end try` : ''}
-                    ${apps.br ? `try \n set p to first application process whose name contains "${apps.br}" \n set position of front window of p to {halfW, 25 + halfH - 12} \n set size of front window of p to {halfW, halfH - 12} \n end try` : ''}
-                else if "${orientation}" = "main_bottom" then
-                    ${apps.tl ? `try \n set p to first application process whose name contains "${apps.tl}" \n set position of front window of p to {0, 25} \n set size of front window of p to {halfW, halfH - 12} \n end try` : ''}
-                    ${apps.tr ? `try \n set p to first application process whose name contains "${apps.tr}" \n set position of front window of p to {halfW, 25} \n set size of front window of p to {halfW, halfH - 12} \n end try` : ''}
-                    ${apps.bl ? `try \n set p to first application process whose name contains "${apps.bl}" \n set position of front window of p to {0, 25 + halfH - 12} \n set size of front window of p to {screenW, halfH - 12} \n end try` : ''}
-                else
-                    ${apps.tl ? `try \n set p to first application process whose name contains "${apps.tl}" \n set position of front window of p to {0, 25} \n set size of front window of p to {halfW, screenH - 25} \n end try` : ''}
-                    ${apps.tr ? `try \n set p to first application process whose name contains "${apps.tr}" \n set position of front window of p to {halfW, 25} \n set size of front window of p to {halfW, halfH - 12} \n end try` : ''}
-                    ${apps.br ? `try \n set p to first application process whose name contains "${apps.br}" \n set position of front window of p to {halfW, 25 + halfH - 12} \n set size of front window of p to {halfW, halfH - 12} \n end try` : ''}
-                end if
-            else
-                set frontApp to first application process whose frontmost is true
-                set frontWin to front window of frontApp
-                if "${layout}" = "snap_left" then
-                    set position of frontWin to {0, 25}
-                    set size of frontWin to {halfW, screenH - 25}
-                else if "${layout}" = "snap_right" then
-                    set position of frontWin to {halfW, 25}
-                    set size of frontWin to {halfW, screenH - 25}
-                else if "${layout}" = "maximize" then
-                    set position of frontWin to {0, 25}
-                    set size of frontWin to {screenW, screenH - 25}
-                end if
-            end if
-        end tell
-        `
-        try {
-          await execAsync(`osascript -e '${script.replace(/'/g, "'\\''")}'`)
-        } catch (err: any) {
-          throw new Error('Failed to arrange windows (requires Accessibility permissions on macOS)')
-        }
-      } else if (process.platform === 'win32') {
-        const script = `
-        Add-Type -AssemblyName System.Windows.Forms
-        $code = @"
-        using System; using System.Runtime.InteropServices;
-        public class W {
-          [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-          [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int h, bool r);
-        }
-        "@
-        Add-Type -TypeDefinition $code
-        $area = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-        $halfW = [math]::Floor($area.Width / 2)
-        $halfH = [math]::Floor($area.Height / 2)
-        $layout = "${layout}"
-        $ori = "${orientation}"
+      // Validate layout and orientation
+      const VALID_LAYOUTS = new Set(['snap_left', 'snap_right', 'maximize', 'split_specific', 'tri', 'quad'])
+      const VALID_ORIENTATIONS = new Set(['vertical', 'horizontal', 'main_left', 'main_right', 'main_top', 'main_bottom'])
+      if (!VALID_LAYOUTS.has(layout)) layout = 'snap_left'
+      if (!VALID_ORIENTATIONS.has(orientation)) orientation = 'vertical'
 
-        function MoveApp($n, $x, $y, $w, $h) {
-            if (-not $n) { return }
-            $p = Get-Process | Where-Object { $_.MainWindowTitle -match $n -or $_.Name -match $n } | Select-Object -First 1
-            if ($p -and $p.MainWindowHandle) { [W]::MoveWindow($p.MainWindowHandle, $x, $y, $w, $h, $true) }
+      // Sanitize process names to prevent script/command injection
+      const SAFE_NAME_REGEX = /^[a-zA-Z0-9_\-\.\s]*$/
+      for (const slot of ['tl', 'tr', 'bl', 'br'] as const) {
+        const val = (apps[slot] || '').trim()
+        if (val && !SAFE_NAME_REGEX.test(val)) {
+          throw new Error(`Invalid application process name "${val}". Only alphanumeric characters, spaces, dots, dashes, and underscores are allowed.`)
         }
-
-        if ($layout -eq "quad") {
-            MoveApp "${apps.tl}" $area.Left $area.Top $halfW $halfH
-            MoveApp "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $halfH
-            MoveApp "${apps.bl}" $area.Left ($area.Top + $halfH) $halfW $halfH
-            MoveApp "${apps.br}" ($area.Left + $halfW) ($area.Top + $halfH) $halfW $halfH
-        } elseif ($layout -eq "split_specific") {
-            if ($ori -eq "horizontal") {
-                MoveApp "${apps.tl}" $area.Left $area.Top $area.Width $halfH
-                MoveApp "${apps.tr}" $area.Left ($area.Top + $halfH) $area.Width $halfH
-            } else {
-                MoveApp "${apps.tl}" $area.Left $area.Top $halfW $area.Height
-                MoveApp "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $area.Height
-            }
-        } elseif ($layout -eq "tri") {
-            if ($ori -eq "main_right") {
-                MoveApp "${apps.tl}" $area.Left $area.Top $halfW $halfH
-                MoveApp "${apps.bl}" $area.Left ($area.Top + $halfH) $halfW $halfH
-                MoveApp "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $area.Height
-            } elseif ($ori -eq "main_top") {
-                MoveApp "${apps.tl}" $area.Left $area.Top $area.Width $halfH
-                MoveApp "${apps.bl}" $area.Left ($area.Top + $halfH) $halfW $halfH
-                MoveApp "${apps.br}" ($area.Left + $halfW) ($area.Top + $halfH) $halfW $halfH
-            } elseif ($ori -eq "main_bottom") {
-                MoveApp "${apps.tl}" $area.Left $area.Top $halfW $halfH
-                MoveApp "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $halfH
-                MoveApp "${apps.bl}" $area.Left ($area.Top + $halfH) $area.Width $halfH
-            } else {
-                MoveApp "${apps.tl}" $area.Left $area.Top $halfW $area.Height
-                MoveApp "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $halfH
-                MoveApp "${apps.br}" ($area.Left + $halfW) ($area.Top + $halfH) $halfW $halfH
-            }
-        } else {
-            $hwnd = [W]::GetForegroundWindow()
-            if ($layout -eq "snap_left") { [W]::MoveWindow($hwnd, $area.Left, $area.Top, $halfW, $area.Height, $true) }
-            if ($layout -eq "snap_right") { [W]::MoveWindow($hwnd, $area.Left + $halfW, $area.Top, $halfW, $area.Height, $true) }
-            if ($layout -eq "maximize") { [W]::MoveWindow($hwnd, $area.Left, $area.Top, $area.Width, $area.Height, $true) }
-        }
-        `
-        await execAsync(`powershell -Command "${script.replace(/"/g, '\\"')}"`, { windowsHide: true })
-      } else {
-        throw new Error('Window arrangement is not supported on this OS.')
+        apps[slot] = val
       }
+
+      const script = `
+      Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+      $code = @"
+      using System; using System.Runtime.InteropServices;
+      public class W {
+        [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int h, bool r);
+        [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int nCmdShow);
+      }
+      "@
+      Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue
+      $area = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+      $halfW = [math]::Floor($area.Width / 2)
+      $halfH = [math]::Floor($area.Height / 2)
+      $layout = "${layout}"
+      $ori = "${orientation}"
+
+      function MoveApp($n, $x, $y, $w, $h) {
+          if (-not $n) { return }
+          $escaped = [regex]::Escape($n)
+          $p = Get-Process | Where-Object { $_.MainWindowTitle -match $escaped -or $_.Name -match $escaped } | Select-Object -First 1
+          if ($p -and $p.MainWindowHandle) {
+              [W]::ShowWindow($p.MainWindowHandle, 9)
+              [W]::MoveWindow($p.MainWindowHandle, $x, $y, $w, $h, $true)
+          }
+      }
+
+      if ($layout -eq "quad") {
+          MoveApp "${apps.tl}" $area.Left $area.Top $halfW $halfH
+          MoveApp "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $halfH
+          MoveApp "${apps.bl}" $area.Left ($area.Top + $halfH) $halfW $halfH
+          MoveApp "${apps.br}" ($area.Left + $halfW) ($area.Top + $halfH) $halfW $halfH
+      } elseif ($layout -eq "split_specific") {
+          if ($ori -eq "horizontal") {
+              MoveApp "${apps.tl}" $area.Left $area.Top $area.Width $halfH
+              MoveApp "${apps.tr}" $area.Left ($area.Top + $halfH) $area.Width $halfH
+          } else {
+              MoveApp "${apps.tl}" $area.Left $area.Top $halfW $area.Height
+              MoveApp "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $area.Height
+          }
+      } elseif ($layout -eq "tri") {
+          if ($ori -eq "main_right") {
+              MoveApp "${apps.tl}" $area.Left $area.Top $halfW $halfH
+              MoveApp "${apps.bl}" $area.Left ($area.Top + $halfH) $halfW $halfH
+              MoveApp "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $area.Height
+          } elseif ($ori -eq "main_top") {
+              MoveApp "${apps.tl}" $area.Left $area.Top $area.Width $halfH
+              MoveApp "${apps.bl}" $area.Left ($area.Top + $halfH) $halfW $halfH
+              MoveApp "${apps.br}" ($area.Left + $halfW) ($area.Top + $halfH) $halfW $halfH
+          } elseif ($ori -eq "main_bottom") {
+              MoveApp "${apps.tl}" $area.Left $area.Top $halfW $halfH
+              MoveApp "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $halfH
+              MoveApp "${apps.bl}" $area.Left ($area.Top + $halfH) $area.Width $halfH
+          } else {
+              MoveApp "${apps.tl}" $area.Left $area.Top $halfW $area.Height
+              MoveApp "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $halfH
+              MoveApp "${apps.br}" ($area.Left + $halfW) ($area.Top + $halfH) $halfW $halfH
+          }
+      } else {
+          $hwnd = [W]::GetForegroundWindow()
+          if ($hwnd) {
+              [W]::ShowWindow($hwnd, 9)
+              if ($layout -eq "snap_left") { [W]::MoveWindow($hwnd, $area.Left, $area.Top, $halfW, $area.Height, $true) }
+              if ($layout -eq "snap_right") { [W]::MoveWindow($hwnd, $area.Left + $halfW, $area.Top, $halfW, $area.Height, $true) }
+              if ($layout -eq "maximize") { [W]::MoveWindow($hwnd, $area.Left, $area.Top, $area.Width, $area.Height, $true) }
+          }
+      }
+      `
+      const encodedScript = Buffer.from(script, 'utf16le').toString('base64')
+      await execAsync(`powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encodedScript}`, { windowsHide: true })
       return
     }
     case 'run_script': {
@@ -390,11 +379,7 @@ async function runAction(action: ShortcutActionData): Promise<void> {
         const child = exec(action.value, { windowsHide: true })
         signal.addEventListener('abort', () => {
           if (child.pid) {
-            if (process.platform === 'win32') {
-              exec(`taskkill /pid ${child.pid} /t /f`, { windowsHide: true })
-            } else {
-              process.kill(-child.pid, 'SIGKILL')
-            }
+            exec(`taskkill /pid ${child.pid} /t /f`, { windowsHide: true })
           }
         })
         
@@ -463,8 +448,17 @@ ipcMain.handle('check-path-exists', async (_event, targetPath: string) => {
   }
 })
 
+const DANGEROUS_EXTENSIONS = new Set(['.exe', '.cmd', '.bat', '.ps1', '.vbs', '.js', '.wsf', '.msi'])
+
 function shortcutHasScript(shortcut: ShortcutData): boolean {
-  return shortcut.actions.some((a) => a.type === 'run_script' || a.type === 'launch_app')
+  return shortcut.actions.some((a) => {
+    if (a.type === 'run_script' || a.type === 'launch_app') return true
+    if (a.type === 'open_file') {
+      const ext = path.extname(a.value).toLowerCase()
+      if (DANGEROUS_EXTENSIONS.has(ext)) return true
+    }
+    return false
+  })
 }
 
 // ──────────────────────────────────────────────
@@ -550,16 +544,8 @@ app.on('will-quit', () => {
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-    win = null
-  }
-})
-
-app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow()
-  }
+  app.quit()
+  win = null
 })
 
 app.whenReady().then(() => {

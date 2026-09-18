@@ -48,7 +48,16 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
   const runShortcut = (id: string) => {
     const card = shortcuts.find((s) => s.id === id);
     if (!card) return;
-    const hasScript = card.actions.some((a) => a.type === 'run_script');
+    const DANGEROUS_EXTENSIONS = ['.exe', '.cmd', '.bat', '.ps1', '.vbs', '.js', '.wsf', '.msi'];
+    const hasScript = card.actions.some((a) => {
+      if (a.type === 'run_script' || a.type === 'launch_app') return true;
+      if (a.type === 'open_file') {
+        const val = (a.value || '').toLowerCase();
+        const dotIdx = val.lastIndexOf('.');
+        if (dotIdx !== -1 && DANGEROUS_EXTENSIONS.includes(val.slice(dotIdx))) return true;
+      }
+      return false;
+    });
     if (hasScript) {
       setConfirmRun(card);
       return;

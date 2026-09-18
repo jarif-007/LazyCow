@@ -14,24 +14,21 @@ interface ComboBuilderProps {
 
 export const ComboBuilder: React.FC<ComboBuilderProps> = ({ onApply, onError }) => {
   const [modifiers, setModifiers] = useState<string[]>(['']);
-  const [keys, setKeys] = useState<string[]>(['']);
+  const [key, setKey] = useState<string>('');
 
   const addModifier = () => setModifiers((p) => [...p, '']);
-  const addKey = () => setKeys((p) => [...p, '']);
   const removeModifier = (i: number) => { if (modifiers.length > 1) setModifiers((p) => p.filter((_, j) => j !== i)); };
-  const removeKey = (i: number) => { if (keys.length > 1) setKeys((p) => p.filter((_, j) => j !== i)); };
 
   const handleApply = () => {
-    const activeMods = modifiers.filter((m) => m !== '');
-    const activeKeys = keys.filter((k) => k !== '');
+    const activeMods = Array.from(new Set(modifiers.filter((m) => m !== '')));
     
     if (activeMods.length === 0) { onError('At least one modifier (Ctrl, Alt, Shift, or Win) is required.'); return; }
-    if (activeKeys.length === 0) { onError('At least one key is required.'); return; }
+    if (!key) { onError('A key is required.'); return; }
     
-    // Modifiers always come first
-    const combo = [...activeMods, ...activeKeys].join(' + ');
+    // Modifiers always come first, followed by the single trigger key
+    const combo = [...activeMods, key].join(' + ');
     onApply(combo);
-    setModifiers(['']); setKeys(['']);
+    setModifiers(['']); setKey('');
   };
 
   return (
@@ -60,27 +57,14 @@ export const ComboBuilder: React.FC<ComboBuilderProps> = ({ onApply, onError }) 
           <span className="material-symbols-outlined text-[16px]">add</span>
         </button>
 
-        {/* Key slots */}
-        {keys.map((k, i) => (
-          <React.Fragment key={`k-${i}`}>
-            {i > 0 && <span className="text-muted-foreground font-semibold text-sm">+</span>}
-            <div className="flex items-center gap-1">
-              <select value={k} onChange={(e) => setKeys((p) => p.map((v, j) => (j === i ? e.target.value : v)))}
-                className="bg-background/50 border border-border rounded-lg px-3 py-2 font-body-sm text-foreground focus:ring-1 focus:ring-primary focus:outline-none">
-                <option value="">- Key -</option>
-                {KEYS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-              </select>
-              {keys.length > 1 && (
-                <button onClick={() => removeKey(i)} className="text-red-400 hover:text-red-500 p-0.5">
-                  <span className="material-symbols-outlined text-[14px]">close</span>
-                </button>
-              )}
-            </div>
-          </React.Fragment>
-        ))}
-        <button onClick={addKey} className="p-1.5 rounded-lg border border-dashed border-border text-muted-foreground hover:text-primary hover:border-primary transition-colors" title="Add key">
-          <span className="material-symbols-outlined text-[16px]">add</span>
-        </button>
+        {/* Single Key slot */}
+        <div className="flex items-center gap-1">
+          <select value={key} onChange={(e) => setKey(e.target.value)}
+            className="bg-background/50 border border-border rounded-lg px-3 py-2 font-body-sm text-foreground focus:ring-1 focus:ring-primary focus:outline-none">
+            <option value="">- Key -</option>
+            {KEYS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+          </select>
+        </div>
 
         <button onClick={handleApply} className="px-4 py-2 rounded-lg font-label-caps text-label-caps bg-primary text-primary-foreground hover:opacity-90 transition-all">Set</button>
       </div>
