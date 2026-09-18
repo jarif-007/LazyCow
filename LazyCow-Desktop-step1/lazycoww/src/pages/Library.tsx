@@ -23,21 +23,23 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
     const loaded: SavedShortcut[] = JSON.parse(localStorage.getItem('lazycow-shortcuts') || '[]');
     setShortcuts(loaded);
     setFailedHotkeys(new Set());
-    // Keep the main process's global-hotkey registrations in sync with
-    // whatever's currently saved (renaming/deleting/saving all land here).
     window.electronAPI?.syncHotkeys(loaded.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions })));
   }, []);
 
   useEffect(() => { refreshShortcuts(); }, [refreshShortcuts]);
 
-  const [executions, setExecutions] = useState<Record<string, { status: 'idle' | 'running' | 'success' | 'error'; currentStepIndex: number; errors?: string[]; durationMs?: number }>>({});
+  const [executions, setExecutions] = useState<Record<string, {
+    status: 'idle' | 'running' | 'success' | 'error' | 'cancelled';
+    currentStepIndex: number;
+    errors?: string[];
+    durationMs?: number;
+    cancelledAfter?: string;
+  }>>({});
+  // Tracks which shortcuts have a cancel request in flight (button shows "Cancelling...")
+  const [cancellingIds, setCancellingIds] = useState<Set<string>>(new Set());
   const resetTimers = useRef<Record<string, NodeJS.Timeout>>({});
   useEffect(() => () => { Object.values(resetTimers.current).forEach(clearTimeout); }, []);
 
-  // A shortcut containing a run_script action executes an arbitrary shell
-  // command. That's fine for something the user built themselves in the
-  // Builder — but it always needs an explicit, visible confirmation step
-  // before it actually runs, so nothing runs silently.
   const [confirmRun, setConfirmRun] = useState<SavedShortcut | null>(null);
 
   const executeShortcut = useCallback((card: SavedShortcut) => {
@@ -68,23 +70,43 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
     executeShortcut(card);
   };
 
+  const handleCancelShortcut = useCallback(async (shortcutId: string) => {
+    // Mark as cancelling immediately so the button reflects the click,
+    // even though the actual stop happens at the next step boundary.
+    setCancellingIds((p) => new Set(p).add(shortcutId));
+    try {
+      await window.electronAPI?.cancelShortcut(shortcutId);
+    } catch {
+      // If the cancel request itself failed, drop the cancelling state
+      setCancellingIds((p) => { const n = new Set(p); n.delete(shortcutId); return n; });
+    }
+  }, []);
+
   // ── Live progress / completion / hotkey events from the main process ──
   useEffect(() => {
     const offProgress = window.electronAPI?.onShortcutProgress(({ shortcutId, stepIndex }) => {
-      setExecutions((p) => ({ ...p, [shortcutId]: { status: 'running', currentStepIndex: stepIndex } }));
+      setExecutions((p) => ({ ...p, [shortcutId]: { ...(p[shortcutId] || { status: 'running' }), status: 'running', currentStepIndex: stepIndex } }));
     });
 
-    const offComplete = window.electronAPI?.onShortcutComplete(({ shortcutId, results, durationMs }) => {
+      const offComplete = window.electronAPI?.onShortcutComplete(({ shortcutId, results, durationMs, cancelled, lastActionTitle }) => {
       const failed = results.filter((r) => !r.success);
+      const status: 'success' | 'error' | 'cancelled' = cancelled
+        ? 'cancelled'
+        : failed.length
+          ? 'error'
+          : 'success';
       setExecutions((p) => ({
         ...p,
         [shortcutId]: {
-          status: failed.length ? 'error' : 'success',
+          status,
           currentStepIndex: results.length,
           errors: failed.map((f) => f.error || 'Unknown error'),
           durationMs,
+          cancelledAfter: cancelled ? (lastActionTitle || undefined) : undefined,
         },
       }));
+      // Drop the "cancelling" flag now that execution has stopped
+      setCancellingIds((p) => { const n = new Set(p); n.delete(shortcutId); return n; });
       resetTimers.current[shortcutId] = setTimeout(() => {
         setExecutions((p) => ({ ...p, [shortcutId]: { status: 'idle', currentStepIndex: -1 } }));
       }, 10000);
@@ -94,14 +116,10 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
       setFailedHotkeys((p) => new Set(p).add(shortcutId));
     });
 
-    // Non-script shortcuts triggered by their global hotkey are already
-    // executed by main by this point — this just starts the UI animation.
     const offHotkey = window.electronAPI?.onHotkeyTriggered((shortcutId) => {
       setExecutions((p) => ({ ...p, [shortcutId]: { status: 'running', currentStepIndex: 0 } }));
     });
 
-    // Script-containing shortcuts triggered by hotkey: main hasn't run
-    // anything yet, it's waiting on us to confirm.
     const offHotkeyNeedsConfirm = window.electronAPI?.onHotkeyNeedsConfirm((shortcutId) => {
       setShortcuts((current) => {
         const card = current.find((s) => s.id === shortcutId);
@@ -115,7 +133,6 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
 
   const [cardShades, setCardShades] = useState<Record<string, 'light' | 'medium' | 'dark'>>({});
 
-  // ── Rename with inline modal ──
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [renameError, setRenameError] = useState('');
@@ -163,12 +180,9 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
       ...card,
       id: crypto.randomUUID(),
       name: candidateName,
-      hotkey: '', // Unassigned so it does not conflict immediately
+      hotkey: '',
       createdAt: new Date().toISOString(),
-      actions: card.actions.map((a) => ({
-        ...a,
-        id: crypto.randomUUID(),
-      })),
+      actions: card.actions.map((a) => ({ ...a, id: crypto.randomUUID() })),
     };
     const updated = [duplicated, ...shortcuts];
     setShortcuts(updated);
@@ -219,7 +233,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
         gridCols === 2 ? 'md:grid-cols-2' : gridCols === 3 ? 'md:grid-cols-2 lg:grid-cols-3' : 'md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
       }`}>
         {filtered.map((card) => (
-          <ShortcutCard
+           <ShortcutCard
             key={card.id}
             shortcut={card}
             shade={cardShades[card.id] || 'medium'}
@@ -228,15 +242,16 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
             onRename={handleRename}
             onDelete={setDeleteId}
             onRun={runShortcut}
+            onCancel={handleCancelShortcut}
             onDuplicate={handleDuplicate}
             hasHotkeyConflict={failedHotkeys.has(card.id)}
+            isCancelling={cancellingIds.has(card.id)}
             execution={executions[card.id]}
             customColorMode={customColorMode}
           />
         ))}
       </div>
 
-      {/* Inline Rename Modal */}
       {renameId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" onClick={() => { setRenameId(null); setRenameError(''); }} />
@@ -257,7 +272,6 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
       )}
       {deleteId && <DeleteModal onConfirm={confirmDelete} onCancel={() => setDeleteId(null)} />}
 
-      {/* Confirm before running any shortcut that executes a shell command */}
       {confirmRun && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" onClick={() => setConfirmRun(null)} />

@@ -4,10 +4,11 @@ interface SidebarProps {
   activeTab: string;
   onTabClick: (tab: string) => void;
   collapsed: boolean;
+  isAutoCollapsed?: boolean;
   onToggleCollapse: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabClick, collapsed, onToggleCollapse }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabClick, collapsed, isAutoCollapsed, onToggleCollapse }) => {
   const navItems = [
     { id: 'library', label: 'Library', icon: 'auto_stories' },
     { id: 'builder', label: 'Builder', icon: 'construction' },
@@ -82,16 +83,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabClick, collaps
           </button>
         )}
         
-        {/* Collapse toggle */}
-        <button
-          onClick={onToggleCollapse}
-          className="w-full py-2 border border-border rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          <span className="material-symbols-outlined text-[18px] transition-transform duration-300">
-            {collapsed ? 'chevron_right' : 'chevron_left'}
-          </span>
-        </button>
+         {/* Collapse toggle — hidden when auto-collapsed by window size */}
+        {!isAutoCollapsed && (
+          <button
+            onClick={onToggleCollapse}
+            className="w-full py-2 border border-border rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            <span className="material-symbols-outlined text-[18px] transition-transform duration-300">
+              {collapsed ? 'chevron_right' : 'chevron_left'}
+            </span>
+          </button>
+        )}
       </div>
     </nav>
   );

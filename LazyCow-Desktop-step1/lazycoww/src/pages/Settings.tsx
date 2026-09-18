@@ -54,15 +54,15 @@ export default function Settings({ themeMode, onThemeModeChange, customColorMode
   }, []);
 
   const updateSetting = (key: string, value: boolean | string) => {
-    const updated = { ...settings, [key]: value };
-    setSettings(updated);
-    localStorage.setItem('lazycow_settings', JSON.stringify(updated));
-    if (key === 'startAtLogin' || key === 'keepInTray' || key === 'executionNotifications') {
-      if (window.electronAPI?.updateGeneralSettings) {
-        window.electronAPI.updateGeneralSettings({ [key]: value as boolean });
-      }
+  const updated = { ...settings, [key]: value };
+  setSettings(updated);
+  localStorage.setItem('lazycow_settings', JSON.stringify(updated));
+  if (key === 'startAtLogin' || key === 'keepInTray' || key === 'executionNotifications') {
+    if (window.electronAPI?.updateGeneralSettings) {
+      window.electronAPI.updateGeneralSettings({ [key]: value as boolean });
     }
-  };
+  }
+};
 
   return (
     <main className="flex-1 p-margin-page w-full overflow-y-auto">

@@ -1,8 +1,10 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import { CatalogItem, actionCatalog, categoryOrder } from '../types/actions';
+import { CollapsedSearchPopover } from './CollapsedSearchPopover';
 
 interface ActionSidebarProps {
   collapsed: boolean;
+  isAutoCollapsed?: boolean;
   onToggle: () => void;
   onAddAction: (item: CatalogItem) => void;
   onDragStart: (e: React.DragEvent, item: CatalogItem) => void;
@@ -12,14 +14,14 @@ interface ActionSidebarProps {
 
 export const ActionSidebar: React.FC<ActionSidebarProps> = ({
   collapsed,
+  isAutoCollapsed,
   onToggle,
   onAddAction,
   onDragStart,
   searchQuery,
   onSearchChange,
 }) => {
-  const [collapsedSearchOpen, setCollapsedSearchOpen] = useState(false);
-  const collapsedSearchRef = useRef<HTMLInputElement>(null);
+  const [popoverOpen, setPopoverOpen] = useState(false);
 
   const filteredCatalog = actionCatalog.filter((item) => {
     if (searchQuery === '') return true;
@@ -27,79 +29,58 @@ export const ActionSidebar: React.FC<ActionSidebarProps> = ({
     return item.title.toLowerCase().includes(q) || item.category.toLowerCase().includes(q);
   });
 
-  const handleCollapsedSearchToggle = () => {
-    setCollapsedSearchOpen((prev) => {
-      if (!prev) setTimeout(() => collapsedSearchRef.current?.focus(), 100);
-      else onSearchChange('');
-      return !prev;
-    });
-  };
-
   return (
+    <>
     <aside
-      className={`transition-all duration-300 ease-in-out flex flex-col gap-3 bg-card/60 border border-border rounded-xl shadow-sm backdrop-blur-sm overflow-hidden shrink-0 ${
+      className={`transition-all duration-300 ease-in-out flex flex-col gap-3 bg-card/60 border border-border rounded-xl shadow-sm overflow-hidden shrink-0 h-full min-h-0 ${
         collapsed ? 'w-[64px] p-2' : 'w-full lg:w-72 p-4'
       }`}
     >
-      {/* Toggle */}
-      <button
-        onClick={onToggle}
-        className="self-end p-1.5 rounded-lg hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors shrink-0"
-        title={collapsed ? 'Expand' : 'Collapse'}
-      >
-        <span className="material-symbols-outlined text-[20px]">
-          {collapsed ? 'chevron_right' : 'chevron_left'}
-        </span>
-      </button>
+        {/* Toggle — hidden when auto-collapsed by window size */}
+      {!isAutoCollapsed && (
+        <button
+          onClick={onToggle}
+          className="self-end p-1.5 rounded-lg hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors shrink-0"
+          title={collapsed ? 'Expand' : 'Collapse'}
+        >
+          <span className="material-symbols-outlined text-[20px]">
+            {collapsed ? 'chevron_right' : 'chevron_left'}
+          </span>
+        </button>
+      )}
 
       {collapsed ? (
         /* COLLAPSED: Icon strip */
-        <div className="flex flex-col gap-2 items-center overflow-y-auto overflow-x-hidden pr-1">
-          {collapsedSearchOpen ? (
-            <div className="w-full flex items-center gap-1 shrink-0">
-              <input
-                ref={collapsedSearchRef}
-                type="text"
-                placeholder="Filter..."
-                value={searchQuery}
-                onChange={(e) => onSearchChange(e.target.value)}
-                onBlur={() => { if (searchQuery === '') setCollapsedSearchOpen(false); }}
-                onKeyDown={(e) => { if (e.key === 'Escape') { onSearchChange(''); setCollapsedSearchOpen(false); } }}
-                className="w-full bg-background/80 border border-border rounded-md px-2 py-1.5 text-[11px] text-foreground focus:ring-primary focus:outline-none"
-              />
-              <button onClick={() => { onSearchChange(''); setCollapsedSearchOpen(false); }} className="p-1 text-muted-foreground hover:text-foreground shrink-0">
-                <span className="material-symbols-outlined text-[14px]">close</span>
-              </button>
-            </div>
-          ) : (
-            <button onClick={handleCollapsedSearchToggle} className="p-2 rounded-lg hover:bg-muted/30 text-muted-foreground hover:text-foreground shrink-0" title="Search">
-              <span className="material-symbols-outlined text-[20px]">search</span>
-            </button>
-          )}
+        <div className="flex flex-col gap-2 items-center overflow-y-auto overflow-x-hidden pr-1 flex-1 min-h-0">
+          <button
+            onClick={() => setPopoverOpen(true)}
+            className="p-2 rounded-lg hover:bg-muted/30 text-muted-foreground hover:text-foreground shrink-0"
+            title="Search actions"
+          >
+            <span className="material-symbols-outlined text-[20px]">search</span>
+          </button>
 
-          {actionCatalog
-            .filter((item) => !collapsedSearchOpen || searchQuery === '' || item.title.toLowerCase().includes(searchQuery.toLowerCase()) || item.category.toLowerCase().includes(searchQuery.toLowerCase()))
-            .map((item) => (
-              <button
-                key={item.type}
-                onClick={() => onAddAction(item)}
-                disabled={item.disabled}
-                draggable={!item.disabled}
-                onDragStart={(e) => onDragStart(e, item)}
-                className={`p-2 rounded-lg transition-all relative group w-full flex justify-center ${
-                  item.disabled ? 'opacity-40 grayscale cursor-not-allowed' : 'cursor-grab active:cursor-grabbing hover:bg-muted/30'
-                }`}
-                title={item.title}
-              >
-                <div className={`${item.colorClass} p-1.5 rounded-md flex`}>
-                  <span className="material-symbols-outlined text-[18px]">{item.icon}</span>
-                </div>
-                <span className="absolute left-full ml-2.5 px-2.5 py-1.5 bg-foreground text-background text-[11px] rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-[100] font-body-sm shadow-lg">
-                  {item.title}{item.disabled && ` (${item.disabledLabel})`}
-                  <span className="absolute right-full top-1/2 -translate-y-1/2 w-0 h-0 border-t-[5px] border-t-transparent border-b-[5px] border-b-transparent border-r-[5px] border-r-foreground"></span>
-                </span>
-              </button>
-            ))}
+          {actionCatalog.map((item) => (
+            <button
+              key={item.type}
+              onClick={() => onAddAction(item)}
+              disabled={item.disabled}
+              draggable={!item.disabled}
+              onDragStart={(e) => onDragStart(e, item)}
+              className={`p-2 rounded-lg transition-all relative group w-full flex justify-center ${
+                item.disabled ? 'opacity-40 grayscale cursor-not-allowed' : 'cursor-grab active:cursor-grabbing hover:bg-muted/30'
+              }`}
+              title={item.title}
+            >
+              <div className={`${item.colorClass} p-1.5 rounded-md flex`}>
+                <span className="material-symbols-outlined text-[18px]">{item.icon}</span>
+              </div>
+              <span className="absolute left-full ml-2.5 px-2.5 py-1.5 bg-foreground text-background text-[11px] rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-[100] font-body-sm shadow-lg">
+                {item.title}{item.disabled && ` (${item.disabledLabel})`}
+                <span className="absolute right-full top-1/2 -translate-y-1/2 w-0 h-0 border-t-[5px] border-t-transparent border-b-[5px] border-b-transparent border-r-[5px] border-r-foreground"></span>
+              </span>
+            </button>
+          ))}
         </div>
       ) : (
         /* EXPANDED: Full sidebar */
@@ -115,7 +96,7 @@ export const ActionSidebar: React.FC<ActionSidebarProps> = ({
             />
           </div>
 
-          <div className="flex flex-col gap-6 overflow-y-auto pr-1">
+             <div className="flex flex-col gap-6 overflow-y-auto pr-1 flex-1 min-h-0">
             {categoryOrder.map((cat) => {
               const items = filteredCatalog.filter((i) => i.category === cat);
               if (items.length === 0) return null;
@@ -153,5 +134,11 @@ export const ActionSidebar: React.FC<ActionSidebarProps> = ({
         </>
       )}
     </aside>
+    <CollapsedSearchPopover
+      open={popoverOpen}
+      onClose={() => setPopoverOpen(false)}
+      onSelectAction={onAddAction}
+    />
+    </>
   );
 };

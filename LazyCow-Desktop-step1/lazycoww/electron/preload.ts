@@ -17,6 +17,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── Real execution engine ──
   runShortcut: (shortcut: unknown) => ipcRenderer.invoke('execute-shortcut', shortcut),
 
+  // ── Cancellation ──
+  cancelShortcut: (shortcutId: string) => ipcRenderer.invoke('cancel-shortcut', { shortcutId }),
+
   // ── Global hotkeys ──
   syncHotkeys: (shortcuts: unknown) => ipcRenderer.send('sync-hotkeys', shortcuts),
 
@@ -35,8 +38,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('shortcut-progress', listener)
   },
 
-  onShortcutComplete: (callback: (e: { shortcutId: string; results: { actionId: string; success: boolean; error?: string }[]; durationMs?: number }) => void) => {
-    const listener = (_event: unknown, data: { shortcutId: string; results: { actionId: string; success: boolean; error?: string }[]; durationMs?: number }) => callback(data)
+   onShortcutComplete: (callback: (e: { 
+    shortcutId: string; 
+    results: { actionId: string; success: boolean; error?: string }[]; 
+    durationMs?: number;
+    cancelled?: 'graceful' | 'immediate' | null;
+    lastActionTitle?: string | null;
+  }) => void) => {
+    const listener = (_event: unknown, data: { 
+      shortcutId: string; 
+      results: { actionId: string; success: boolean; error?: string }[]; 
+      durationMs?: number;
+      cancelled?: 'graceful' | 'immediate' | null;
+      lastActionTitle?: string | null;
+    }) => callback(data)
     ipcRenderer.on('shortcut-complete', listener)
     return () => ipcRenderer.removeListener('shortcut-complete', listener)
   },

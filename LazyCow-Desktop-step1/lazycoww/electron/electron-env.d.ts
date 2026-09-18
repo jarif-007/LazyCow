@@ -43,9 +43,16 @@ interface Window {
     selectPath: (type: 'app' | 'file' | 'folder') => Promise<string | null>
     // ── Real execution + global hotkeys. Each `on*` returns an unsubscribe function. ──
     runShortcut: (shortcut: ShortcutForIPC) => Promise<ActionResult[]>
+       cancelShortcut: (shortcutId: string) => Promise<{ ok: boolean; error?: string }>
     syncHotkeys: (shortcuts: ShortcutForIPC[]) => void
     onShortcutProgress: (callback: (e: ShortcutProgressEvent) => void) => () => void
-    onShortcutComplete: (callback: (e: { shortcutId: string; results: ActionResult[]; durationMs?: number }) => void) => () => void
+    onShortcutComplete: (callback: (e: { 
+      shortcutId: string; 
+      results: ActionResult[]; 
+      durationMs?: number;
+      cancelled?: 'graceful' | null;
+      lastActionTitle?: string | null;
+    }) => void) => () => void
     onHotkeyTriggered: (callback: (shortcutId: string) => void) => () => void
     onHotkeyNeedsConfirm: (callback: (shortcutId: string) => void) => () => void
     onHotkeyRegisterFailed: (callback: (info: { shortcutId: string; hotkey: string }) => void) => () => void

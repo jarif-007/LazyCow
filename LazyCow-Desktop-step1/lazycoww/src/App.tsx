@@ -37,6 +37,10 @@ function App() {
   const [systemIsDark, setSystemIsDark] = useState<boolean>(false);
   const [systemAccent, setSystemAccent] = useState<string>('#0078D4');
   const [appReady, setAppReady] = useState(false);
+  // `sidebarCollapsed` = what the user sees.
+  // `manualCollapse` = user's explicit choice (persists across resizes).
+  // The visible state is: manualCollapse OR window-too-narrow.
+  const [manualCollapse, setManualCollapse] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [libraryRefreshKey, setLibraryRefreshKey] = useState(0);
   const [builderKey, setBuilderKey] = useState(0);
@@ -44,7 +48,31 @@ function App() {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [pendingTab, setPendingTab] = useState<string | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [editShortcut, setEditShortcut] = useState<SavedShortcut | null>(null);
+   const [editShortcut, setEditShortcut] = useState<SavedShortcut | null>(null);
+
+  // ── Auto-collapse sidebars based on window width ──
+  // Below 900px: main sidebar forces to collapsed icon mode.
+  // Below 1100px: ActionSidebar (in Builder) forces to collapsed icon mode.
+  const [isMainSidebarAutoCollapsed, setIsMainSidebarAutoCollapsed] = useState(false);
+  const [isActionSidebarAutoCollapsed, setIsActionSidebarAutoCollapsed] = useState(false);
+
+  useEffect(() => {
+    const checkWidth = () => {
+      const w = window.innerWidth;
+      const mainAuto = w < 900;
+      const actionAuto = w < 1100;
+      setIsMainSidebarAutoCollapsed(mainAuto);
+      setIsActionSidebarAutoCollapsed(actionAuto);
+      // Visible state = (user's manual choice) OR (window too narrow to show text)
+      setSidebarCollapsed((prev) => {
+        const next = mainAuto || manualCollapse;
+        return prev === next ? prev : next;
+      });
+    };
+    checkWidth();
+    window.addEventListener('resize', checkWidth);
+    return () => window.removeEventListener('resize', checkWidth);
+  }, [manualCollapse]);
 
   // ── Load saved preferences ──
   useEffect(() => {
@@ -96,30 +124,24 @@ function App() {
     }
   }, []);
 
-  // ── Get system accent ──
   // ── Get system accent + listen for changes ──
-// ── Get system accent + listen for changes ──
-useEffect(() => {
-  if (!window.electronAPI || customColorMode) return;
+  useEffect(() => {
+    if (!window.electronAPI || customColorMode) return;
 
-  // Get initial accent
-  window.electronAPI.getSystemAccent().then((hex) => {
-    console.log('ACCENT DEBUG: received hex:', hex);
-    setSystemAccent(hex);
-    const hsl = hexToHSL(hex);
-    console.log('ACCENT DEBUG: converted HSL:', hsl);
-    document.documentElement.style.setProperty('--primary', hsl);
-  });
-
-  // Listen for real-time changes
-  window.electronAPI.onSystemAccent((hex) => {
-    console.log('ACCENT DEBUG: live update hex:', hex);
-    setSystemAccent(hex);
-    if (!customColorMode) {
+    // Get initial accent
+    window.electronAPI.getSystemAccent().then((hex) => {
+      setSystemAccent(hex);
       document.documentElement.style.setProperty('--primary', hexToHSL(hex));
-    }
-  });
-}, [customColorMode]);
+    });
+
+    // Listen for real-time changes
+    window.electronAPI.onSystemAccent((hex) => {
+      setSystemAccent(hex);
+      if (!customColorMode) {
+        document.documentElement.style.setProperty('--primary', hexToHSL(hex));
+      }
+    });
+  }, [customColorMode]);
   // ── Compute dark mode for icon display ──
   const darkMode = document.documentElement.classList.contains('dark');
 
@@ -226,11 +248,17 @@ useEffect(() => {
   const sidebarWidth = sidebarCollapsed ? '64px' : '260px';
 
   return (
-    <div className="min-h-screen flex w-full">
-      <Sidebar activeTab={activeTab} onTabClick={handleTabClick} collapsed={sidebarCollapsed} onToggleCollapse={() => setSidebarCollapsed((p) => !p)} />
+    <div className="flex w-full h-screen overflow-hidden">
+        <Sidebar
+          activeTab={activeTab}
+          onTabClick={handleTabClick}
+          collapsed={sidebarCollapsed}
+          isAutoCollapsed={isMainSidebarAutoCollapsed}
+          onToggleCollapse={() => setManualCollapse((p) => !p)}
+        />
 
-      <div className="flex-1 flex flex-col relative z-10 min-h-screen" style={{ marginLeft: sidebarWidth, transition: 'margin-left 0.3s ease' }}>
-        <header className="bg-background/95 w-full h-16 flex items-center justify-between px-margin-page z-10 sticky top-0 border-b border-border/30">
+      <div className="flex-1 flex flex-col relative z-10 min-h-0 overflow-hidden" style={{ marginLeft: sidebarWidth, transition: 'margin-left 0.3s ease' }}>
+        <header className="bg-background/95 w-full h-16 flex items-center justify-between px-margin-page z-10 sticky top-0 border-b border-border/30 shrink-0">
           <div className="flex items-center">
             <h1 className="font-title-sm text-title-sm text-foreground tracking-tight transition-colors duration-300 capitalize">
               {activeTab === 'builder' && editShortcut ? `Editing: ${editShortcut.name}` : `${activeTab} Overview`}
@@ -260,7 +288,15 @@ useEffect(() => {
 </div>
 
         <div className={`page-container ${activeTab === 'builder' ? 'active' : ''}`}>
-          {appReady && <Builder key={builderKey} editData={editShortcut} onUnsavedChanges={setHasUnsavedChanges} onSaveSuccess={handleSaveSuccess} />}
+          {appReady && (
+            <Builder
+              key={builderKey}
+              editData={editShortcut}
+              isActionSidebarAutoCollapsed={isActionSidebarAutoCollapsed}
+              onUnsavedChanges={setHasUnsavedChanges}
+              onSaveSuccess={handleSaveSuccess}
+            />
+          )}
         </div>
 
         <div className={`page-container ${activeTab === 'settings' ? 'active' : ''}`}>

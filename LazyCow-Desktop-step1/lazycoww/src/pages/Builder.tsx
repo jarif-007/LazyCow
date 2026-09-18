@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { ActionItem, CatalogItem, actionCatalog, SavedShortcut } from '../types/actions';
 import { ActionSidebar } from '../components/ActionSidebar';
 import { ActionSequence } from '../components/ActionSequence';
@@ -7,14 +7,26 @@ import { useHotkeyRecorder } from '../hooks/useHotkeyRecorder';
 
 interface BuilderProps {
   editData?: SavedShortcut | null;
+  isActionSidebarAutoCollapsed?: boolean;
   onUnsavedChanges?: (hasChanges: boolean) => void;
   onSaveSuccess?: () => void;
 }
 
 const MODIFIERS = ['Ctrl', 'Alt', 'Shift', 'Win'];
 
-export const Builder: React.FC<BuilderProps> = ({ editData, onUnsavedChanges, onSaveSuccess }) => {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+export const Builder: React.FC<BuilderProps> = ({ editData, isActionSidebarAutoCollapsed, onUnsavedChanges, onSaveSuccess }) => {
+     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+   const actionSidebarRef = useRef<HTMLDivElement>(null);
+  const builderPanelRef = useRef<HTMLDivElement>(null);
+
+    // ActionSidebar visible state = (user's manual choice) OR (window too narrow).
+  const [manualCollapse, setManualCollapse] = useState(false);
+  useEffect(() => {
+    const next = !!isActionSidebarAutoCollapsed || manualCollapse;
+    setSidebarCollapsed((prev) => (prev === next ? prev : next));
+  }, [isActionSidebarAutoCollapsed, manualCollapse]);
+
+
   const [searchQuery, setSearchQuery] = useState('');
   const [shortcutName, setShortcutName] = useState('');
   const [shortcutDesc, setShortcutDesc] = useState('');
@@ -158,10 +170,20 @@ export const Builder: React.FC<BuilderProps> = ({ editData, onUnsavedChanges, on
   };
 
   return (
-    <main className="flex-1 py-margin-page pr-margin-page pl-2 w-full max-w-container-max mx-auto overflow-hidden">
-      <div className="flex gap-4 h-[calc(100vh-140px)]">
-        <ActionSidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((p) => !p)} onAddAction={addAction} onDragStart={handleSidebarDrag} searchQuery={searchQuery} onSearchChange={setSearchQuery} />
-        <div className="flex-1 flex flex-col gap-6 overflow-y-auto pr-2 relative pb-20">
+    <main className="flex-1 py-margin-page pr-margin-page pl-2 w-full max-w-container-max mx-auto overflow-hidden flex flex-col min-h-0">
+      <div className="flex gap-4 flex-1 min-h-0 overflow-hidden">
+        <div className="flex shrink-0 min-h-0 h-full overflow-hidden">
+          <ActionSidebar
+            collapsed={sidebarCollapsed}
+            isAutoCollapsed={isActionSidebarAutoCollapsed}
+            onToggle={() => setManualCollapse((p) => !p)}
+            onAddAction={addAction}
+            onDragStart={handleSidebarDrag}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+          />
+        </div>
+        <div className="flex-1 min-w-0 min-h-0 h-full flex flex-col gap-6 overflow-y-auto overflow-x-hidden pr-2 relative pb-20">
           <div className="flex flex-col gap-2">
             <div className="flex flex-col gap-1">
               <div className="flex items-center gap-2">

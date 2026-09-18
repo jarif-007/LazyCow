@@ -91,6 +91,8 @@ function createWindow() {
   win = new BrowserWindow({
     icon: getAppIconPath(),
     autoHideMenuBar: true,
+    minWidth: 800,
+    minHeight: 600,
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
       contextIsolation: true,
@@ -143,7 +145,6 @@ function getWindowsAccentColor(): Promise<string> {
         if (typeof systemPreferences.getAccentColor === 'function') {
           const accent = systemPreferences.getAccentColor()
           if (accent && accent.length >= 6) {
-            // Electron's getAccentColor() returns hex RRGGBBAA or RRGGBB
             const hex = accent.slice(0, 6).toUpperCase()
             if (/^[0-9A-F]{6}$/.test(hex)) {
               resolve(`#${hex}`)
@@ -182,14 +183,11 @@ ipcMain.handle('get-system-accent', async () => {
 // ──────────────────────────────────────────────
 // SHORTCUT EXECUTION ENGINE
 // ──────────────────────────────────────────────
-// This is the trust boundary of the whole app: everything the renderer can
-// ask us to do arrives here as plain data (a shortcut's action list), never
-// as code. We only accept the specific fields we read below (action.type,
-// action.value) — nothing else on the object is trusted or evaluated.
 
 const ActionSchema = z.object({
   id: z.string().min(1).max(100),
   type: z.string().min(1).max(50),
+  title: z.string().max(200).optional(),
   value: z.string().max(8192)
 }).passthrough()
 
@@ -209,13 +207,22 @@ interface ActionResult {
   error?: string
 }
 
-// System-control actions (volume/DND/night light) don't have a reliable,
-// officially-documented Windows CLI/API. Rather than ship a hacky
-// registry/SendKeys workaround and call it "done", these are left as clear
-// not-yet-implemented stubs — see the LazyCow remaining-work notes.
 const runningShortcuts = new Set<string>()
+// Simple cancellation request set — when a shortcut's id is present,
+// the execution loop will stop at the next step boundary (graceful cancel).
+const cancelRequests = new Set<string>()
 
-async function runAction(action: ShortcutActionData): Promise<void> {
+// ── Settle times (ms) so the progress UI matches app launching ──
+const SETTLE_TIME: Record<string, number> = {
+  launch_app: 800,
+  open_vscode: 1000,
+}
+
+function isShortcutRunning(shortcutId: string): boolean {
+  return runningShortcuts.has(shortcutId)
+}
+
+async function runAction(action: ShortcutActionData, shortcutId: string): Promise<void> {
   switch (action.type) {
     case 'launch_app': {
       let stat
@@ -230,6 +237,8 @@ async function runAction(action: ShortcutActionData): Promise<void> {
       
       const err = await shell.openPath(action.value)
       if (err) throw new Error(err)
+      // Settle time so the app has time to appear before the next step
+      await new Promise((r) => setTimeout(r, SETTLE_TIME.launch_app))
       return
     }
     case 'open_folder':
@@ -257,6 +266,8 @@ async function runAction(action: ShortcutActionData): Promise<void> {
         }
         throw new Error(`Failed to open in VS Code: ${error.message || String(err)}`)
       }
+      // Settle time for VS Code to actually appear
+      await new Promise((r) => setTimeout(r, SETTLE_TIME.open_vscode))
       return
     }
     case 'set_volume': {
@@ -327,7 +338,6 @@ async function runAction(action: ShortcutActionData): Promise<void> {
       $target = [Math]::Max(0, [Math]::Min(100, ${brightness}))
       $success = $false
 
-      # 1. Try WMI (Laptops & Integrated Displays)
       try {
           $wmi = Get-WmiObject -Namespace root/wmi -Class WmiMonitorBrightnessMethods -ErrorAction Stop
           if ($wmi) {
@@ -336,7 +346,6 @@ async function runAction(action: ShortcutActionData): Promise<void> {
           }
       } catch { }
 
-      # 2. Try Modern CIM (Windows 10/11)
       if (-not $success) {
           try {
               $cim = Get-CimInstance -Namespace root/wmi -ClassName WmiMonitorBrightnessMethods -ErrorAction Stop
@@ -347,7 +356,6 @@ async function runAction(action: ShortcutActionData): Promise<void> {
           } catch { }
       }
 
-      # 3. Try DDC/CI via dxva2.dll (External Desktop Monitors)
       if (-not $success) {
           try {
               $code = @'
@@ -461,13 +469,11 @@ async function runAction(action: ShortcutActionData): Promise<void> {
         }
       } catch { /* fallback to defaults */ }
 
-      // Validate layout and orientation
       const VALID_LAYOUTS = new Set(['snap_left', 'snap_right', 'maximize', 'split_specific', 'tri', 'quad'])
       const VALID_ORIENTATIONS = new Set(['vertical', 'horizontal', 'main_left', 'main_right', 'main_top', 'main_bottom'])
       if (!VALID_LAYOUTS.has(layout)) layout = 'snap_left'
       if (!VALID_ORIENTATIONS.has(orientation)) orientation = 'vertical'
 
-      // Sanitize process names to prevent script/command injection
       const SAFE_NAME_REGEX = /^[a-zA-Z0-9_.\s-]*$/
       for (const slot of ['tl', 'tr', 'bl', 'br'] as const) {
         const val = (apps[slot] || '').trim()
@@ -640,15 +646,16 @@ async function runAction(action: ShortcutActionData): Promise<void> {
       
       try {
         const child = exec(action.value, { windowsHide: true })
+        
         signal.addEventListener('abort', () => {
           if (child.pid) {
             exec(`taskkill /pid ${child.pid} /t /f`, { windowsHide: true })
           }
         })
         
-        await new Promise((resolve, reject) => {
+        await new Promise<void>((resolve, reject) => {
           child.on('exit', (code) => {
-            if (code === 0) resolve(undefined)
+            if (code === 0) resolve()
             else reject(new Error(`Command exited with code ${code}`))
           })
           child.on('error', reject)
@@ -666,7 +673,7 @@ async function runAction(action: ShortcutActionData): Promise<void> {
       if (isNaN(ms) || ms < 50 || ms > 60000) {
         throw new Error('Delay must be between 50 and 60000 milliseconds')
       }
-      await new Promise((resolve) => setTimeout(resolve, ms))
+      await new Promise<void>((resolve) => setTimeout(resolve, ms))
       return
     }
     default:
@@ -677,18 +684,29 @@ async function runAction(action: ShortcutActionData): Promise<void> {
 async function runShortcutActions(shortcut: ShortcutData): Promise<ActionResult[]> {
   const startTime = Date.now()
   const results: ActionResult[] = []
+   let cancelled: 'graceful' | null = null
+  let lastActionTitle: string | null = null
   
   if (runningShortcuts.has(shortcut.id)) {
     return [{ actionId: 'system', success: false, error: 'Shortcut is already running.' }]
   }
   runningShortcuts.add(shortcut.id)
+  cancelRequests.delete(shortcut.id)
   
   try {
     for (let i = 0; i < shortcut.actions.length; i++) {
+      // Between-action cancellation check — graceful path
+      if (cancelRequests.has(shortcut.id)) {
+        cancelled = 'graceful'
+        break
+      }
+
       win?.webContents.send('shortcut-progress', { shortcutId: shortcut.id, stepIndex: i })
       const action = shortcut.actions[i]
+      lastActionTitle = action.title ?? null
+
       try {
-        await runAction(action)
+        await runAction(action, shortcut.id)
         results.push({ actionId: action.id, success: true })
       } catch (e) {
         results.push({ actionId: action.id, success: false, error: e instanceof Error ? e.message : String(e) })
@@ -696,21 +714,38 @@ async function runShortcutActions(shortcut: ShortcutData): Promise<ActionResult[
     }
   } finally {
     runningShortcuts.delete(shortcut.id)
+    cancelRequests.delete(shortcut.id)
   }
   
   const durationMs = Date.now() - startTime
-  win?.webContents.send('shortcut-complete', { shortcutId: shortcut.id, results, durationMs })
+  win?.webContents.send('shortcut-complete', {
+    shortcutId: shortcut.id,
+    results,
+    durationMs,
+    cancelled,
+    lastActionTitle,
+  })
 
   // Dispatch native Windows notification if enabled
   const failed = results.filter((r) => !r.success)
-  const allSucceeded = failed.length === 0
+  const allSucceeded = failed.length === 0 && !cancelled
   if (executionNotifications && Notification.isSupported()) {
     try {
+      let body: string
+      if (cancelled) {
+        body = `Cancelled after: ${lastActionTitle || 'unknown step'}`
+      } else if (allSucceeded) {
+        body = `All ${shortcut.actions.length} action(s) completed in ${(durationMs / 1000).toFixed(1)}s.`
+      } else {
+        body = `Failed on ${failed.length} action(s): ${failed.map((f) => f.error).filter(Boolean).join('; ')}`
+      }
       const notif = new Notification({
-        title: allSucceeded ? `LazyCow: ${shortcut.name}` : `LazyCow: ${shortcut.name} (Failed)`,
-        body: allSucceeded
-          ? `All ${shortcut.actions.length} action(s) completed in ${(durationMs / 1000).toFixed(1)}s.`
-          : `Failed on ${failed.length} action(s): ${failed.map((f) => f.error).filter(Boolean).join('; ')}`,
+        title: cancelled
+          ? `LazyCow: ${shortcut.name} (Cancelled)`
+          : allSucceeded
+            ? `LazyCow: ${shortcut.name}`
+            : `LazyCow: ${shortcut.name} (Failed)`,
+        body,
         icon: getAppIconPath(),
         silent: false,
       })
@@ -731,6 +766,17 @@ ipcMain.handle('execute-shortcut', async (_event, rawShortcut: unknown) => {
     const error = err as Error
     return [{ actionId: 'system', success: false, error: error.message || 'Invalid shortcut data' }]
   }
+})
+
+// Cancel a running shortcut. Cancellation is always graceful: the currently
+// running action finishes normally, then the remaining steps are skipped.
+ipcMain.handle('cancel-shortcut', async (_event, payload: { shortcutId: string; mode?: 'graceful' | 'immediate' }) => {
+  const { shortcutId } = payload
+  if (!isShortcutRunning(shortcutId)) {
+    return { ok: false, error: 'Shortcut is not running.' }
+  }
+  cancelRequests.add(shortcutId)
+  return { ok: true }
 })
 
 ipcMain.handle('check-path-exists', async (_event, targetPath: string) => {
@@ -797,9 +843,6 @@ const SPECIAL_KEY_MAP: Record<string, string> = {
   Enter: 'Return', Tab: 'Tab',
 }
 
-// Converts a recorded combo like "Ctrl + Alt + L" into an Electron
-// accelerator like "CommandOrControl+Alt+L". Returns null if there's no
-// non-modifier key to bind to.
 function comboToAccelerator(combo: string): string | null {
   const parts = combo.split('+').map((p) => p.trim()).filter(Boolean)
   const accelParts: string[] = []
@@ -833,10 +876,6 @@ function registerHotkeys(shortcuts: ShortcutData[]) {
     try {
       const ok = globalShortcut.register(accelerator, () => {
         if (shortcutHasScript(shortcut)) {
-          // Don't run it — a run_script action is an arbitrary shell
-          // command, so it always needs the user to see and confirm the
-          // exact command first. Hand off to the renderer's confirm modal;
-          // the renderer will call execute-shortcut itself if confirmed.
           win?.webContents.send('hotkey-needs-confirm', shortcut.id)
         } else {
           win?.webContents.send('hotkey-triggered', shortcut.id)

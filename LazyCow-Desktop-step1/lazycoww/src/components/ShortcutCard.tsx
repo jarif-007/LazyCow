@@ -9,14 +9,23 @@ interface ShortcutCardProps {
   onRename: (id: string) => void;
   onDelete: (id: string) => void;
   onRun: (id: string) => void;
-  onDuplicate: (s: SavedShortcut) => void;
+  onCancel: (id: string) => void;
+    onDuplicate: (s: SavedShortcut) => void;
   hasHotkeyConflict?: boolean;
-  execution?: { status: 'idle' | 'running' | 'success' | 'error'; currentStepIndex: number; errors?: string[]; durationMs?: number };
+  isCancelling?: boolean;
+  execution?: {
+    status: 'idle' | 'running' | 'success' | 'error' | 'cancelled';
+    currentStepIndex: number;
+    errors?: string[];
+    durationMs?: number;
+    cancelledAfter?: string;
+  };
   customColorMode: boolean;
 }
 
 export const ShortcutCard: React.FC<ShortcutCardProps> = ({
-  shortcut, shade, onShadeChange, onEditFlow, onRename, onDelete, onRun, onDuplicate, hasHotkeyConflict, execution, customColorMode,
+  shortcut, shade, onShadeChange, onEditFlow, onRename, onDelete, onRun, onCancel, onDuplicate,
+   hasHotkeyConflict, isCancelling, execution, customColorMode,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const execState = execution || { status: 'idle' as const, currentStepIndex: -1, errors: [] as string[] };
@@ -28,6 +37,9 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
     dark: 'from-card-dark to-primary text-card-dark-fg',
   }[shade];
 
+  const isRunning = execState.status === 'running';
+  const showLog = execState.status === 'running' || execState.status === 'success' || execState.status === 'error' || execState.status === 'cancelled';
+
   return (
     <div className={`card-themeable bg-gradient-to-br ${shadeClasses} border border-border rounded-xl p-5 group shadow-sm hover:shadow-md hover:-translate-y-1 transition-all flex flex-col gap-4 relative`}>
       {/* Header */}
@@ -38,7 +50,6 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
         </div>
 
         <div className="flex items-center gap-1 relative">
-          {/* Shade dots — only in custom color mode */}
           {customColorMode && (
             <div className={`flex items-center gap-1 bg-background/80 backdrop-blur-md rounded-full px-2 py-1 border border-border transition-all duration-200 absolute right-8 ${menuOpen ? 'opacity-100 visible translate-x-0' : 'opacity-0 invisible translate-x-[10px]'}`}>
               {(['light', 'medium', 'dark'] as const).map((s) => (
@@ -53,12 +64,13 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
           <button
             className={`p-1 rounded-full transition-colors ${menuOpen ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
             onClick={() => setMenuOpen((p) => !p)}
+            disabled={isRunning}
+            title={isRunning ? 'Cannot edit while running' : 'Menu'}
           >
             <span className="material-symbols-outlined">more_vert</span>
           </button>
 
-          {/* Dropdown */}
-          {menuOpen && (
+          {menuOpen && !isRunning && (
             <div className="absolute right-0 top-10 bg-card border border-border rounded-xl shadow-xl z-30 py-1 min-w-[160px]">
               <button onClick={() => { setMenuOpen(false); onEditFlow(shortcut); }} className="w-full text-left px-4 py-2.5 text-body-sm text-foreground hover:bg-muted/50 flex items-center gap-2">
                 <span className="material-symbols-outlined text-[18px]">edit</span> Edit Flow
@@ -103,14 +115,16 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
       </div>
 
       {/* Execution Log */}
-      {(execState.status === 'running' || execState.status === 'success' || execState.status === 'error') && (
+      {showLog && (
         <div className="w-full bg-card-dark text-card-dark-fg font-code-sm p-4 rounded-lg flex flex-col gap-1.5 shadow-inner transition-all duration-300 mt-auto">
           {stepLabels.map((step, idx) => {
             let cls = 'opacity-40';
             if (execState.status === 'running') {
               if (idx === execState.currentStepIndex) cls = 'opacity-100 font-bold';
               else if (idx < execState.currentStepIndex) cls = 'opacity-60';
-            } else if (execState.status === 'success' || execState.status === 'error') cls = 'opacity-60';
+            } else if (execState.status === 'success' || execState.status === 'error' || execState.status === 'cancelled') {
+              cls = 'opacity-60';
+            }
             return <span key={idx} className={`transition-all duration-300 ${cls}`}>{step}</span>;
           })}
           {execState.status === 'success' && (
@@ -144,13 +158,49 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
               ))}
             </div>
           )}
+          {execState.status === 'cancelled' && (
+            <div className="mt-2 pt-2 border-t border-white/10 flex items-center justify-between text-amber-400 font-semibold">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-[16px]">cancel</span>
+                <span className="text-[12px] uppercase tracking-wider">
+                  Cancelled after: {execState.cancelledAfter || 'unknown step'}
+                </span>
+              </div>
+              {execState.durationMs !== undefined && (
+                <span className="text-[12px] font-normal opacity-80">
+                  {(execState.durationMs / 1000).toFixed(1)}s
+                </span>
+              )}
+            </div>
+          )}
         </div>
       )}
 
-      {/* Run Button */}
-      {execState.status !== 'running' && (
-        <button onClick={() => onRun(shortcut.id)} className="w-full mt-auto bg-primary text-primary-foreground py-3 rounded-lg font-title-sm text-body-md opacity-90 group-hover:opacity-100 transition-opacity">
-          {execState.status === 'success' ? 'Run Again' : 'Run Shortcut'}
+           {/* Action Button — Run / Cancel / Cancelling */}
+      {isRunning ? (
+        isCancelling ? (
+          <button
+            disabled
+            className="w-full mt-auto bg-amber-500 text-white py-3 rounded-lg font-title-sm text-body-md cursor-wait flex items-center justify-center gap-2 shadow-md opacity-90"
+          >
+            <span className="material-symbols-outlined text-[20px] animate-spin">progress_activity</span>
+            Cancelling...
+          </button>
+        ) : (
+          <button
+            onClick={() => onCancel(shortcut.id)}
+            className="w-full mt-auto bg-red-500 text-white py-3 rounded-lg font-title-sm text-body-md hover:bg-red-600 transition-colors flex items-center justify-center gap-2 shadow-md"
+          >
+            <span className="material-symbols-outlined text-[20px]">stop_circle</span>
+            Cancel Execution
+          </button>
+        )
+      ) : (
+        <button
+          onClick={() => onRun(shortcut.id)}
+          className="w-full mt-auto bg-primary text-primary-foreground py-3 rounded-lg font-title-sm text-body-md opacity-90 group-hover:opacity-100 transition-opacity"
+        >
+          {execState.status === 'success' ? 'Run Again' : execState.status === 'cancelled' ? 'Run Again' : 'Run Shortcut'}
         </button>
       )}
     </div>
