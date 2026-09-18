@@ -9,7 +9,7 @@ interface SettingsGeneralProps {
     executionNotifications: boolean;
     generalShade: Shade;
   };
-  onUpdate: (key: string, value: any) => void;
+  onUpdate: (key: string, value: boolean | Shade) => void;
   customColorMode: boolean;
 }
 

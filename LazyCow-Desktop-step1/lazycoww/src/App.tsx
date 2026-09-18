@@ -68,7 +68,7 @@ function App() {
   // ── Splash screen ──
   useEffect(() => {
     const init = async () => {
-      try { await document.fonts.ready; } catch {}
+      try { await document.fonts.ready; } catch (err) { console.warn('Font loading check:', err); }
       await new Promise((r) => setTimeout(r, 400));
       const splash = document.getElementById('splash-screen');
       if (splash) splash.classList.add('hidden');

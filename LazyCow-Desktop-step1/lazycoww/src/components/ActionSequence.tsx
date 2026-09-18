@@ -310,7 +310,7 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
                     } else arrangeData.layout = card.value;
                   } catch { /* ignore */ }
                   
-                  const updateArrange = (updates: any) => {
+                  const updateArrange = (updates: Partial<typeof arrangeData>) => {
                     onUpdateValue(card.id, JSON.stringify({ ...arrangeData, ...updates }));
                   };
                   

@@ -44,22 +44,22 @@ export default function Settings({ themeMode, onThemeModeChange, customColorMode
       try { initialSettings = { ...DEFAULT_SETTINGS, ...JSON.parse(stored) }; } catch { /* ignore */ }
     }
     setSettings(initialSettings);
-    // @ts-ignore
     if (window.electronAPI?.updateGeneralSettings) {
-      // @ts-ignore
-      window.electronAPI.updateGeneralSettings({ startAtLogin: initialSettings.startAtLogin, keepInTray: initialSettings.keepInTray });
+      window.electronAPI.updateGeneralSettings({
+        startAtLogin: initialSettings.startAtLogin,
+        keepInTray: initialSettings.keepInTray,
+        executionNotifications: initialSettings.executionNotifications,
+      });
     }
   }, []);
 
-  const updateSetting = (key: string, value: any) => {
+  const updateSetting = (key: string, value: boolean | string) => {
     const updated = { ...settings, [key]: value };
     setSettings(updated);
     localStorage.setItem('lazycow_settings', JSON.stringify(updated));
-    if (key === 'startAtLogin' || key === 'keepInTray') {
-      // @ts-ignore
+    if (key === 'startAtLogin' || key === 'keepInTray' || key === 'executionNotifications') {
       if (window.electronAPI?.updateGeneralSettings) {
-        // @ts-ignore
-        window.electronAPI.updateGeneralSettings({ [key]: value });
+        window.electronAPI.updateGeneralSettings({ [key]: value as boolean });
       }
     }
   };

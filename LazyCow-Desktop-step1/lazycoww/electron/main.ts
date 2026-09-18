@@ -250,11 +250,12 @@ async function runAction(action: ShortcutActionData): Promise<void> {
 
       try {
         await execFileAsync('code.cmd', [action.value], { windowsHide: true, timeout: 15000, shell: true })
-      } catch (err: any) {
-        if (err.code === 'ENOENT' || String(err).includes('not recognized')) {
+      } catch (err: unknown) {
+        const error = err as { code?: string; message?: string }
+        if (error.code === 'ENOENT' || String(err).includes('not recognized')) {
           throw new Error('VS Code CLI "code" is not available in Windows PATH')
         }
-        throw new Error(`Failed to open in VS Code: ${err.message || String(err)}`)
+        throw new Error(`Failed to open in VS Code: ${error.message || String(err)}`)
       }
       return
     }
@@ -467,7 +468,7 @@ async function runAction(action: ShortcutActionData): Promise<void> {
       if (!VALID_ORIENTATIONS.has(orientation)) orientation = 'vertical'
 
       // Sanitize process names to prevent script/command injection
-      const SAFE_NAME_REGEX = /^[a-zA-Z0-9_\-\.\s]*$/
+      const SAFE_NAME_REGEX = /^[a-zA-Z0-9_.\s-]*$/
       for (const slot of ['tl', 'tr', 'bl', 'br'] as const) {
         const val = (apps[slot] || '').trim()
         if (val && !SAFE_NAME_REGEX.test(val)) {
@@ -716,8 +717,9 @@ ipcMain.handle('execute-shortcut', async (_event, rawShortcut: unknown) => {
   try {
     const shortcut = ShortcutSchema.parse(rawShortcut)
     return runShortcutActions(shortcut)
-  } catch (err: any) {
-    return [{ actionId: 'system', success: false, error: err.message || 'Invalid shortcut data' }]
+  } catch (err: unknown) {
+    const error = err as Error
+    return [{ actionId: 'system', success: false, error: error.message || 'Invalid shortcut data' }]
   }
 })
 
@@ -846,7 +848,7 @@ ipcMain.on('sync-hotkeys', (_event, rawShortcuts: unknown) => {
   try {
     const shortcuts = z.array(ShortcutSchema).max(500).parse(rawShortcuts)
     registerHotkeys(shortcuts)
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('Failed to sync hotkeys due to invalid payload:', err)
   }
 })
