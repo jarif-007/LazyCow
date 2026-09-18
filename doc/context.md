@@ -1,6 +1,6 @@
 # LAZYCOW PROJECT BLUEPRINT & AI CONTINUATION CONTEXT
 
-Save this entire document as `context.md` in your `doc/` directory or project root. When starting any new AI chat session, reference this file to immediately synchronize the assistant with the project state, coding standards, architecture, and operational guidelines.
+Save this entire document as `context.md` in your `doc/` directory and project root. When starting any new AI chat session, reference this file to immediately synchronize the assistant with the exact project state, system architectures, coding standards, and operational guidelines.
 
 ---
 
@@ -25,7 +25,7 @@ The application is structured to support:
   - Main Process: `electron/main.ts` (compiled to `dist-electron/main.js` via Vite)
   - Preload Script: `electron/preload.ts` (compiled to `dist-electron/preload.mjs`)
   - Type Declarations: `electron/electron-env.d.ts`
-* **Frontend Library:** React 18 + TypeScript (Strict Mode)
+* **Frontend Library:** React 18 + TypeScript (Strict Mode, 0 ESLint errors)
 * **Build Engine:** Vite 5 + `vite-plugin-electron`
 * **Styling Engine:** Tailwind CSS v3
 * **Theme Architecture:**
@@ -64,6 +64,7 @@ LazyCow/
 │       ├── vite.config.ts             # Vite configuration with electron plugin
 │       ├── electron-builder.json5     # Windows-exclusive NSIS installer config
 │       ├── index.html                 # HTML entry with splash screen & preloaded fonts
+│       ├── .eslintrc.cjs              # ESLint configuration ignoring dist, dist-electron, release
 │       ├── electron/
 │       │   ├── main.ts                # Main process: execution engine, IPC handlers, hotkeys, tray
 │       │   ├── preload.ts             # Context bridge: safe electronAPI exposure
@@ -110,16 +111,27 @@ LazyCow/
 - **Window Management:** Creates 1200x800 `BrowserWindow` with `autoHideMenuBar: true`, custom icon, and hidden titlebar. Minimizes/closes to system tray if `keepInTray` is enabled.
 - **System Theme & Accent Synchronization:** Queries `AccentPalette` in the Windows registry via hidden PowerShell process; streams updates on window focus.
 - **Execution Engine (`execute-shortcut`):**
-  - `launch_app`: Validates extension (`.exe`, `.lnk`, `.bat`, `.cmd`) and launches executable via `execFileAsync`.
-  - `open_url`: Sanitizes HTTP/HTTPS URLs and opens via Electron's `shell.openExternal`.
-  - `open_folder` & `open_file`: Verifies target path existence and opens with `shell.openPath`.
-  - `open_vscode`: Launches `code.cmd` pointing to the target folder path.
-  - `set_volume`: Manipulates Windows CoreAudio master volume (WASAPI `IAudioEndpointVolume` COM) via base64 UTF-16LE PowerShell script.
-  - `set_brightness`: Sets monitor backlight brightness via WMI (`root/wmi:WmiMonitorBrightnessMethods`).
-  - `toggle_dnd`: Configures Windows Focus Assist registry (`NOC_GLOBAL_SETTING_ALLOW_TOASTS`).
-  - `toggle_nightlight`: Toggles Windows BlueLightReduction state in CloudStore registry.
-  - `arrange_windows`: Executes native Win32 `user32.dll` positioning (`SetWindowPos`, `ShowWindow`) via PowerShell to snap or tile 1 to 4 apps into split, tri, or quad layouts.
-  - `run_script`: Spawns commands in `cmd.exe` with process tree kill capability (`taskkill /pid /t /f`).
+  - **`launch_app`**: Validates extension (`.exe`, `.lnk`, `.bat`, `.cmd`) and launches executable via `execFileAsync`.
+  - **`open_url`**: Sanitizes HTTP/HTTPS URLs and opens via Electron's `shell.openExternal`.
+  - **`open_folder` & `open_file`**: Verifies target path existence and opens with `shell.openPath`.
+  - **`open_vscode`**: Launches `code.cmd` pointing to the target folder path.
+  - **`set_volume`**: Uses Windows CoreAudio (WASAPI) with exact COM vtable alignment:
+    - `IMMDeviceEnumerator`: offset 1 (`GetDefaultAudioEndpoint`) after placeholder slot 0 (`EnumAudioEndpoints`).
+    - `IAudioEndpointVolume`: offset 4 (`SetMasterVolumeLevelScalar`) after 4 placeholder slots (`f()`, `g()`, `h()`, `i()`).
+    - Automatically unmutes device (`SetMute(false)`) if volume is increased above 0%.
+  - **`set_brightness`**: 3-tier fallback architecture:
+    1. Legacy WMI (`WmiMonitorBrightnessMethods.WmiSetBrightness`) for laptops.
+    2. Modern CIM (`Get-CimInstance | Invoke-CimMethod`) for Windows 10/11 laptops.
+    3. DDC/CI via `dxva2.dll` (`DdcMonitorHelper` P/Invoke calling `SetPhysicalMonitorBrightness`) for external desktop monitors.
+  - **`toggle_dnd`**: Configures Windows Focus Assist registry (`NOC_GLOBAL_SETTING_ALLOW_TOASTS`).
+  - **`toggle_nightlight`**: Toggles Windows BlueLightReduction state in CloudStore registry.
+  - **`arrange_windows`**: Comprehensive Win32 window positioning engine via `WinManager`:
+    - Uses `user32.dll` `EnumWindows` and `GetWindowText` to enumerate actual visible top-level windows on the desktop (avoiding `Get-Process` worker process pitfalls).
+    - Window handle tracking (`$usedHandles`) to tile multiple windows from the same application (e.g. separate Chrome/browser windows).
+    - 2.4-second polling retry loop for newly launched apps to render before positioning.
+    - Automatic `ShowWindow(hwnd, SW_RESTORE)` to un-maximize or un-minimize windows before resizing.
+    - Active window fallback skipping LazyCow, with optional target app name input in the UI.
+  - **`run_script`**: Spawns commands in `cmd.exe` with process tree kill capability (`taskkill /pid /t /f`).
 - **OS Notifications:** Emits native Windows desktop toast notifications (`new Notification(...)`) upon shortcut success or failure.
 - **Path Dialogs (`select-path`):** Invokes `dialog.showOpenDialog` for native application (`.exe`), directory, or file selection.
 - **Path Checking (`check-path-exists`):** Verifies file/directory existence using `fs.existsSync`.
@@ -131,7 +143,7 @@ LazyCow/
   - `onSystemTheme(callback)` / `onSystemAccent(callback)`
   - `runShortcut(shortcut)`
   - `syncHotkeys(shortcuts)`
-  - `updateGeneralSettings(settings)`
+  - `updateGeneralSettings(settings: { startAtLogin?: boolean; keepInTray?: boolean; executionNotifications?: boolean })`
   - `checkPathExists(path): Promise<boolean>`
   - `selectPath(type: 'app' | 'file' | 'folder'): Promise<string | null>`
   - `onShortcutProgress(callback)` / `onShortcutComplete(callback)`
@@ -141,16 +153,16 @@ LazyCow/
 
 ### B. Action Catalog & Types (`src/types/actions.ts`)
 
-- **11 Supported Action Types:**
+- **11 Supported Action Types (All Active):**
   1. `launch_app` — Application Path
   2. `open_url` — Website URL
   3. `open_folder` — Folder Path
   4. `open_file` — File Path
   5. `arrange_windows` — Window Layout (Snap Left/Right, Maximize, Split, Tri-Grid, Quad-Grid)
-  6. `set_volume` — Volume Level (0–100%)
+  6. `set_volume` — Volume Level (0–100% Slider)
   7. `toggle_dnd` — DND Configuration (Toggle, Enable, Disable)
   8. `toggle_nightlight` — Night Light Mode (Toggle, Enable, Disable)
-  9. `set_brightness` — Brightness Level (0–100%)
+  9. `set_brightness` — Brightness Level (0–100% Slider)
   10. `run_script` — Terminal Command
   11. `open_vscode` — Folder Path (opens in VS Code)
 - **Blocked System Triggers:** 17 protected default Windows shortcuts (`Alt+F4`, `Ctrl+Alt+Del`, `Win+L`, `Win+D`, `Win+R`, `Win+E`, etc.).
@@ -178,6 +190,11 @@ npm run dev
 ### Type Checking
 ```bash
 npx tsc --noEmit
+```
+
+### Linting
+```bash
+npx eslint .
 ```
 
 ### Bundling Production Assets
