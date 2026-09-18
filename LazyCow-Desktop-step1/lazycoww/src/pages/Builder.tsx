@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { ActionItem, CatalogItem, actionCatalog, SavedShortcut } from '../types/actions';
 import { ActionSidebar } from '../components/ActionSidebar';
 import { ActionSequence } from '../components/ActionSequence';
@@ -16,8 +16,7 @@ const MODIFIERS = ['Ctrl', 'Alt', 'Shift', 'Win'];
 
 export const Builder: React.FC<BuilderProps> = ({ editData, isActionSidebarAutoCollapsed, onUnsavedChanges, onSaveSuccess }) => {
      const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-   const actionSidebarRef = useRef<HTMLDivElement>(null);
-  const builderPanelRef = useRef<HTMLDivElement>(null);
+
 
     // ActionSidebar visible state = (user's manual choice) OR (window too narrow).
   const [manualCollapse, setManualCollapse] = useState(false);

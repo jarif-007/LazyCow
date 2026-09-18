@@ -36,7 +36,7 @@ The application is structured to support:
   - `-webkit-font-smoothing: subpixel-antialiased` and `text-rendering: optimizeLegibility` applied globally.
   - Scroll containers use `transform: translateZ(0)` and `backface-visibility: hidden` to eliminate jitter.
 * **Security & Execution Isolation:**
-  - `contextIsolation: true`, `nodeIntegration: false`, `sandbox: false` (to permit controlled native Node/PowerShell IPC bridge).
+  - `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true` (contextBridge works fine under sandbox — stricter security with no loss of functionality).
   - Preload script uses `contextBridge.exposeInMainWorld('electronAPI', ...)` to expose only safe, named functions.
   - Multi-line PowerShell scripts execute via `-EncodedCommand` (Base64 UTF-16LE) to eliminate CLI parameter injection.
   - Dangerous actions (scripts, executables) triggered via global hotkeys prompt for confirmation before executing.
@@ -44,10 +44,11 @@ The application is structured to support:
   - `lazycow-shortcuts` — Array of saved `SavedShortcut` objects.
   - `lazycow-blocked-triggers` — Blocked hotkey trigger strings.
   - `lazycow-os-critical-triggers` — OS-critical protected triggers.
-  - `lazycow_settings` — General desktop settings (`startAtLogin`, `keepInTray`, `executionNotifications`, `shades`).
+  - `lazycow_settings` — General desktop settings (`startAtLogin`, `keepInTray`, `executionNotifications`, `generalShade`, `dataShade`).
   - `lazycow-theme-mode` — `'system' | 'light' | 'dark'`.
   - `lazycow-custom-color-mode` — Boolean toggle for custom color themes.
   - `lazycow-custom-theme` — `'coffee' | 'ocean' | 'forest'`.
+  - `lazycow-dark` — Legacy flag kept in sync with dark mode state.
 
 ---
 
@@ -80,6 +81,8 @@ LazyCow/
 │           │   ├── ActionSequence.tsx # Task chain visual builder, sliders, pickers, DnD reorder
 │           │   ├── ActionSidebar.tsx  # Collapsible catalog sidebar with drag-to-add
 │           │   ├── BlockedTriggerList.tsx # Searchable blocked triggers list
+│           │   ├── CollapsedSearchPopover.tsx # Command-palette search popover for collapsed ActionSidebar
+│           │   ├── CollapsedSearchPopover.tsx # Command-palette search popover for collapsed ActionSidebar
 │           │   ├── ComboBuilder.tsx   # Dropdown modifier-first hotkey constructor
 │           │   ├── DeleteModal.tsx    # Confirmation modal for shortcut deletion
 │           │   ├── RenameModal.tsx    # Modal for renaming shortcuts with duplicate check
@@ -110,11 +113,13 @@ LazyCow/
 - **Platform Gate:** Validates `process.platform === 'win32'` at startup. If non-Windows, displays an error dialog and exits immediately.
 - **Window Management:** Creates 1200x800 `BrowserWindow` with `autoHideMenuBar: true`, custom icon, and hidden titlebar. Minimizes/closes to system tray if `keepInTray` is enabled.
 - **System Theme & Accent Synchronization:** Queries `AccentPalette` in the Windows registry via hidden PowerShell process; streams updates on window focus.
+- **Window Minimum Size:** BrowserWindow is clamped to `minWidth: 800`, `minHeight: 600` (Windows Fluent Design standard). Users cannot shrink the window below this.
+- **Window Minimum Size:** BrowserWindow is clamped to `minWidth: 800`, `minHeight: 600` (Windows Fluent Design standard). Users cannot shrink the window below this.
 - **Execution Engine (`execute-shortcut`):**
-  - **`launch_app`**: Validates extension (`.exe`, `.lnk`, `.bat`, `.cmd`) and launches executable via `execFileAsync`.
+  - **`launch_app`**: Validates extension (`.exe`, `.lnk`, `.bat`, `.cmd`) and launches executable via `execFileAsync`. Includes an 800ms settle delay so the progress UI matches the app actually appearing on screen. Includes an 800ms settle delay so the progress UI matches the app actually appearing on screen.
   - **`open_url`**: Sanitizes HTTP/HTTPS URLs and opens via Electron's `shell.openExternal`.
   - **`open_folder` & `open_file`**: Verifies target path existence and opens with `shell.openPath`.
-  - **`open_vscode`**: Launches `code.cmd` pointing to the target folder path.
+  - **`open_vscode`**: Launches `code.cmd` pointing to the target folder path. Includes a 1000ms settle delay.
   - **`set_volume`**: Uses Windows CoreAudio (WASAPI) with exact COM vtable alignment:
     - `IMMDeviceEnumerator`: offset 1 (`GetDefaultAudioEndpoint`) after placeholder slot 0 (`EnumAudioEndpoints`).
     - `IAudioEndpointVolume`: offset 4 (`SetMasterVolumeLevelScalar`) after 4 placeholder slots (`f()`, `g()`, `h()`, `i()`).
@@ -132,7 +137,11 @@ LazyCow/
     - Automatic `ShowWindow(hwnd, SW_RESTORE)` to un-maximize or un-minimize windows before resizing.
     - Active window fallback skipping LazyCow, with optional target app name input in the UI.
   - **`delay`**: Pauses sequence execution for a configurable duration (`ms`) via `await new Promise(r => setTimeout(r, ms))` so launched applications or scripts have time to initialize before subsequent steps.
-  - **`run_script`**: Spawns commands in `cmd.exe` with process tree kill capability (`taskkill /pid /t /f`).
+  - **`run_script`**: Spawns commands in `cmd.exe` with 120s timeout and process tree kill capability (`taskkill /pid /t /f`).
+- **Shortcut Cancellation (`cancel-shortcut`):**
+  - Cancellation is **always graceful** — the currently running action finishes normally, then remaining actions are skipped. This prevents killing unrelated windows of the same app.
+  - IPC handler sets a flag in `cancelRequests: Set<string>`. The execution loop checks between actions and stops if the shortcut's ID is present.
+  - No mode parameter (previously had Graceful/Immediate; Immediate was removed).
 - **OS Notifications:** Emits native Windows desktop toast notifications (`new Notification(...)`) upon shortcut success or failure with elapsed execution duration (e.g. `Completed in 1.4s`).
 - **Path Dialogs (`select-path`):** Invokes `dialog.showOpenDialog` for native application (`.exe`), directory, or file selection.
 - **Path Checking (`check-path-exists`):** Verifies file/directory existence using `fs.existsSync`.
@@ -143,11 +152,12 @@ LazyCow/
   - `getSystemAccent(): Promise<string>`
   - `onSystemTheme(callback)` / `onSystemAccent(callback)`
   - `runShortcut(shortcut)`
+  - `cancelShortcut(shortcutId)` — Graceful cancel of a running shortcut
   - `syncHotkeys(shortcuts)`
   - `updateGeneralSettings(settings: { startAtLogin?: boolean; keepInTray?: boolean; executionNotifications?: boolean })`
   - `checkPathExists(path): Promise<boolean>`
   - `selectPath(type: 'app' | 'file' | 'folder'): Promise<string | null>`
-  - `onShortcutProgress(callback)` / `onShortcutComplete(callback)` (with `durationMs` analytics)
+  - `onShortcutProgress(callback)` / `onShortcutComplete(callback)` (with `durationMs` and `cancelled` / `lastActionTitle` fields)
   - `onHotkeyTriggered(callback)` / `onHotkeyNeedsConfirm(callback)` / `onHotkeyRegisterFailed(callback)`
 
 ---
@@ -173,10 +183,12 @@ LazyCow/
 
 ### C. UI & Components
 
+- **`ActionSidebar.tsx`:** Collapsible action catalog. Expanded mode shows full action cards with search. Collapsed mode shows icon strip with hover tooltips and a search icon that opens the `CollapsedSearchPopover`. Auto-collapses below 1100px window width (forced; user cannot re-expand until window grows).
+- **`CollapsedSearchPopover.tsx`:** Command-palette style centered popover opened from the collapsed ActionSidebar's search icon. Contains auto-focused input, live filtering by action name OR category, grouped results, Escape/Enter keyboard support. Uses React `createPortal` to escape parent `transform` stacking context. Clicking a result adds the action and closes the popover.
 - **`ActionSequence.tsx`:** Drag-and-drop action cards with visual flow preview, direct slider controls for Volume, Brightness, and Delay duration, dropdown controls for DND and Night Light, visual window layout configuration, debounced path validation, and native **"Browse"** file pickers.
-- **`Builder.tsx`:** Shortcut builder with real-time name uniqueness checking, hotkey conflict detection, modifier-first validation, and unsaved changes safety modal.
-- **`ShortcutCard.tsx`:** Dashboard shortcut card with 3-dot dropdown menu (Edit Flow, Duplicate, Rename, Delete), hotkey conflict warning badge (`onHotkeyRegisterFailed`), elapsed duration analytics (`Sequence Complete • 1.4s`), and live step execution log.
-- **`Library.tsx`:** Shortcut card dashboard with live step progress ring, execution log, search filter, duplicate workflow generator (`(Copy)` naming & hotkey decoupling), and dropdown management.
+- **`Builder.tsx`:** Shortcut builder with real-time name uniqueness checking, hotkey conflict detection, modifier-first validation, unsaved changes safety modal, and full responsive layout (see Section 2's Responsive Layout subsection).
+- **`ShortcutCard.tsx`:** Dashboard shortcut card with 3-dot dropdown menu (Edit Flow, Duplicate, Rename, Delete), hotkey conflict warning badge, elapsed duration analytics (`Sequence Complete • 1.4s`), live step execution log, amber **"Cancelling..."** button state with spinner when cancel is requested, and **"Cancelled after: <action title>"** state display. Menu is disabled while the shortcut is running.
+- **`Library.tsx`:** Shortcut card dashboard with live step progress ring, execution log, search filter, duplicate workflow generator (`(Copy)` naming & hotkey decoupling), inline rename modal, dropdown management, and cancel handler that forwards to `cancelShortcut`.
 - **`Settings.tsx` & Subcomponents:** Manages appearance, theme switching, startup launch, system tray minimization, execution notifications, blocked triggers, and factory reset.
 
 ---
@@ -190,9 +202,8 @@ npm install
 npm run dev
 ```
 
-### Type Checking
-```bash
-npx tsc --noEmit
+
+✏️ **REPLACE WITH**:
 ```
 
 ### Linting

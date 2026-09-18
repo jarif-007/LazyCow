@@ -222,7 +222,7 @@ function isShortcutRunning(shortcutId: string): boolean {
   return runningShortcuts.has(shortcutId)
 }
 
-async function runAction(action: ShortcutActionData, shortcutId: string): Promise<void> {
+async function runAction(action: ShortcutActionData): Promise<void> {
   switch (action.type) {
     case 'launch_app': {
       let stat
@@ -706,7 +706,7 @@ async function runShortcutActions(shortcut: ShortcutData): Promise<ActionResult[
       lastActionTitle = action.title ?? null
 
       try {
-        await runAction(action, shortcut.id)
+        await runAction(action)
         results.push({ actionId: action.id, success: true })
       } catch (e) {
         results.push({ actionId: action.id, success: false, error: e instanceof Error ? e.message : String(e) })
