@@ -29,7 +29,7 @@ The application is structured to support:
 * **Build Engine:** Vite 5 + `vite-plugin-electron`
 * **Styling Engine:** Tailwind CSS v3
 * **Theme Architecture:**
-  - **Windows Default Mode:** Follows Windows 11 Fluent Design (neutral white/dark grey palette). System accent color is dynamically queried from `HKCU:\Software\Microsoft\Windows\DWM\AccentPalette` via background PowerShell and injected into `--primary` as HSL.
+  - **Windows Default Mode:** Follows Windows 11 Fluent Design (neutral white/dark grey palette). System accent color is read via Electron's `systemPreferences.getAccentColor()` in the main process and injected into `--primary` as HSL.
   - **Custom Color Mode:** User-toggleable in Settings (Coffee, Ocean, Forest themes with light/medium/dark shade gradients).
 * **Typography:** Segoe UI Variable Text (primary UI font) and JetBrains Mono (monospace/codes). Fonts preloaded in `index.html`.
 * **Windows ClearType & Hardware Scroll Stabilizer:**
@@ -82,7 +82,6 @@ LazyCow/
 │           │   ├── ActionSidebar.tsx  # Collapsible catalog sidebar with drag-to-add
 │           │   ├── BlockedTriggerList.tsx # Searchable blocked triggers list
 │           │   ├── CollapsedSearchPopover.tsx # Command-palette search popover for collapsed ActionSidebar
-│           │   ├── CollapsedSearchPopover.tsx # Command-palette search popover for collapsed ActionSidebar
 │           │   ├── ComboBuilder.tsx   # Dropdown modifier-first hotkey constructor
 │           │   ├── DeleteModal.tsx    # Confirmation modal for shortcut deletion
 │           │   ├── RenameModal.tsx    # Modal for renaming shortcuts with duplicate check
@@ -112,11 +111,10 @@ LazyCow/
 #### 1. `electron/main.ts`
 - **Platform Gate:** Validates `process.platform === 'win32'` at startup. If non-Windows, displays an error dialog and exits immediately.
 - **Window Management:** Creates 1200x800 `BrowserWindow` with `autoHideMenuBar: true`, custom icon, and hidden titlebar. Minimizes/closes to system tray if `keepInTray` is enabled.
-- **System Theme & Accent Synchronization:** Queries `AccentPalette` in the Windows registry via hidden PowerShell process; streams updates on window focus.
-- **Window Minimum Size:** BrowserWindow is clamped to `minWidth: 800`, `minHeight: 600` (Windows Fluent Design standard). Users cannot shrink the window below this.
+- **System Theme & Accent Synchronization:** Reads the Windows accent via Electron's `systemPreferences.getAccentColor()`; streams updates to the renderer on window focus.
 - **Window Minimum Size:** BrowserWindow is clamped to `minWidth: 800`, `minHeight: 600` (Windows Fluent Design standard). Users cannot shrink the window below this.
 - **Execution Engine (`execute-shortcut`):**
-  - **`launch_app`**: Validates extension (`.exe`, `.lnk`, `.bat`, `.cmd`) and launches executable via `execFileAsync`. Includes an 800ms settle delay so the progress UI matches the app actually appearing on screen. Includes an 800ms settle delay so the progress UI matches the app actually appearing on screen.
+  - **`launch_app`**: Validates extension (`.exe`, `.cmd`, `.bat`, `.lnk`) and launches the executable via Electron's `shell.openPath`. Includes an 800ms settle delay so the progress UI matches the app actually appearing on screen.
   - **`open_url`**: Sanitizes HTTP/HTTPS URLs and opens via Electron's `shell.openExternal`.
   - **`open_folder` & `open_file`**: Verifies target path existence and opens with `shell.openPath`.
   - **`open_vscode`**: Launches `code.cmd` pointing to the target folder path. Includes a 1000ms settle delay.
@@ -202,14 +200,15 @@ npm install
 npm run dev
 ```
 
-
-✏️ **REPLACE WITH**:
-```
-
-### Linting
+### Type Checking
 ```bash
-npx eslint .
+cd LazyCow-Desktop-step1/lazycoww
+npx tsc --noEmit
 ```
+
+### Git Workflow
+- **Development branch:** `Tamjid's-work`
+- AI tooling artifacts (`.claude/`, `graphify-out/`, `CLAUDE.md`, `GRAPH_REPORT.md`) are gitignored at repo root and inside `lazycoww/`.
 
 ### Bundling Production Assets
 ```bash
@@ -230,6 +229,10 @@ npm run build
 3. **PowerShell Encoding:** When adding new Windows system automation scripts in `main.ts`, always execute multi-line commands using `-EncodedCommand` with base64 UTF-16LE encoding.
 4. **Preserve Repository Structure:** The repository root contains `code/`, `doc/`, `README.md`, and `LazyCow-Desktop-step1/`. When pushing commits via git plumbing, always preserve the root tree and keep `doc/context.md` mirrored in both root `doc/` and `LazyCow-Desktop-step1/doc/`.
 5. **Zero ESLint / TypeScript Errors:** Always verify with `npx tsc --noEmit` and `npx eslint .` before committing.
+6. **Flex Chain Integrity:** The outer shell (`html` / `body` / `#root` / App shell / `.page-container` / `<main>`) forms a bounded flex chain. Every flex ancestor must have `min-height: 0` and `overflow: hidden`, and only the two innermost scroll panels (ActionSidebar's inner div, the Builder's right panel) may have `overflow-y: auto`. Breaking this chain causes the whole page to scroll as one unit.
+7. **Responsive Breakpoints:** Main sidebar auto-collapses below 900px. ActionSidebar (Builder) auto-collapses below 1100px. Auto-collapse is forced — the manual toggle is hidden while auto-collapsed. Manual collapse choice persists across resizes; auto-collapse is triggered only when the window becomes narrower than the threshold.
+8. **Cancellation is Graceful-Only:** Never reintroduce Immediate cancellation — killing apps via `taskkill` kills all instances and can close unrelated windows. The current implementation only interrupts between actions, never during one.
+9. **Popovers Use Portals:** Any floating overlay (popover, modal, dropdown) that should appear centered over the viewport must use `createPortal(..., document.body)`, otherwise a parent `transform` will trap it and cause misalignment.
 
 ---
 
@@ -241,6 +244,9 @@ npm run build
 * **Shortcut Library:** Grid layout switcher (2/3/4 cols), search bar, inline rename modal, delete modal, duplicate/clone shortcut with auto `(Copy)` naming.
 * **Execution & Diagnostics:** Real-time step progress ring, step execution log with elapsed runtime display (`Sequence Complete • 1.4s`), toast notifications with duration, and hotkey conflict warning badge (`Conflict`).
 * **Settings & Themes:** Windows 11 Fluent Theme (native DWM accent sync) + Custom color themes (Coffee, Ocean, Forest) with shade selectors; system tray support and Windows startup integration; blocked triggers management.
+* **Graceful Cancellation:** Cancel button replaces Run button while a shortcut is executing. Clicking it immediately shows an amber **"Cancelling..."** spinner, then the current action finishes and remaining steps are skipped. Result shown as **"Cancelled after: <last action title>"**.
+* **Responsive Layout:** Window has a hard minimum of 800×600. Main sidebar auto-collapses below 900px; ActionSidebar auto-collapses below 1100px. Manual collapse choice persists; auto-collapse is forced only while the window is narrow.
+* **Collapsed Search Popover:** When ActionSidebar is collapsed, clicking the search icon opens a centered command-palette-style popover (`CollapsedSearchPopover.tsx`) rendered via React `createPortal`. Live filtering by name or category, grouped results, keyboard support (`Esc` to close, `Enter` to add first result).
 
 ### B. Remaining Desktop Roadmap (Excluding Cloud / Auth)
 1. **Shortcut Export / Import (.json):** Allow users to export shortcuts as `.lazycow` or `.json` files to back up or share offline, with an Import button to restore them.
@@ -248,3 +254,18 @@ npm run build
 3. **Application Arguments & Working Directory:** Advanced settings for `launch_app` to pass CLI flags and specify custom working directories.
 4. **Error Recovery & Conditional Steps:** Option on actions to "Continue on error" vs "Halt sequence", or "Skip if already running".
 5. **Scheduled / Automatic Triggers:** Time-based shortcut execution (e.g., Run "Work Setup" every weekday at 9:00 AM) using node-cron or Windows Task Scheduler.
+
+### C. Recently Completed (Last Session)
+
+- Removed Immediate cancel mode — cancellation is now always graceful.
+- Added amber **"Cancelling..."** button state with spinner for immediate click feedback.
+- Fixed the full-page double-scroll bug by completing the flex chain (`min-height: 0` + `overflow: hidden` on all flex ancestors).
+- Added responsive auto-collapse for both sidebars with manual-choice persistence.
+- Enforced minimum window size (800×600) via Electron `minWidth` / `minHeight`.
+- Built the `CollapsedSearchPopover.tsx` component with portal-based rendering.
+- Added gitignore rules for AI tooling artifacts (`.claude/`, `graphify-out/`, `CLAUDE.md`, `GRAPH_REPORT.md`).
+
+### D. Known Issues / Pending Polish
+
+- Library and Settings pages have not been fully tested at narrow window widths (800–900px) — potential responsive layout issues.
+- ESLint emits a harmless TypeScript-version warning (`@typescript-eslint` supports `>=4.7.4 <5.6.0`; project runs `5.9.3`). Not blocking.

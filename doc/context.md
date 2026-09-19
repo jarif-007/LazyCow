@@ -29,7 +29,7 @@ The application is structured to support:
 * **Build Engine:** Vite 5 + `vite-plugin-electron`
 * **Styling Engine:** Tailwind CSS v3
 * **Theme Architecture:**
-  - **Windows Default Mode:** Follows Windows 11 Fluent Design (neutral white/dark grey palette). System accent color is dynamically queried from `HKCU:\Software\Microsoft\Windows\DWM\AccentPalette` via background PowerShell and injected into `--primary` as HSL.
+  - **Windows Default Mode:** Follows Windows 11 Fluent Design (neutral white/dark grey palette). System accent color is read via Electron's `systemPreferences.getAccentColor()` in the main process and injected into `--primary` as HSL.
   - **Custom Color Mode:** User-toggleable in Settings (Coffee, Ocean, Forest themes with light/medium/dark shade gradients).
 * **Typography:** Segoe UI Variable Text (primary UI font) and JetBrains Mono (monospace/codes). Fonts preloaded in `index.html`.
 * **Windows ClearType & Hardware Scroll Stabilizer:**
