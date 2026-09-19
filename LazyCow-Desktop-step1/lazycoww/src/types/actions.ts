@@ -4,7 +4,7 @@
 
 export interface ActionItem {
   id: string;
-  type: 'launch_app' | 'open_url' | 'open_folder' | 'open_file' | 'set_volume' | 'toggle_dnd' | 'toggle_nightlight' | 'open_vscode' | 'run_script' | 'set_brightness' | 'arrange_windows' | 'delay';
+  type: 'launch_app' | 'open_url' | 'open_folder' | 'open_file' | 'set_volume' | 'toggle_dnd' | 'toggle_nightlight' | 'run_script' | 'set_brightness' | 'arrange_windows' | 'delay';
   title: string;
   icon: string;
   colorClass: string;
@@ -37,10 +37,10 @@ export interface SavedShortcut {
 
 export const actionCatalog: CatalogItem[] = [
   // ── Apps & Web ──
-  { type: 'launch_app', title: 'Launch App', icon: 'terminal', category: 'Apps & Web', colorClass: 'bg-blue-500/10 text-blue-600 dark:text-blue-400', defaultValue: 'C:\\Program Files\\' },
-  { type: 'open_url', title: 'Open URL', icon: 'language', category: 'Apps & Web', colorClass: 'bg-green-500/10 text-green-600 dark:text-green-400', defaultValue: 'https://' },
-  { type: 'open_folder', title: 'Open Folder', icon: 'folder_open', category: 'Apps & Web', colorClass: 'bg-orange-500/10 text-orange-600 dark:text-orange-400', defaultValue: 'C:\\Users\\' },
-  { type: 'open_file', title: 'Open File', icon: 'description', category: 'Apps & Web', colorClass: 'bg-teal-500/10 text-teal-600 dark:text-teal-400', defaultValue: 'C:\\Users\\' },
+  { type: 'launch_app', title: 'Launch App', icon: 'terminal', category: 'Apps & Web', colorClass: 'bg-blue-500/10 text-blue-600 dark:text-blue-400', defaultValue: '' },
+  { type: 'open_url', title: 'Open URL', icon: 'language', category: 'Apps & Web', colorClass: 'bg-green-500/10 text-green-600 dark:text-green-400', defaultValue: '' },
+  { type: 'open_folder', title: 'Open Folder', icon: 'folder_open', category: 'Apps & Web', colorClass: 'bg-orange-500/10 text-orange-600 dark:text-orange-400', defaultValue: '' },
+  { type: 'open_file', title: 'Open File', icon: 'description', category: 'Apps & Web', colorClass: 'bg-teal-500/10 text-teal-600 dark:text-teal-400', defaultValue: '' },
 
   // ── System Control ──
   { type: 'arrange_windows', title: 'Arrange Windows', icon: 'grid_view', category: 'System Control', colorClass: 'bg-pink-500/10 text-pink-600 dark:text-pink-400', defaultValue: '{"layout":"snap_left","apps":{"tl":"","tr":"","bl":"","br":""}}' },
@@ -52,7 +52,6 @@ export const actionCatalog: CatalogItem[] = [
 
   // ── Developer Tools ──
   { type: 'run_script', title: 'Run Script', icon: 'code', category: 'Developer Tools', colorClass: 'bg-gray-500/10 text-gray-600 dark:text-gray-400', defaultValue: 'npm run start' },
-  { type: 'open_vscode', title: 'Open in VS Code', icon: 'integration_instructions', category: 'Developer Tools', colorClass: 'bg-blue-600/10 text-blue-700 dark:text-blue-300', defaultValue: 'C:\\Projects\\' },
 ];
 
 export const categoryOrder = ['Apps & Web', 'System Control', 'Developer Tools'];
@@ -67,7 +66,6 @@ export const getFieldLabel = (type: ActionItem['type']): string => {
     case 'set_volume': return 'Volume Level';
     case 'toggle_dnd': return 'DND Configuration';
     case 'toggle_nightlight': return 'Night Light Mode';
-    case 'open_vscode': return 'Folder Path (opens in VS Code)';
     case 'run_script': return 'Terminal Command';
     case 'set_brightness': return 'Brightness Level';
     case 'delay': return 'Delay Duration (ms)';

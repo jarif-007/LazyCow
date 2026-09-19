@@ -4,6 +4,7 @@ import { ActionSidebar } from '../components/ActionSidebar';
 import { ActionSequence } from '../components/ActionSequence';
 import { ComboBuilder } from '../components/ComboBuilder';
 import { useHotkeyRecorder } from '../hooks/useHotkeyRecorder';
+import { useActionValidation } from '../hooks/useActionValidation';
 
 interface BuilderProps {
   editData?: SavedShortcut | null;
@@ -38,6 +39,11 @@ export const Builder: React.FC<BuilderProps> = ({ editData, isActionSidebarAutoC
   const { recording: hotkeyRecording, recordedCombo, startRecording, stopRecording, clearCombo, setRecordedCombo } = useHotkeyRecorder('Win + Alt + D');
   const hotkey = recordedCombo || 'Win + Alt + D';
 
+  const { errors: actionErrors, unsupportedIds } = useActionValidation(sequence);
+  const hasUnsupported = unsupportedIds.size > 0;
+  const invalidActionCount = Object.keys(actionErrors).length;
+  const actionsValid = invalidActionCount === 0;
+
   useEffect(() => {
     if (hotkeyRecording) return;
     if (!recordedCombo || recordedCombo === 'Win + Alt + D') { setHotkeyError(''); return; }
@@ -62,8 +68,9 @@ export const Builder: React.FC<BuilderProps> = ({ editData, isActionSidebarAutoC
       setShortcutName(editData.name);
       setShortcutDesc(editData.description);
       setSequence(editData.actions);
+      if (editData.hotkey) setRecordedCombo(editData.hotkey);
     }
-  }, [editData]);
+  }, [editData, setRecordedCombo]);
 
   const hasUnsavedChanges = shortcutName.trim() !== '' || shortcutDesc.trim() !== '' || sequence.length > 0;
   useEffect(() => { onUnsavedChanges?.(hasUnsavedChanges); }, [hasUnsavedChanges, onUnsavedChanges]);
@@ -99,7 +106,7 @@ export const Builder: React.FC<BuilderProps> = ({ editData, isActionSidebarAutoC
     if (item) addAction(item);
   }, [addAction]);
 
-  const isFormValid = shortcutName.trim() !== '' && shortcutDesc.trim() !== '' && !hotkeyError && !nameError;
+  const isFormValid = shortcutName.trim() !== '' && shortcutDesc.trim() !== '' && !hotkeyError && !nameError && actionsValid;
 
   const handleNameChange = (v: string) => {
     setShortcutName(v);
@@ -246,6 +253,13 @@ export const Builder: React.FC<BuilderProps> = ({ editData, isActionSidebarAutoC
               </button>
             </div>
           </footer>
+          {!actionsValid && (
+            <p className="text-red-500 font-body-sm text-right mt-2">
+              {hasUnsupported
+                ? 'Remove unsupported actions before saving.'
+                : `Fix ${invalidActionCount} invalid action${invalidActionCount === 1 ? '' : 's'} before saving.`}
+            </p>
+          )}
         </div>
       </div>
     </main>

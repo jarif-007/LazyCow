@@ -17,6 +17,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── Real execution engine ──
   runShortcut: (shortcut: unknown) => ipcRenderer.invoke('execute-shortcut', shortcut),
 
+  // ── URL test (opens in default browser, no shortcut executed) ──
+  testUrl: (url: string) => ipcRenderer.invoke('test-url', url),
+
   // ── Cancellation ──
   cancelShortcut: (shortcutId: string) => ipcRenderer.invoke('cancel-shortcut', { shortcutId }),
 

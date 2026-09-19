@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ActionItem, getFieldLabel } from '../types/actions';
+import { useActionValidation } from '../hooks/useActionValidation';
 
 interface ActionSequenceProps {
   sequence: ActionItem[];
@@ -126,45 +127,7 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
     return 'border-border/80';
   };
 
-  const [validationErrors, setValidationErrors] = React.useState<Record<string, string>>({});
-
-  React.useEffect(() => {
-    const validateActions = async () => {
-      const errors: Record<string, string> = {};
-      for (const card of sequence) {
-        if (card.type === 'open_url') {
-          if (card.value && !/^https?:\/\//i.test(card.value)) {
-            errors[card.id] = 'URL must start with http:// or https://';
-          }
-        } else if (card.type === 'launch_app' || card.type === 'open_folder' || card.type === 'open_file' || card.type === 'open_vscode') {
-          if (card.value) {
-            if (window.electronAPI?.checkPathExists) {
-              const exists = await window.electronAPI.checkPathExists(card.value);
-              if (!exists) errors[card.id] = 'Path does not exist';
-            }
-          } else {
-            errors[card.id] = 'Path is required';
-          }
-        } else if (card.type === 'set_volume' || card.type === 'set_brightness') {
-          const val = Number(card.value);
-          if (isNaN(val) || val < 0 || val > 100 || !Number.isInteger(val)) {
-            errors[card.id] = `${card.type === 'set_volume' ? 'Volume' : 'Brightness'} must be an integer between 0 and 100`;
-          }
-        } else if (card.type === 'delay') {
-          const ms = Number(card.value);
-          if (isNaN(ms) || ms < 50 || ms > 60000 || !Number.isInteger(ms)) {
-            errors[card.id] = 'Delay must be an integer between 50 and 60000 ms';
-          }
-        } else if (card.type === 'run_script') {
-          if (!card.value.trim()) errors[card.id] = 'Script command cannot be empty';
-        }
-      }
-      setValidationErrors(errors);
-    };
-    
-    const timeout = setTimeout(validateActions, 500); // Debounce
-    return () => clearTimeout(timeout);
-  }, [sequence]);
+  const { errors: validationErrors } = useActionValidation(sequence);
 
   // ───────────────────────────────────
   // RENDER
@@ -282,7 +245,19 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
             {/* Action-specific input */}
             <div className="pl-12 pr-4 flex flex-col gap-2">
               <label className="font-label-caps text-label-caps uppercase opacity-70 block text-muted-foreground flex justify-between">
-                <span>{getFieldLabel(card.type)}</span>
+                <span className="flex items-center gap-1.5">
+                  {getFieldLabel(card.type)}
+                  {card.type === 'open_url' && (
+                    <span className="relative group/info inline-flex">
+                      <span className="material-symbols-outlined text-[14px] cursor-help normal-case opacity-70 group-hover/info:opacity-100 transition-opacity">
+                        info
+                      </span>
+                      <span className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 px-3 py-2 bg-foreground text-background text-[11px] leading-snug rounded-md whitespace-normal w-64 opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-opacity pointer-events-none z-50 font-body-sm shadow-lg normal-case tracking-normal">
+                        You can type <span className="font-code-sm">google.com</span> or <span className="font-code-sm">www.google.com</span> — <span className="font-code-sm">https://</span> will be added automatically when you click away. Type <span className="font-code-sm">http://</span> explicitly for non-secure sites.
+                      </span>
+                    </span>
+                  )}
+                </span>
                 {validationErrors[card.id] && (
                   <span className="text-red-500 font-medium normal-case flex items-center gap-1">
                     <span className="material-symbols-outlined text-[14px]">warning</span>
@@ -448,9 +423,23 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
                     type="text"
                     value={card.value}
                     onChange={(e) => onUpdateValue(card.id, e.target.value)}
+                    onBlur={() => {
+                      if (card.type !== 'open_url') return;
+                      let v = card.value.trim();
+                      if (!v) return;
+                      // Strip any leading ":" or "/" characters — user may have
+                      // removed the scheme but left "://" or "//" behind.
+                      v = v.replace(/^[:\/]+/, '');
+                      if (!v) return;
+                      // If no valid scheme is present, prepend https://
+                      if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) {
+                        v = `https://${v}`;
+                      }
+                      onUpdateValue(card.id, v);
+                    }}
                     className={`flex-1 bg-background/50 border text-foreground rounded-md px-3 py-2 font-body-sm focus:outline-none shadow-inner ${validationErrors[card.id] ? 'border-red-500/50 focus:ring-red-500' : 'border-border/50 focus:ring-primary'}`}
                   />
-                  {['launch_app', 'open_folder', 'open_file', 'open_vscode'].includes(card.type) && (
+                  {['launch_app', 'open_folder', 'open_file'].includes(card.type) && (
                     <button
                       type="button"
                       onClick={async () => {
@@ -465,6 +454,17 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
                     >
                       <span className="material-symbols-outlined text-[18px]">folder_open</span>
                       <span>Browse</span>
+                    </button>
+                  )}
+                  {card.type === 'open_url' && !validationErrors[card.id] && card.value.trim() !== '' && (
+                    <button
+                      type="button"
+                      onClick={() => window.electronAPI?.testUrl(card.value)}
+                      className="px-3 py-2 bg-card hover:bg-card-light border border-border text-foreground rounded-md font-body-sm flex items-center gap-1.5 transition-colors shrink-0 cursor-pointer shadow-sm hover:border-primary/50"
+                      title="Open this URL in your default browser to test it"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">open_in_new</span>
+                      <span>Test</span>
                     </button>
                   )}
                 </div>

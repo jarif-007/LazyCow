@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, nativeTheme, shell, globalShortcut, Tray, Menu, nativeImage, systemPreferences, dialog, Notification } from 'electron'
-import { exec, execFile } from 'child_process'
+import { exec } from 'child_process'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
@@ -18,7 +18,6 @@ if (process.platform !== 'win32') {
 }
 
 const execAsync = promisify(exec)
-const execFileAsync = promisify(execFile)
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -180,6 +179,19 @@ ipcMain.handle('get-system-accent', async () => {
   return await getWindowsAccentColor()
 })
 
+// Opens a URL in the default browser for a quick preview — does NOT run a shortcut.
+ipcMain.handle('test-url', async (_event, url: string) => {
+  if (typeof url !== 'string' || !/^https?:\/\/.+/i.test(url)) {
+    return { ok: false, error: 'Invalid URL' }
+  }
+  try {
+    await shell.openExternal(url)
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
 // ──────────────────────────────────────────────
 // SHORTCUT EXECUTION ENGINE
 // ──────────────────────────────────────────────
@@ -215,7 +227,6 @@ const cancelRequests = new Set<string>()
 // ── Settle times (ms) so the progress UI matches app launching ──
 const SETTLE_TIME: Record<string, number> = {
   launch_app: 800,
-  open_vscode: 1000,
 }
 
 function isShortcutRunning(shortcutId: string): boolean {
@@ -231,8 +242,8 @@ async function runAction(action: ShortcutActionData): Promise<void> {
         throw new Error('Path is a directory, not a Windows executable')
       }
       const ext = path.extname(action.value).toLowerCase()
-      if (!['.exe', '.cmd', '.bat', '.lnk'].includes(ext)) {
-        throw new Error('Path is not a recognized Windows executable (.exe, .cmd, .bat, .lnk)')
+      if (ext !== '.exe') {
+        throw new Error('Only .exe files are supported for Launch App')
       }
       
       const err = await shell.openPath(action.value)
@@ -252,22 +263,6 @@ async function runAction(action: ShortcutActionData): Promise<void> {
       const ok = /^https?:\/\//i.test(action.value)
       if (!ok) throw new Error('Only http:// and https:// URLs are allowed')
       await shell.openExternal(action.value)
-      return
-    }
-    case 'open_vscode': {
-      try { fs.statSync(action.value) } catch { throw new Error('Target folder or file does not exist') }
-
-      try {
-        await execFileAsync('code.cmd', [action.value], { windowsHide: true, timeout: 15000, shell: true })
-      } catch (err: unknown) {
-        const error = err as { code?: string; message?: string }
-        if (error.code === 'ENOENT' || String(err).includes('not recognized')) {
-          throw new Error('VS Code CLI "code" is not available in Windows PATH')
-        }
-        throw new Error(`Failed to open in VS Code: ${error.message || String(err)}`)
-      }
-      // Settle time for VS Code to actually appear
-      await new Promise((r) => setTimeout(r, SETTLE_TIME.open_vscode))
       return
     }
     case 'set_volume': {
@@ -796,8 +791,7 @@ ipcMain.handle('select-path', async (_event, type: 'app' | 'file' | 'folder') =>
   if (type === 'app') {
     properties = ['openFile']
     filters = [
-      { name: 'Windows Applications & Executables (*.exe, *.lnk, *.bat, *.cmd)', extensions: ['exe', 'lnk', 'bat', 'cmd'] },
-      { name: 'All Files (*.*)', extensions: ['*'] }
+      { name: 'Windows Applications (*.exe)', extensions: ['exe'] }
     ]
   } else if (type === 'folder') {
     properties = ['openDirectory']
