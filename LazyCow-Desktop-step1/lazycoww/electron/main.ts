@@ -1,4 +1,8 @@
 import { app, BrowserWindow, ipcMain, nativeTheme, shell, globalShortcut, Tray, Menu, nativeImage, systemPreferences, dialog, Notification } from 'electron'
+
+// Workaround for GPU driver incompatibilities causing visual glitches on some laptops.
+// Forces Chromium to use CPU rendering instead of the Direct3D backend.
+app.disableHardwareAcceleration()
 import { exec } from 'child_process'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
@@ -179,9 +183,22 @@ ipcMain.handle('get-system-accent', async () => {
   return await getWindowsAccentColor()
 })
 
+// Format-only URL check — scheme http/https + host present.
+// DNS verification is done separately in check-url-resolves.
+function isValidUrlFormat(value: string): boolean {
+  try {
+    const u = new URL(value)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false
+    if (!u.hostname) return false
+    return true
+  } catch {
+    return false
+  }
+}
+
 // Opens a URL in the default browser for a quick preview — does NOT run a shortcut.
 ipcMain.handle('test-url', async (_event, url: string) => {
-  if (typeof url !== 'string' || !/^https?:\/\/.+/i.test(url)) {
+  if (typeof url !== 'string' || !isValidUrlFormat(url)) {
     return { ok: false, error: 'Invalid URL' }
   }
   try {
@@ -260,8 +277,9 @@ async function runAction(action: ShortcutActionData): Promise<void> {
       return
     }
     case 'open_url': {
-      const ok = /^https?:\/\//i.test(action.value)
-      if (!ok) throw new Error('Only http:// and https:// URLs are allowed')
+      if (!isValidUrlFormat(action.value)) {
+        throw new Error('Invalid URL — must be a full web address')
+      }
       await shell.openExternal(action.value)
       return
     }

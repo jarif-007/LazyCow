@@ -127,7 +127,7 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
     return 'border-border/80';
   };
 
-  const { errors: validationErrors } = useActionValidation(sequence);
+  const { errors: validationErrors, warnings: validationWarnings } = useActionValidation(sequence);
 
   // ───────────────────────────────────
   // RENDER
@@ -252,8 +252,8 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
                       <span className="material-symbols-outlined text-[14px] cursor-help normal-case opacity-70 group-hover/info:opacity-100 transition-opacity">
                         info
                       </span>
-                      <span className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 px-3 py-2 bg-foreground text-background text-[11px] leading-snug rounded-md whitespace-normal w-64 opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-opacity pointer-events-none z-50 font-body-sm shadow-lg normal-case tracking-normal">
-                        You can type <span className="font-code-sm">google.com</span> or <span className="font-code-sm">www.google.com</span> — <span className="font-code-sm">https://</span> will be added automatically when you click away. Type <span className="font-code-sm">http://</span> explicitly for non-secure sites.
+                      <span className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 px-3 py-2 bg-foreground text-background text-[11px] leading-snug rounded-md whitespace-normal w-72 opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-opacity pointer-events-none z-50 font-body-sm shadow-lg normal-case tracking-normal">
+                        Type <span className="font-code-sm">google.com</span> or <span className="font-code-sm">www.google.com</span> — <span className="font-code-sm">https://</span> is added automatically. For local addresses like <span className="font-code-sm">192.168.1.1</span> or <span className="font-code-sm">localhost</span>, <span className="font-code-sm">http://</span> is used instead. Click <strong>Test</strong> to verify the URL loads.
                       </span>
                     </span>
                   )}
@@ -262,6 +262,12 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
                   <span className="text-red-500 font-medium normal-case flex items-center gap-1">
                     <span className="material-symbols-outlined text-[14px]">warning</span>
                     {validationErrors[card.id]}
+                  </span>
+                )}
+                {!validationErrors[card.id] && validationWarnings[card.id] && (
+                  <span className="text-amber-500 font-medium normal-case flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[14px]">cloud_off</span>
+                    {validationWarnings[card.id]}
                   </span>
                 )}
               </label>
@@ -431,11 +437,18 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
                       // removed the scheme but left "://" or "//" behind.
                       v = v.replace(/^[:\/]+/, '');
                       if (!v) return;
-                      // If no valid scheme is present, prepend https://
-                      if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) {
-                        v = `https://${v}`;
+                      // If a scheme is already present, leave it alone.
+                      if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) {
+                        onUpdateValue(card.id, v);
+                        return;
                       }
-                      onUpdateValue(card.id, v);
+                      // Choose http:// for local addresses, https:// otherwise.
+                      const isLocal =
+                        v.startsWith('192.') ||
+                        v === 'localhost' ||
+                        v.startsWith('localhost:') ||
+                        v.startsWith('localhost/');
+                      onUpdateValue(card.id, isLocal ? `http://${v}` : `https://${v}`);
                     }}
                     className={`flex-1 bg-background/50 border text-foreground rounded-md px-3 py-2 font-body-sm focus:outline-none shadow-inner ${validationErrors[card.id] ? 'border-red-500/50 focus:ring-red-500' : 'border-border/50 focus:ring-primary'}`}
                   />
