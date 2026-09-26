@@ -76,7 +76,8 @@ LazyCow/
 │           ├── types/
 │           │   └── actions.ts         # Action catalogs, interfaces, blocked trigger defaults
 │           ├── hooks/
-│           │   └── useHotkeyRecorder.ts # Reusable global keyboard capture hook
+│           │   ├── useHotkeyRecorder.ts # Reusable global keyboard capture hook
+│           │   └── useActionValidation.ts # Shared validation for action sequences (sync + debounced path checks)
 │           ├── components/
 │           │   ├── ActionSequence.tsx # Task chain visual builder, sliders, pickers, DnD reorder
 │           │   ├── ActionSidebar.tsx  # Collapsible catalog sidebar with drag-to-add
@@ -114,10 +115,9 @@ LazyCow/
 - **System Theme & Accent Synchronization:** Reads the Windows accent via Electron's `systemPreferences.getAccentColor()`; streams updates to the renderer on window focus.
 - **Window Minimum Size:** BrowserWindow is clamped to `minWidth: 800`, `minHeight: 600` (Windows Fluent Design standard). Users cannot shrink the window below this.
 - **Execution Engine (`execute-shortcut`):**
-  - **`launch_app`**: Validates extension (`.exe`, `.cmd`, `.bat`, `.lnk`) and launches the executable via Electron's `shell.openPath`. Includes an 800ms settle delay so the progress UI matches the app actually appearing on screen.
+  - **`launch_app`**: Validates extension (`.exe` only — other executable types were removed for safety and clarity) and launches the executable via Electron's `shell.openPath`. Includes an 800ms settle delay so the progress UI matches the app actually appearing on screen.
   - **`open_url`**: Sanitizes HTTP/HTTPS URLs and opens via Electron's `shell.openExternal`.
   - **`open_folder` & `open_file`**: Verifies target path existence and opens with `shell.openPath`.
-  - **`open_vscode`**: Launches `code.cmd` pointing to the target folder path. Includes a 1000ms settle delay.
   - **`set_volume`**: Uses Windows CoreAudio (WASAPI) with exact COM vtable alignment:
     - `IMMDeviceEnumerator`: offset 1 (`GetDefaultAudioEndpoint`) after placeholder slot 0 (`EnumAudioEndpoints`).
     - `IAudioEndpointVolume`: offset 4 (`SetMasterVolumeLevelScalar`) after 4 placeholder slots (`f()`, `g()`, `h()`, `i()`).
@@ -143,6 +143,7 @@ LazyCow/
 - **OS Notifications:** Emits native Windows desktop toast notifications (`new Notification(...)`) upon shortcut success or failure with elapsed execution duration (e.g. `Completed in 1.4s`).
 - **Path Dialogs (`select-path`):** Invokes `dialog.showOpenDialog` for native application (`.exe`), directory, or file selection.
 - **Path Checking (`check-path-exists`):** Verifies file/directory existence using `fs.existsSync`.
+- **URL Test (`test-url`):** Opens a URL in the default browser for a quick preview without executing a shortcut. Used by the **Test** button on `open_url` action cards. Rejects malformed URLs on the main side.
 - **Global Hotkey Registration:** Listens for registered shortcut keys, checks for dangerous actions, emits `hotkey-needs-confirm` or runs shortcut, and notifies on registration failures via `onHotkeyRegisterFailed`.
 
 #### 2. `electron/preload.ts` & `electron/electron-env.d.ts`
@@ -150,6 +151,7 @@ LazyCow/
   - `getSystemAccent(): Promise<string>`
   - `onSystemTheme(callback)` / `onSystemAccent(callback)`
   - `runShortcut(shortcut)`
+  - `testUrl(url): Promise<{ ok: boolean; error?: string }>` — Opens URL externally for preview, does not execute a shortcut
   - `cancelShortcut(shortcutId)` — Graceful cancel of a running shortcut
   - `syncHotkeys(shortcuts)`
   - `updateGeneralSettings(settings: { startAtLogin?: boolean; keepInTray?: boolean; executionNotifications?: boolean })`
@@ -162,8 +164,8 @@ LazyCow/
 
 ### B. Action Catalog & Types (`src/types/actions.ts`)
 
-- **12 Supported Action Types (All Active):**
-  1. `launch_app` — Application Path
+- **11 Supported Action Types (All Active):**
+  1. `launch_app` — Application Path (`.exe` only)
   2. `open_url` — Website URL
   3. `open_folder` — Folder Path
   4. `open_file` — File Path
@@ -174,7 +176,6 @@ LazyCow/
   9. `set_brightness` — Brightness Level (0–100% Slider)
   10. `delay` — Wait / Delay Duration (100ms–60,000ms, with 0.25s–10.0s interactive step slider)
   11. `run_script` — Terminal Command
-  12. `open_vscode` — Folder Path (opens in VS Code)
 - **Blocked System Triggers:** 17 protected default Windows shortcuts (`Alt+F4`, `Ctrl+Alt+Del`, `Win+L`, `Win+D`, `Win+R`, `Win+E`, etc.).
 
 ---
@@ -183,11 +184,16 @@ LazyCow/
 
 - **`ActionSidebar.tsx`:** Collapsible action catalog. Expanded mode shows full action cards with search. Collapsed mode shows icon strip with hover tooltips and a search icon that opens the `CollapsedSearchPopover`. Auto-collapses below 1100px window width (forced; user cannot re-expand until window grows).
 - **`CollapsedSearchPopover.tsx`:** Command-palette style centered popover opened from the collapsed ActionSidebar's search icon. Contains auto-focused input, live filtering by action name OR category, grouped results, Escape/Enter keyboard support. Uses React `createPortal` to escape parent `transform` stacking context. Clicking a result adds the action and closes the popover.
-- **`ActionSequence.tsx`:** Drag-and-drop action cards with visual flow preview, direct slider controls for Volume, Brightness, and Delay duration, dropdown controls for DND and Night Light, visual window layout configuration, debounced path validation, and native **"Browse"** file pickers.
-- **`Builder.tsx`:** Shortcut builder with real-time name uniqueness checking, hotkey conflict detection, modifier-first validation, unsaved changes safety modal, and full responsive layout (see Section 2's Responsive Layout subsection).
+- **`ActionSequence.tsx`:** Drag-and-drop action cards with visual flow preview, direct slider controls for Volume, Brightness, and Delay duration, dropdown controls for DND and Night Light, visual window layout configuration, and native **"Browse"** file pickers. For `open_url` actions, includes a **Test** button (opens the URL in the default browser via `testUrl` IPC), an **info tooltip** explaining the auto-https behavior, and automatic `https://` prefixing when the user blurs a schemeless URL.
+- **`Builder.tsx`:** Shortcut builder with real-time name uniqueness checking, hotkey conflict detection, modifier-first validation, unsaved changes safety modal, and full responsive layout (see Section 2's Responsive Layout subsection). Uses the shared `useActionValidation` hook to **disable Save** when any action is invalid or unsupported, showing *"Fix N invalid action(s) before saving."* Restores the shortcut's hotkey when opening for edit.
 - **`ShortcutCard.tsx`:** Dashboard shortcut card with 3-dot dropdown menu (Edit Flow, Duplicate, Rename, Delete), hotkey conflict warning badge, elapsed duration analytics (`Sequence Complete • 1.4s`), live step execution log, amber **"Cancelling..."** button state with spinner when cancel is requested, and **"Cancelled after: <action title>"** state display. Menu is disabled while the shortcut is running.
 - **`Library.tsx`:** Shortcut card dashboard with live step progress ring, execution log, search filter, duplicate workflow generator (`(Copy)` naming & hotkey decoupling), inline rename modal, dropdown management, and cancel handler that forwards to `cancelShortcut`.
 - **`Settings.tsx` & Subcomponents:** Manages appearance, theme switching, startup launch, system tray minimization, execution notifications, blocked triggers, and factory reset.
+
+### D. Hooks (`src/hooks/`)
+
+- **`useHotkeyRecorder.ts`:** Captures global key combinations for the trigger field. Uses capture-phase `keydown` so all keystrokes are swallowed during recording. Returns `{ recording, recordedCombo, startRecording, stopRecording, clearCombo, setRecordedCombo }`.
+- **`useActionValidation.ts`:** Single source of truth for action-sequence validation. Runs synchronous checks (empty values, format, numeric range) immediately and debounced path-existence checks (400ms) via `checkPathExists`. Also flags actions whose `type` is not in the current `actionCatalog` as **unsupported**. Returns `{ errors, unsupportedIds, isValid }`. Consumed by both `ActionSequence.tsx` (inline errors) and `Builder.tsx` (Save gating).
 
 ---
 
@@ -233,14 +239,18 @@ npm run build
 7. **Responsive Breakpoints:** Main sidebar auto-collapses below 900px. ActionSidebar (Builder) auto-collapses below 1100px. Auto-collapse is forced — the manual toggle is hidden while auto-collapsed. Manual collapse choice persists across resizes; auto-collapse is triggered only when the window becomes narrower than the threshold.
 8. **Cancellation is Graceful-Only:** Never reintroduce Immediate cancellation — killing apps via `taskkill` kills all instances and can close unrelated windows. The current implementation only interrupts between actions, never during one.
 9. **Popovers Use Portals:** Any floating overlay (popover, modal, dropdown) that should appear centered over the viewport must use `createPortal(..., document.body)`, otherwise a parent `transform` will trap it and cause misalignment.
+10. **Single Source of Validation Truth:** All action-sequence validation must go through `useActionValidation.ts`. Never re-implement validation logic in a component — if `Builder` needs to gate Save, it must consume the same hook that `ActionSequence` uses for inline errors. Adding a new action type means adding a `case` to the hook's switch.
+11. **Auto-Prefix URLs on Blur:** URL fields auto-prepend `https://` when the user blurs without a scheme. The prefixer strips any orphan `://`, `//`, or `:` first. Users who explicitly type `http://` or `https://` keep control.
 
 ---
 
 ## 7. CURRENT PROJECT STATUS & FEATURE ROADMAP
 
 ### A. Fully Implemented & Verified Features
-* **12 Action Types:** Launch App, Open URL, Open Folder, Open File, Arrange Windows (5 Win32 layout presets), Set Volume (WASAPI COM), Toggle DND (Focus Assist), Toggle Night Light, Set Brightness (WMI/CIM/DDC-CI), Wait / Delay (0.25s–10s slider), Run Terminal Script, Open in VS Code.
-* **Shortcut Builder:** Visual drag-and-drop sequencing, live name uniqueness validation, hotkey collision checking, ComboBuilder modifier constructor, native OS Browse pickers.
+* **11 Action Types:** Launch App (`.exe` only), Open URL, Open Folder, Open File, Arrange Windows (5 Win32 layout presets), Set Volume (WASAPI COM), Toggle DND (Focus Assist), Toggle Night Light, Set Brightness (WMI/CIM/DDC-CI), Wait / Delay (0.25s–10s slider), Run Terminal Script.
+* **Shortcut Builder:** Visual drag-and-drop sequencing, live name uniqueness validation, hotkey collision checking, ComboBuilder modifier constructor, native OS Browse pickers. **Save is disabled when any action is invalid or unsupported**, with a red inline message under the Save button.
+* **Action Validation:** Shared `useActionValidation` hook validates every action synchronously (format, range, empty) and asynchronously (path existence). Checks run debounced at 400ms and produce per-action error messages.
+* **URL Helpers:** Automatic `https://` prefixing on blur (with orphan-scheme cleanup), a **Test** button to preview the URL in the default browser without executing the shortcut, and an info tooltip explaining the auto-prefix behavior.
 * **Shortcut Library:** Grid layout switcher (2/3/4 cols), search bar, inline rename modal, delete modal, duplicate/clone shortcut with auto `(Copy)` naming.
 * **Execution & Diagnostics:** Real-time step progress ring, step execution log with elapsed runtime display (`Sequence Complete • 1.4s`), toast notifications with duration, and hotkey conflict warning badge (`Conflict`).
 * **Settings & Themes:** Windows 11 Fluent Theme (native DWM accent sync) + Custom color themes (Coffee, Ocean, Forest) with shade selectors; system tray support and Windows startup integration; blocked triggers management.
@@ -255,17 +265,56 @@ npm run build
 4. **Error Recovery & Conditional Steps:** Option on actions to "Continue on error" vs "Halt sequence", or "Skip if already running".
 5. **Scheduled / Automatic Triggers:** Time-based shortcut execution (e.g., Run "Work Setup" every weekday at 9:00 AM) using node-cron or Windows Task Scheduler.
 
-### C. Recently Completed (Last Session)
+### C. Recently Completed
 
+**Session 1 (cancellation & responsive layout):**
 - Removed Immediate cancel mode — cancellation is now always graceful.
 - Added amber **"Cancelling..."** button state with spinner for immediate click feedback.
 - Fixed the full-page double-scroll bug by completing the flex chain (`min-height: 0` + `overflow: hidden` on all flex ancestors).
 - Added responsive auto-collapse for both sidebars with manual-choice persistence.
 - Enforced minimum window size (800×600) via Electron `minWidth` / `minHeight`.
 - Built the `CollapsedSearchPopover.tsx` component with portal-based rendering.
-- Added gitignore rules for AI tooling artifacts (`.claude/`, `graphify-out/`, `CLAUDE.md`, `GRAPH_REPORT.md`).
+- Added gitignore rules for AI tooling artifacts.
 
-### D. Known Issues / Pending Polish
+**Session 2 (validation & URL helpers, commit `de393b8`):**
+- Removed the `open_vscode` action entirely — 11 actions remain. VS Code via CLI is now a `run_script` use case.
+- Restricted `launch_app` to `.exe` only (backend validation + picker filter). Removed `.lnk`, `.bat`, `.cmd` support for safety and clarity.
+- Emptied the default values for `launch_app`, `open_url`, `open_folder`, `open_file` — no more placeholder junk getting saved.
+- Created the shared `useActionValidation` hook (sync + debounced async checks + unsupported-action flagging).
+- Save is now disabled when any action is invalid or unsupported, with a red inline message: *"Fix N invalid action(s) before saving."*
+- Auto-prefix `https://` on URL blur, with orphan scheme cleanup (`://google.com` → `https://google.com`).
+- New **Test** button for `open_url` actions — opens the URL externally without executing the shortcut (new `test-url` IPC).
+- Info tooltip on the URL field label explaining the auto-prefix behavior.
+- Bug fix: editing a saved shortcut now restores its hotkey (previously reset to the default `Win + Alt + D` on save, silently corrupting the shortcut).
+
+### D. In-Progress Work (Locked-in Plan, Not Yet Coded)
+
+**Phase B.2 — Path Field UX:**
+- Read-only path fields — typing disabled, Browse is the only way to set them.
+- Clear (✗) button next to path fields to reset the value.
+- URL live ✓ / ✗ format indicator next to the field.
+- Unsupported-action visual: amber border, "Unsupported action" label, value input disabled, only Delete button works.
+
+**Phase C — Library Badges & Run Guards:**
+- Amber **"⚠ Invalid Action"** badge on Library cards containing unsupported or invalid actions.
+- Run button disabled when the card has any invalid action — greyed out with a tooltip.
+
+**Phase D — Broken Path Handling (Option X):**
+- Amber **"⚠ Broken Path"** badge in Library when a path action references a file/folder that no longer exists.
+- Run button disabled with tooltip: *"Fix broken paths in the Builder to run this shortcut."*
+- **Fix** button on the broken-path action in Builder → opens native picker.
+- Existing Delete (trash) button stays.
+
+**Phase E — `run_script` Error Surfacing (Option C):**
+- Surface actual `cmd.exe` stderr instead of generic "Command exited with code 1" (e.g. *"Command not found: gti"*).
+- **"Fix & Retry"** button on the error state — jumps to Builder with the shortcut pre-loaded.
+
+**Pending decisions:**
+- Test button for `launch_app` / `open_folder` / `open_file` (same pattern as URL Test) — not yet confirmed.
+- Auto-delete vs flag for orphaned actions from older shortcuts — current decision is *flag, do not delete*.
+
+### E. Known Issues / Pending Polish
 
 - Library and Settings pages have not been fully tested at narrow window widths (800–900px) — potential responsive layout issues.
 - ESLint emits a harmless TypeScript-version warning (`@typescript-eslint` supports `>=4.7.4 <5.6.0`; project runs `5.9.3`). Not blocking.
+- Running `npx tsc` or `npm run dev` from the repo root (instead of `lazycoww/`) triggers a phantom `tsc@2.0.4` install prompt — always `cd` into `lazycoww/` first.
