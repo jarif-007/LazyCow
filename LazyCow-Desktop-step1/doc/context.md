@@ -111,6 +111,7 @@ LazyCow/
 
 #### 1. `electron/main.ts`
 - **Platform Gate:** Validates `process.platform === 'win32'` at startup. If non-Windows, displays an error dialog and exits immediately.
+- **GPU Workaround:** Calls `app.disableHardwareAcceleration()` immediately after imports (before `app.whenReady()`). Required for laptops whose integrated GPU driver causes visual glitches (frozen white regions, color tints, broken ClearType) with Chromium's default Direct3D backend. Do not remove without confirming on a machine with the affected GPU class.
 - **Window Management:** Creates 1200x800 `BrowserWindow` with `autoHideMenuBar: true`, custom icon, and hidden titlebar. Minimizes/closes to system tray if `keepInTray` is enabled.
 - **System Theme & Accent Synchronization:** Reads the Windows accent via Electron's `systemPreferences.getAccentColor()`; streams updates to the renderer on window focus.
 - **Window Minimum Size:** BrowserWindow is clamped to `minWidth: 800`, `minHeight: 600` (Windows Fluent Design standard). Users cannot shrink the window below this.
@@ -143,7 +144,7 @@ LazyCow/
 - **OS Notifications:** Emits native Windows desktop toast notifications (`new Notification(...)`) upon shortcut success or failure with elapsed execution duration (e.g. `Completed in 1.4s`).
 - **Path Dialogs (`select-path`):** Invokes `dialog.showOpenDialog` for native application (`.exe`), directory, or file selection.
 - **Path Checking (`check-path-exists`):** Verifies file/directory existence using `fs.existsSync`.
-- **URL Test (`test-url`):** Opens a URL in the default browser for a quick preview without executing a shortcut. Used by the **Test** button on `open_url` action cards. Rejects malformed URLs on the main side.
+- **URL Test (`test-url`):** Opens a URL in the default browser for a quick preview without executing a shortcut. Used by the **Test** button on `open_url` action cards. Format-checks the URL (scheme must be http/https, host must be present) before opening.
 - **Global Hotkey Registration:** Listens for registered shortcut keys, checks for dangerous actions, emits `hotkey-needs-confirm` or runs shortcut, and notifies on registration failures via `onHotkeyRegisterFailed`.
 
 #### 2. `electron/preload.ts` & `electron/electron-env.d.ts`
@@ -184,7 +185,7 @@ LazyCow/
 
 - **`ActionSidebar.tsx`:** Collapsible action catalog. Expanded mode shows full action cards with search. Collapsed mode shows icon strip with hover tooltips and a search icon that opens the `CollapsedSearchPopover`. Auto-collapses below 1100px window width (forced; user cannot re-expand until window grows).
 - **`CollapsedSearchPopover.tsx`:** Command-palette style centered popover opened from the collapsed ActionSidebar's search icon. Contains auto-focused input, live filtering by action name OR category, grouped results, Escape/Enter keyboard support. Uses React `createPortal` to escape parent `transform` stacking context. Clicking a result adds the action and closes the popover.
-- **`ActionSequence.tsx`:** Drag-and-drop action cards with visual flow preview, direct slider controls for Volume, Brightness, and Delay duration, dropdown controls for DND and Night Light, visual window layout configuration, and native **"Browse"** file pickers. For `open_url` actions, includes a **Test** button (opens the URL in the default browser via `testUrl` IPC), an **info tooltip** explaining the auto-https behavior, and automatic `https://` prefixing when the user blurs a schemeless URL.
+- **`ActionSequence.tsx`:** Drag-and-drop action cards with visual flow preview, direct slider controls for Volume, Brightness, and Delay duration, dropdown controls for DND and Night Light, visual window layout configuration, and native **"Browse"** file pickers. For `open_url` actions: includes a **Test** button (opens the URL in the default browser via the `testUrl` IPC), an **info tooltip** explaining the auto-prefix behavior, and smart auto-prefixing on blur. **Auto-prefix rules:** private/loopback ranges (`10.`, `127.`, `169.254.`, `172.16–31.`, `192.168.`, `localhost`) get `http://`; everything else gets `https://`. An orphan `://`, `//`, or `:` is stripped first. Users who explicitly type a scheme keep it.
 - **`Builder.tsx`:** Shortcut builder with real-time name uniqueness checking, hotkey conflict detection, modifier-first validation, unsaved changes safety modal, and full responsive layout (see Section 2's Responsive Layout subsection). Uses the shared `useActionValidation` hook to **disable Save** when any action is invalid or unsupported, showing *"Fix N invalid action(s) before saving."* Restores the shortcut's hotkey when opening for edit.
 - **`ShortcutCard.tsx`:** Dashboard shortcut card with 3-dot dropdown menu (Edit Flow, Duplicate, Rename, Delete), hotkey conflict warning badge, elapsed duration analytics (`Sequence Complete • 1.4s`), live step execution log, amber **"Cancelling..."** button state with spinner when cancel is requested, and **"Cancelled after: <action title>"** state display. Menu is disabled while the shortcut is running.
 - **`Library.tsx`:** Shortcut card dashboard with live step progress ring, execution log, search filter, duplicate workflow generator (`(Copy)` naming & hotkey decoupling), inline rename modal, dropdown management, and cancel handler that forwards to `cancelShortcut`.
@@ -193,7 +194,7 @@ LazyCow/
 ### D. Hooks (`src/hooks/`)
 
 - **`useHotkeyRecorder.ts`:** Captures global key combinations for the trigger field. Uses capture-phase `keydown` so all keystrokes are swallowed during recording. Returns `{ recording, recordedCombo, startRecording, stopRecording, clearCombo, setRecordedCombo }`.
-- **`useActionValidation.ts`:** Single source of truth for action-sequence validation. Runs synchronous checks (empty values, format, numeric range) immediately and debounced path-existence checks (400ms) via `checkPathExists`. Also flags actions whose `type` is not in the current `actionCatalog` as **unsupported**. Returns `{ errors, unsupportedIds, isValid }`. Consumed by both `ActionSequence.tsx` (inline errors) and `Builder.tsx` (Save gating).
+- **`useActionValidation.ts`:** Single source of truth for action-sequence validation. Runs synchronous checks (empty values, format, numeric range) immediately and debounced path-existence checks (~600ms) via `checkPathExists`. Flags actions whose `type` is not in the current `actionCatalog` as **unsupported**. Returns `{ errors, warnings, unsupportedIds, isValid }` (`warnings` is reserved for future offline/soft-failure states but currently always empty). Consumed by both `ActionSequence.tsx` (inline errors) and `Builder.tsx` (Save gating). **URL validation rules (format-only, no TLD whitelist, no DNS):** empty → error; schemeless with dot + chars after → pending (blur will auto-prefix); IPv4-shaped → strict 4-segment range check; IPv6 requires brackets; malformed → generic error.
 
 ---
 
@@ -240,7 +241,9 @@ npm run build
 8. **Cancellation is Graceful-Only:** Never reintroduce Immediate cancellation — killing apps via `taskkill` kills all instances and can close unrelated windows. The current implementation only interrupts between actions, never during one.
 9. **Popovers Use Portals:** Any floating overlay (popover, modal, dropdown) that should appear centered over the viewport must use `createPortal(..., document.body)`, otherwise a parent `transform` will trap it and cause misalignment.
 10. **Single Source of Validation Truth:** All action-sequence validation must go through `useActionValidation.ts`. Never re-implement validation logic in a component — if `Builder` needs to gate Save, it must consume the same hook that `ActionSequence` uses for inline errors. Adding a new action type means adding a `case` to the hook's switch.
-11. **Auto-Prefix URLs on Blur:** URL fields auto-prepend `https://` when the user blurs without a scheme. The prefixer strips any orphan `://`, `//`, or `:` first. Users who explicitly type `http://` or `https://` keep control.
+11. **Auto-Prefix URLs on Blur:** URL fields auto-prepend `https://` when the user blurs without a scheme. The prefixer strips any orphan `://`, `//`, or `:` first. Users who explicitly type `http://` or `https://` keep control. Private and loopback IP ranges (`10.`, `127.`, `169.254.`, `172.16–31.`, `192.168.`) and `localhost` get `http://` instead.
+12. **Never Remove `disableHardwareAcceleration()`:** The GPU workaround in `main.ts` fixes Chromium's Direct3D rendering on laptops with incompatible integrated GPUs. Removing it reintroduces visual glitches (frozen regions, color tints, broken ClearType). If you need to re-enable hardware acceleration for performance, do it behind a user-facing toggle, never as a blind deletion.
+13. **URL Validation Stays Format-Only:** Never reintroduce a TLD whitelist or a DNS lookup for URL validation. Both create maintenance burden, offline-hostile behavior, and false negatives. Users verify reachability themselves via the **Test** button.
 
 ---
 
@@ -286,6 +289,14 @@ npm run build
 - New **Test** button for `open_url` actions — opens the URL externally without executing the shortcut (new `test-url` IPC).
 - Info tooltip on the URL field label explaining the auto-prefix behavior.
 - Bug fix: editing a saved shortcut now restores its hotkey (previously reset to the default `Win + Alt + D` on save, silently corrupting the shortcut).
+
+**Session 3 (GPU fix & URL simplification, commits `2f2335a` + `2a589c7`):**
+- Fixed a wide class of visual glitches on laptops with incompatible integrated GPUs (frozen white regions, color tints, broken ClearType) by calling `app.disableHardwareAcceleration()` in the main process. Root cause: Chromium's default Direct3D backend fighting the driver.
+- Simplified URL validation: dropped the TLD whitelist, dropped the custom-TLD manager UI, dropped the planned DNS check. Format-only now, with the user verifying via the Test button.
+- Added robust IPv4 validation (exactly 4 segments, each 0–255). 5-segment inputs, out-of-range parts, and partial addresses all produce specific error messages instead of the generic "Enter a URL like google.com".
+- Added IPv6 bracket-literal support (via `new URL()` parsing).
+- Expanded the auto-prefix rule: private/loopback ranges (`10.`, `127.`, `169.254.`, `172.16–31.`, `192.168.`) and `localhost` now get `http://`; everything else gets `https://`.
+- Removed dead code: the abandoned `Custom URL TLDs` section in Settings → General.
 
 ### D. In-Progress Work (Locked-in Plan, Not Yet Coded)
 
