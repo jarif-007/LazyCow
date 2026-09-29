@@ -16,7 +16,7 @@ export const RenameModal: React.FC<RenameModalProps> = ({ value, onChange, onSav
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" onClick={onCancel} />
+      <div className="absolute inset-0 bg-background/90" onClick={onCancel} />
       <div className="relative bg-card border border-border rounded-2xl p-6 shadow-2xl max-w-sm w-full mx-4">
         <h2 className="font-title-sm text-foreground mb-4">Rename Shortcut</h2>
         <input
