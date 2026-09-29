@@ -85,7 +85,6 @@ LazyCow/
 │           │   ├── CollapsedSearchPopover.tsx # Command-palette search popover for collapsed ActionSidebar
 │           │   ├── ComboBuilder.tsx   # Dropdown modifier-first hotkey constructor
 │           │   ├── DeleteModal.tsx    # Confirmation modal for shortcut deletion
-│           │   ├── RenameModal.tsx    # Modal for renaming shortcuts with duplicate check
 │           │   ├── OSCriticalWarningModal.tsx # Safety warning modal for critical hotkey deletes
 │           │   ├── SettingsAppearance.tsx # Theme, mode, and accent color settings
 │           │   ├── SettingsBlockedTriggers.tsx # Blocked triggers and OS-critical hotkey config
@@ -112,6 +111,7 @@ LazyCow/
 #### 1. `electron/main.ts`
 - **Platform Gate:** Validates `process.platform === 'win32'` at startup. If non-Windows, displays an error dialog and exits immediately.
 - **GPU Workaround:** Calls `app.disableHardwareAcceleration()` immediately after imports (before `app.whenReady()`). Required for laptops whose integrated GPU driver causes visual glitches (frozen white regions, color tints, broken ClearType) with Chromium's default Direct3D backend. Do not remove without confirming on a machine with the affected GPU class.
+- **Native Context Menu:** Wires up `electron-context-menu` at module load so right-clicking any input, textarea, or contentEditable shows the standard Cut/Copy/Paste/Select All menu. Electron does not do this by default — every text field would be unusable without it. `showInspectElement` is enabled only in dev (`VITE_DEV_SERVER_URL`).
 - **Window Management:** Creates 1200x800 `BrowserWindow` with `autoHideMenuBar: true`, custom icon, and hidden titlebar. Minimizes/closes to system tray if `keepInTray` is enabled.
 - **System Theme & Accent Synchronization:** Reads the Windows accent via Electron's `systemPreferences.getAccentColor()`; streams updates to the renderer on window focus.
 - **Window Minimum Size:** BrowserWindow is clamped to `minWidth: 800`, `minHeight: 600` (Windows Fluent Design standard). Users cannot shrink the window below this.
@@ -187,7 +187,7 @@ LazyCow/
 - **`CollapsedSearchPopover.tsx`:** Command-palette style centered popover opened from the collapsed ActionSidebar's search icon. Contains auto-focused input, live filtering by action name OR category, grouped results, Escape/Enter keyboard support. Uses React `createPortal` to escape parent `transform` stacking context. Clicking a result adds the action and closes the popover.
 - **`ActionSequence.tsx`:** Drag-and-drop action cards with visual flow preview, direct slider controls for Volume, Brightness, and Delay duration, dropdown controls for DND and Night Light, visual window layout configuration, and native **"Browse"** file pickers. For `open_url` actions: includes a **Test** button (opens the URL in the default browser via the `testUrl` IPC), an **info tooltip** explaining the auto-prefix behavior, and smart auto-prefixing on blur. **Auto-prefix rules:** private/loopback ranges (`10.`, `127.`, `169.254.`, `172.16–31.`, `192.168.`, `localhost`) get `http://`; everything else gets `https://`. An orphan `://`, `//`, or `:` is stripped first. Users who explicitly type a scheme keep it.
 - **`Builder.tsx`:** Shortcut builder with real-time name uniqueness checking, hotkey conflict detection, modifier-first validation, unsaved changes safety modal, and full responsive layout (see Section 2's Responsive Layout subsection). Uses the shared `useActionValidation` hook to **disable Save** when any action is invalid or unsupported, showing *"Fix N invalid action(s) before saving."* Restores the shortcut's hotkey when opening for edit.
-- **`ShortcutCard.tsx`:** Dashboard shortcut card with 3-dot dropdown menu (Edit Flow, Duplicate, Rename, Delete), hotkey conflict warning badge, elapsed duration analytics (`Sequence Complete • 1.4s`), live step execution log, amber **"Cancelling..."** button state with spinner when cancel is requested, and **"Cancelled after: <action title>"** state display. Menu is disabled while the shortcut is running.
+- **`ShortcutCard.tsx`:** Dashboard shortcut card with 3-dot dropdown menu (Edit Flow, Duplicate, Rename, Delete), hotkey conflict warning badge, elapsed duration analytics (`Sequence Complete • 1.4s`), live step execution log, amber **"Cancelling..."** button state with spinner when cancel is requested, and **"Cancelled after: <action title>"** state display. Menu is disabled while the shortcut is running. Uses solid `bg-background/95` and `bg-background/70` for the shade picker and action-icon pills — **no `backdrop-blur`** (removed for performance).
 - **`Library.tsx`:** Shortcut card dashboard with live step progress ring, execution log, search filter, duplicate workflow generator (`(Copy)` naming & hotkey decoupling), inline rename modal, dropdown management, and cancel handler that forwards to `cancelShortcut`.
 - **`Settings.tsx` & Subcomponents:** Manages appearance, theme switching, startup launch, system tray minimization, execution notifications, blocked triggers, and factory reset.
 
@@ -244,6 +244,9 @@ npm run build
 11. **Auto-Prefix URLs on Blur:** URL fields auto-prepend `https://` when the user blurs without a scheme. The prefixer strips any orphan `://`, `//`, or `:` first. Users who explicitly type `http://` or `https://` keep control. Private and loopback IP ranges (`10.`, `127.`, `169.254.`, `172.16–31.`, `192.168.`) and `localhost` get `http://` instead.
 12. **Never Remove `disableHardwareAcceleration()`:** The GPU workaround in `main.ts` fixes Chromium's Direct3D rendering on laptops with incompatible integrated GPUs. Removing it reintroduces visual glitches (frozen regions, color tints, broken ClearType). If you need to re-enable hardware acceleration for performance, do it behind a user-facing toggle, never as a blind deletion.
 13. **URL Validation Stays Format-Only:** Never reintroduce a TLD whitelist or a DNS lookup for URL validation. Both create maintenance burden, offline-hostile behavior, and false negatives. Users verify reachability themselves via the **Test** button.
+14. **No `backdrop-blur` in Modals or Overlays:** `backdrop-blur-*` forces Chromium to blur the entire backdrop on every frame the modal is open, and to recompute on open/close. Under software rendering (which the GPU workaround forces) this is measurably expensive. Use solid `bg-background/90` (or `/95` for tighter overlays) instead.
+15. **rAF-Throttle Resize Listeners:** Any `window.addEventListener('resize', ...)` must be wrapped in a `requestAnimationFrame` throttle so the handler runs at most once per frame. Without it, the handler fires hundreds of times during a drag and causes visible lag.
+16. **Native Context Menu is Mandatory:** `electron-context-menu` in `main.ts` enables right-click → copy/paste/cut/select-all across the app. Removing it breaks every text field. Chromium's default is no menu at all — this is not optional.
 
 ---
 
@@ -259,6 +262,7 @@ npm run build
 * **Settings & Themes:** Windows 11 Fluent Theme (native DWM accent sync) + Custom color themes (Coffee, Ocean, Forest) with shade selectors; system tray support and Windows startup integration; blocked triggers management.
 * **Graceful Cancellation:** Cancel button replaces Run button while a shortcut is executing. Clicking it immediately shows an amber **"Cancelling..."** spinner, then the current action finishes and remaining steps are skipped. Result shown as **"Cancelled after: <last action title>"**.
 * **Responsive Layout:** Window has a hard minimum of 800×600. Main sidebar auto-collapses below 900px; ActionSidebar auto-collapses below 1100px. Manual collapse choice persists; auto-collapse is forced only while the window is narrow.
+* **Native Context Menu:** Right-click any input, textarea, or contentEditable → Cut/Copy/Paste/Select All. Works in dev and production.
 * **Collapsed Search Popover:** When ActionSidebar is collapsed, clicking the search icon opens a centered command-palette-style popover (`CollapsedSearchPopover.tsx`) rendered via React `createPortal`. Live filtering by name or category, grouped results, keyboard support (`Esc` to close, `Enter` to add first result).
 
 ### B. Remaining Desktop Roadmap (Excluding Cloud / Auth)
@@ -298,6 +302,12 @@ npm run build
 - Expanded the auto-prefix rule: private/loopback ranges (`10.`, `127.`, `169.254.`, `172.16–31.`, `192.168.`) and `localhost` now get `http://`; everything else gets `https://`.
 - Removed dead code: the abandoned `Custom URL TLDs` section in Settings → General.
 
+**Session 4 (usability & performance polish, commits `ff8db07` → `c3854b7`):**
+- Added `electron-context-menu` — right-click anywhere now shows Cut/Copy/Paste/Select All. Previously every text field was silent on right-click (Electron's default), which broke basic copy-paste workflows.
+- rAF-throttled the resize listener in `App.tsx`. Previously fired hundreds of times per drag; now once per frame. Window resizing is visibly smoother.
+- Removed `backdrop-blur-*` from all modals and floating overlays (`App`, `Builder`, `Library`, `DeleteModal`, `OSCriticalWarningModal`, `CollapsedSearchPopover`, `ShortcutCard`). Replaced with solid `bg-background/90` (or `/95` for tighter overlays). Eliminates the per-frame compositor cost of blurring the entire backdrop.
+- Deleted `RenameModal.tsx` — verified dead code (no other file imports it; Library uses its own inline rename modal).
+
 ### D. In-Progress Work (Locked-in Plan, Not Yet Coded)
 
 **Phase B.2 — Path Field UX:**
@@ -319,6 +329,25 @@ npm run build
 **Phase E — `run_script` Error Surfacing (Option C):**
 - Surface actual `cmd.exe` stderr instead of generic "Command exited with code 1" (e.g. *"Command not found: gti"*).
 - **"Fix & Retry"** button on the error state — jumps to Builder with the shortcut pre-loaded.
+
+**Phase E (additional bug):**
+- Security Warning modal in `Library.tsx` shows an empty list when the shortcut's only dangerous action is an `open_file` with a dangerous extension (`.exe`, `.ps1`, etc.). The trigger check in `runShortcut()` flags these, but the modal's `<span>` list only filters `run_script` and `launch_app`. Fix: hoist `DANGEROUS_EXTENSIONS` to module scope and extend the filter to include `open_file` with a dangerous extension, showing *"Open: <path>"*.
+
+**Phase 3 — Drag-and-Drop Rebuild (`@dnd-kit`):**
+- Replace HTML5 native drag in `ActionSequence.tsx` (internal reorder) and `ActionSidebar.tsx` → `ActionSequence.tsx` (sidebar drop).
+- Install `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities`.
+- Animates only `transform` + `opacity` — smooth even under software rendering.
+- Effort: 1 focused session. Medium risk (interaction-heavy).
+
+**Phase 4 — Keyboard Shortcuts:**
+- Ctrl+N (new shortcut), Ctrl+, (settings), Escape (close modal), Ctrl+S (save in Builder), Ctrl+1/2/3 (tab switch).
+
+**Phase 5 — Motion Polish:**
+- Install `motion` (Framer Motion v11). Modal open/close, page transitions, card appear stagger.
+- Only uses `transform` + `opacity`.
+
+**Phase 6 — Perceived Performance:**
+- Startup timing audit, loading indicators for anything >200ms, optimistic UI for Run and Save, focus traps on modals.
 
 **Pending decisions:**
 - Test button for `launch_app` / `open_folder` / `open_file` (same pattern as URL Test) — not yet confirmed.
