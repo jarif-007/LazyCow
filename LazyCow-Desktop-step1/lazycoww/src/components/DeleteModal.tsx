@@ -8,7 +8,7 @@ interface DeleteModalProps {
 export const DeleteModal: React.FC<DeleteModalProps> = ({ onConfirm, onCancel }) => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" onClick={onCancel} />
+      <div className="absolute inset-0 bg-background/90" onClick={onCancel} />
       <div className="relative bg-card border border-border rounded-2xl p-6 shadow-2xl max-w-sm w-full mx-4 text-center">
         <span className="material-symbols-outlined text-4xl text-red-500 mb-2">delete_forever</span>
         <h2 className="font-title-sm text-foreground mb-2">Delete Shortcut?</h2>

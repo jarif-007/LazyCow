@@ -10,7 +10,7 @@ export const OSCriticalWarningModal: React.FC<OSCriticalWarningModalProps> = ({ 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" onClick={onCancel} />
+      <div className="absolute inset-0 bg-background/90" onClick={onCancel} />
       
       {/* Modal */}
       <div className="relative bg-card border border-red-500/30 rounded-2xl p-8 shadow-2xl max-w-md w-full mx-4">

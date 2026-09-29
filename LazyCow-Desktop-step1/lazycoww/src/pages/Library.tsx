@@ -254,7 +254,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
 
       {renameId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" onClick={() => { setRenameId(null); setRenameError(''); }} />
+          <div className="absolute inset-0 bg-background/90" onClick={() => { setRenameId(null); setRenameError(''); }} />
           <div className="relative bg-card border border-border rounded-2xl p-6 shadow-2xl max-w-sm w-full mx-4">
             <h2 className="font-title-sm text-foreground mb-4">Rename Shortcut</h2>
             <input type="text" value={renameValue}
@@ -274,7 +274,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
 
       {confirmRun && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" onClick={() => setConfirmRun(null)} />
+          <div className="absolute inset-0 bg-background/90" onClick={() => setConfirmRun(null)} />
           <div className="relative bg-card border border-border rounded-2xl p-6 shadow-2xl max-w-md w-full mx-4">
             <h2 className="font-title-sm text-foreground mb-2 flex items-center gap-2">
               <span className="material-symbols-outlined text-red-500">warning</span>

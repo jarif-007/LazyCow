@@ -51,7 +51,7 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
 
         <div className="flex items-center gap-1 relative">
           {customColorMode && (
-            <div className={`flex items-center gap-1 bg-background/80 backdrop-blur-md rounded-full px-2 py-1 border border-border transition-all duration-200 absolute right-8 ${menuOpen ? 'opacity-100 visible translate-x-0' : 'opacity-0 invisible translate-x-[10px]'}`}>
+            <div className={`flex items-center gap-1 bg-background/95 rounded-full px-2 py-1 border border-border transition-all duration-200 absolute right-8 ${menuOpen ? 'opacity-100 visible translate-x-0' : 'opacity-0 invisible translate-x-[10px]'}`}>
               {(['light', 'medium', 'dark'] as const).map((s) => (
                 <button key={s}
                   className={`w-4 h-4 rounded-full border border-border hover:scale-110 transition-transform ${s === 'light' ? 'bg-card-light' : s === 'medium' ? 'bg-card-medium' : 'bg-card-dark'}`}
@@ -93,7 +93,7 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
       {/* Action Icons */}
       <div className="flex items-center gap-2">
         {shortcut.actions.slice(0, 4).map((act, idx) => (
-          <div key={idx} className="bg-background/50 border border-border/50 rounded-lg p-2.5 backdrop-blur-sm" title={act.title}>
+          <div key={idx} className="bg-background/70 border border-border/50 rounded-lg p-2.5" title={act.title}>
             <span className="material-symbols-outlined text-[20px]">{act.icon}</span>
           </div>
         ))}

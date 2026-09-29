@@ -69,9 +69,21 @@ function App() {
         return prev === next ? prev : next;
       });
     };
+    // rAF-throttle: fire at most once per animation frame during resize.
+    let rafId: number | null = null;
+    const onResize = () => {
+      if (rafId !== null) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        checkWidth();
+      });
+    };
     checkWidth();
-    window.addEventListener('resize', checkWidth);
-    return () => window.removeEventListener('resize', checkWidth);
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
   }, [manualCollapse]);
 
   // ── Load saved preferences ──
@@ -331,7 +343,7 @@ function App() {
 
       {showConfirmModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" onClick={handleCancelLeave} />
+          <div className="absolute inset-0 bg-background/90" onClick={handleCancelLeave} />
           <div className="relative bg-card border border-border rounded-2xl p-8 shadow-2xl max-w-md w-full mx-4">
             <div className="flex flex-col items-center text-center gap-4">
               <span className="material-symbols-outlined text-5xl text-yellow-500">warning</span>
