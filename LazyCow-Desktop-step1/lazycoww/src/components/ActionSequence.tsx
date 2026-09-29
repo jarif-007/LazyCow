@@ -1,6 +1,18 @@
-import React, { useState } from 'react';
-import { ActionItem, getFieldLabel } from '../types/actions';
+import React, { useState, useEffect, useRef } from 'react';
+import { ActionItem, isArrangeable, LAYOUTS, WindowLayoutConfig } from '../types/actions';
 import { useActionValidation } from '../hooks/useActionValidation';
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { SortableActionCard } from './ActionSequence/SortableActionCard';
+import { ActionFlowPreview } from './ActionSequence/ActionFlowPreview';
+import { ConfirmDeleteModal } from './ActionSequence/ConfirmDeleteModal';
 
 interface ActionSequenceProps {
   sequence: ActionItem[];
@@ -11,6 +23,41 @@ interface ActionSequenceProps {
   onReorder: (fromIndex: number, toIndex: number) => void;
   onDropFromSidebar: (index: number, catalogType: string) => void;
   onDropAtEnd: (catalogType: string) => void;
+  /** Optional — when provided and enabled, each eligible card shows a position dropdown. */
+  windowLayout?: WindowLayoutConfig;
+  onWindowLayoutChange?: (next: WindowLayoutConfig) => void;
+}
+
+const LONG_PRESS_MS = 400;
+const LONG_PRESS_MOVE_TOLERANCE = 25; // squared, ~5px
+const EDGE_ZONE_FRACTION = 0.18;
+const EDGE_ZONE_MIN_PX = 60;
+const AUTO_SCROLL_MAX_SPEED_DEFAULT = 9;
+const AUTO_SCROLL_WARMUP_MS = 900;
+
+function readAutoScrollSpeed(): number {
+  try {
+    const raw = localStorage.getItem('lazycow_settings');
+    if (!raw) return AUTO_SCROLL_MAX_SPEED_DEFAULT;
+    const parsed = JSON.parse(raw);
+    const v = Number(parsed?.autoScrollSpeed);
+    if (Number.isFinite(v) && v >= 2 && v <= 20) return v;
+  } catch {
+    /* ignore */
+  }
+  return AUTO_SCROLL_MAX_SPEED_DEFAULT;
+}
+
+function findScrollParent(el: HTMLElement | null): HTMLElement | null {
+  let node = el?.parentElement ?? null;
+  while (node) {
+    const oy = window.getComputedStyle(node).overflowY;
+    if ((oy === 'auto' || oy === 'scroll') && node.scrollHeight > node.clientHeight) {
+      return node;
+    }
+    node = node.parentElement;
+  }
+  return null;
 }
 
 export const ActionSequence: React.FC<ActionSequenceProps> = ({
@@ -22,64 +69,296 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
   onReorder,
   onDropFromSidebar,
   onDropAtEnd,
+  windowLayout,
+  onWindowLayoutChange,
 }) => {
-  // ── Drag state for internal reorder ──
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const sectionRef = useRef<HTMLElement>(null);
 
-  // ── Drag state for sidebar drops ──
+  const [autoScrollSpeed, setAutoScrollSpeed] = useState<number>(() => readAutoScrollSpeed());
+  const autoScrollSpeedRef = useRef(autoScrollSpeed);
+  useEffect(() => {
+    autoScrollSpeedRef.current = autoScrollSpeed;
+  }, [autoScrollSpeed]);
+
+  useEffect(() => {
+    const onStorage = () => setAutoScrollSpeed(readAutoScrollSpeed());
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('focus', onStorage);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('focus', onStorage);
+    };
+  }, []);
+
+  // ── Sidebar → sequence drop (HTML5) ──
   const [sidebarDragOverIndex, setSidebarDragOverIndex] = useState<number | null>(null);
   const [dragOverDropZone, setDragOverDropZone] = useState(false);
 
-  // ───────────────────────────────────
-  // INTERNAL REORDER (card to card)
-  // ───────────────────────────────────
+  // ── Selection mode ──
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showConfirmDelete, setShowConfirmDelete] = useState(false);
 
-  const handleDragStart = (e: React.DragEvent, index: number) => {
-    // Mark this as an internal reorder drag
-    e.dataTransfer.setData('application/drag-type', 'reorder');
-    e.dataTransfer.effectAllowed = 'move';
-    setDragIndex(index);
-  };
+  // Mirror in a ref so the global pointer handlers don't need to re-bind
+  const selectionModeRef = useRef(selectionMode);
+  useEffect(() => {
+    selectionModeRef.current = selectionMode;
+  }, [selectionMode]);
 
-  const handleDragOver = (e: React.DragEvent, index: number) => {
-    e.preventDefault();
-    const dragType = e.dataTransfer.types.includes('application/drag-type')
-      ? e.dataTransfer.getData('application/drag-type')
-      : '';
+  // ── Refs used by the global pointer/RAF engine ──
+  const dragSelectActiveRef = useRef(false);
+  const lastHoveredIdRef = useRef<string | null>(null);
+  const pointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const autoScrollDirRef = useRef(0);
+  const autoScrollDepthRef = useRef(0);
+  const autoScrollStartRef = useRef(0);
+  const autoScrollRafRef = useRef<number | null>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressStartRef = useRef<{ x: number; y: number; id: string } | null>(null);
 
-    if (dragType === 'reorder') {
-      // Internal reorder
-      e.dataTransfer.dropEffect = 'move';
-      setDragOverIndex(index);
-      setSidebarDragOverIndex(null);
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 5 },
+    })
+  );
+
+  const handleSortEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const fromIndex = sequence.findIndex((a) => a.id === active.id);
+    const toIndex = sequence.findIndex((a) => a.id === over.id);
+    if (fromIndex !== -1 && toIndex !== -1) {
+      onReorder(fromIndex, toIndex);
     }
   };
 
-  const handleDrop = (e: React.DragEvent, index: number) => {
-    e.preventDefault();
-    const dragType = e.dataTransfer.getData('application/drag-type');
+  // ── Selection helpers ──
+  const toggleId = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
-    if (dragType === 'reorder' && dragIndex !== null && dragIndex !== index) {
-      onReorder(dragIndex, index);
+  const exitSelectionMode = () => {
+    dragSelectActiveRef.current = false;
+    lastHoveredIdRef.current = null;
+    autoScrollDirRef.current = 0;
+    if (autoScrollRafRef.current !== null) {
+      cancelAnimationFrame(autoScrollRafRef.current);
+      autoScrollRafRef.current = null;
     }
-
-    setDragIndex(null);
-    setDragOverIndex(null);
+    setSelectionMode(false);
+    setSelectedIds(new Set());
   };
 
-  const handleDragEnd = () => {
-    setDragIndex(null);
-    setDragOverIndex(null);
+  const handleSelectAllToggle = () => {
+    if (selectedIds.size === sequence.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(sequence.map((a) => a.id)));
+    }
   };
 
-  // ───────────────────────────────────
-  // SIDEBAR → SEQUENCE DROP
-  // ───────────────────────────────────
+  const handleConfirmDelete = () => {
+    selectedIds.forEach((id) => onDelete(id));
+    setShowConfirmDelete(false);
+    exitSelectionMode();
+  };
 
+  // ──────────────────────────────────────────────
+  // GLOBAL POINTER + RAF ENGINE
+  // ──────────────────────────────────────────────
+  useEffect(() => {
+    const stopRaf = () => {
+      if (autoScrollRafRef.current !== null) {
+        cancelAnimationFrame(autoScrollRafRef.current);
+        autoScrollRafRef.current = null;
+      }
+    };
+
+    const cancelLongPress = () => {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
+    };
+
+    const hitTest = () => {
+      const { x, y } = pointerRef.current;
+      const el = document.elementFromPoint(x, y) as HTMLElement | null;
+      const cardEl = el?.closest('[data-card-id]') as HTMLElement | null;
+      const id = cardEl?.dataset.cardId ?? null;
+      if (id && id !== lastHoveredIdRef.current) {
+        lastHoveredIdRef.current = id;
+        toggleId(id);
+      } else if (!id) {
+        lastHoveredIdRef.current = null;
+      }
+    };
+
+    const tick = () => {
+      if (!dragSelectActiveRef.current) {
+        autoScrollRafRef.current = null;
+        return;
+      }
+
+      const parent = findScrollParent(sectionRef.current);
+      if (parent) {
+        const rect = parent.getBoundingClientRect();
+        const { y } = pointerRef.current;
+        const zone = Math.max(EDGE_ZONE_MIN_PX, rect.height * EDGE_ZONE_FRACTION);
+
+        let dir = 0;
+        let depth = 0;
+        if (y < rect.top + zone) {
+          dir = -1;
+          depth = Math.min(1, (rect.top + zone - y) / zone);
+        } else if (y > rect.bottom - zone) {
+          dir = 1;
+          depth = Math.min(1, (y - (rect.bottom - zone)) / zone);
+        }
+
+        if (dir !== 0) {
+          if (autoScrollDirRef.current === 0) autoScrollStartRef.current = Date.now();
+          autoScrollDirRef.current = dir;
+          autoScrollDepthRef.current = depth;
+          const elapsed = Date.now() - autoScrollStartRef.current;
+          const warm = Math.min(1, 0.4 + (elapsed / AUTO_SCROLL_WARMUP_MS) * 0.6);
+          const base = autoScrollSpeedRef.current * (0.3 + depth * 0.7);
+          const speed = Math.max(0.4, base * warm);
+          parent.scrollTop += dir * speed;
+        } else {
+          autoScrollDirRef.current = 0;
+        }
+      }
+
+      // Hit-test every frame — catches cards scrolling under a stationary cursor.
+      hitTest();
+
+      autoScrollRafRef.current = requestAnimationFrame(tick);
+    };
+
+    const startRaf = () => {
+      if (autoScrollRafRef.current === null) {
+        autoScrollRafRef.current = requestAnimationFrame(tick);
+      }
+    };
+
+    const beginDrag = (x: number, y: number, id: string) => {
+      dragSelectActiveRef.current = true;
+      lastHoveredIdRef.current = id;
+      pointerRef.current.x = x;
+      pointerRef.current.y = y;
+      toggleId(id);
+      startRaf();
+    };
+
+    const endDrag = () => {
+      dragSelectActiveRef.current = false;
+      lastHoveredIdRef.current = null;
+      autoScrollDirRef.current = 0;
+      stopRaf();
+    };
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.button !== 0) return; // primary button only
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+
+      // Never intercept inputs / buttons / drag handles
+      if (target.closest('input, textarea, select, button, [data-drag-handle]')) return;
+
+      // Only react to presses inside our section
+      if (!sectionRef.current?.contains(target)) return;
+
+      // Find the card (card body OR flow-preview icon — both carry data-card-id)
+      const cardEl = target.closest('[data-card-id]') as HTMLElement | null;
+      const id = cardEl?.dataset.cardId;
+      if (!id) return;
+
+      // Case 1: already in selection mode → start drag-select immediately
+      if (selectionModeRef.current) {
+        e.preventDefault();
+        beginDrag(e.clientX, e.clientY, id);
+        return;
+      }
+
+      // Case 2: not in selection mode → arm long-press to enter it
+      cancelLongPress();
+      longPressStartRef.current = { x: e.clientX, y: e.clientY, id };
+      longPressTimerRef.current = setTimeout(() => {
+        longPressTimerRef.current = null;
+        longPressStartRef.current = null;
+        setSelectionMode(true);
+        setSelectedIds(new Set([id]));
+        // Start drag-select immediately so the user can drag without releasing
+        beginDrag(pointerRef.current.x, pointerRef.current.y, id);
+      }, LONG_PRESS_MS);
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      pointerRef.current.x = e.clientX;
+      pointerRef.current.y = e.clientY;
+
+      // Cancel long-press if pointer drifts too far before it fires
+      if (longPressTimerRef.current && longPressStartRef.current) {
+        const dx = e.clientX - longPressStartRef.current.x;
+        const dy = e.clientY - longPressStartRef.current.y;
+        if (dx * dx + dy * dy > LONG_PRESS_MOVE_TOLERANCE) {
+          cancelLongPress();
+          longPressStartRef.current = null;
+        }
+      }
+
+      // Primary-button release missed? End cleanly.
+      if (dragSelectActiveRef.current && (e.buttons & 1) === 0) {
+        endDrag();
+      }
+    };
+
+    const onPointerUp = () => {
+      cancelLongPress();
+      longPressStartRef.current = null;
+      endDrag();
+    };
+
+    window.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('pointermove', onPointerMove, true);
+    window.addEventListener('pointerup', onPointerUp, true);
+    window.addEventListener('pointercancel', onPointerUp, true);
+    window.addEventListener('blur', onPointerUp);
+
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown, true);
+      window.removeEventListener('pointermove', onPointerMove, true);
+      window.removeEventListener('pointerup', onPointerUp, true);
+      window.removeEventListener('pointercancel', onPointerUp, true);
+      window.removeEventListener('blur', onPointerUp);
+      stopRaf();
+      cancelLongPress();
+    };
+  }, []);
+
+  // ── Escape exits selection mode (suspended while modal is open) ──
+  useEffect(() => {
+    if (!selectionMode || showConfirmDelete) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        exitSelectionMode();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [selectionMode, showConfirmDelete]);
+
+  // ── Sidebar → sequence drop (HTML5) ──
   const handleSidebarDragOver = (e: React.DragEvent, index: number) => {
     e.preventDefault();
-    // Only respond if this is NOT a reorder drag
     if (!e.dataTransfer.types.includes('application/drag-type')) {
       e.dataTransfer.dropEffect = 'copy';
       setSidebarDragOverIndex(index);
@@ -90,15 +369,9 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
   const handleSidebarDrop = (e: React.DragEvent, index: number) => {
     e.preventDefault();
     const catalogType = e.dataTransfer.getData('application/catalog-type');
-    if (catalogType) {
-      onDropFromSidebar(index, catalogType);
-    }
+    if (catalogType) onDropFromSidebar(index, catalogType);
     setSidebarDragOverIndex(null);
   };
-
-  // ───────────────────────────────────
-  // DROP ZONE (end of sequence)
-  // ───────────────────────────────────
 
   const handleZoneDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -112,380 +385,188 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
   const handleZoneDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const catalogType = e.dataTransfer.getData('application/catalog-type');
-    if (catalogType) {
-      onDropAtEnd(catalogType);
-    }
+    if (catalogType) onDropAtEnd(catalogType);
     setDragOverDropZone(false);
   };
 
   const handleZoneDragLeave = () => setDragOverDropZone(false);
 
-  // Determine which highlight to show for each card
-  const getHighlightClass = (index: number) => {
-    if (dragOverIndex === index) return 'border-primary border-2 bg-primary/5 shadow-lg shadow-primary/10';
-    if (sidebarDragOverIndex === index) return 'border-primary border-2 bg-primary/5 shadow-lg shadow-primary/10';
-    return 'border-border/80';
+  const handleFlowIconClick = (id: string) => {
+    if (selectionMode) return; // click handled by drag engine
+    const el = document.getElementById(`action-card-${id}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.add('ring-2', 'ring-primary', 'ring-offset-2', 'ring-offset-background');
+    setTimeout(() => {
+      el.classList.remove('ring-2', 'ring-primary', 'ring-offset-2', 'ring-offset-background');
+    }, 900);
   };
+
+  /** Compute the per-card window-layout view-model, or undefined when layout is off. */
+  const windowLayoutForCard = (() => {
+    if (!windowLayout?.enabled || !windowLayout.layoutId || !onWindowLayoutChange) return undefined;
+    const layoutDef = LAYOUTS.find((l) => l.id === windowLayout.layoutId);
+    if (!layoutDef) return undefined;
+
+    // Don't hand out zone options when the active layout no longer fits
+    // the current eligible action count (e.g. user removed an action after
+    // picking Quad Grid). The panel shows a warning to re-pick a layout.
+    const eligibleCount = sequence.filter(isArrangeable).length;
+    if (layoutDef.zoneCount > eligibleCount) return undefined;
+
+    const assignZone = (actionId: string, zoneId: string) => {
+      const next = { ...windowLayout.assignments };
+      // Remove this action from any zone it currently owns
+      for (const key of Object.keys(next)) {
+        if (next[key] === actionId) delete next[key];
+      }
+      // Also clear whatever was in the target zone
+      if (zoneId) {
+        next[zoneId] = actionId;
+      }
+      onWindowLayoutChange({ ...windowLayout, assignments: next });
+    };
+
+    return {
+      zones: layoutDef.zones.map((z) => ({ id: z.id, label: z.label })),
+      assignments: windowLayout.assignments,
+      findActionById: (id: string) => sequence.find((a) => a.id === id),
+      getAssignedZoneId: (actionId: string): string | null => {
+        for (const [zoneId, aId] of Object.entries(windowLayout.assignments)) {
+          if (aId === actionId) return zoneId;
+        }
+        return null;
+      },
+      assignZone,
+    };
+  })();
 
   const { errors: validationErrors, warnings: validationWarnings } = useActionValidation(sequence);
 
-  // ───────────────────────────────────
-  // RENDER
-  // ───────────────────────────────────
-
   return (
-    <section className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
+    <section
+      ref={sectionRef}
+      className={`flex flex-col gap-4 ${selectionMode ? 'select-none' : ''}`}
+    >
+      {/* Header row */}
+      <div className="flex items-center justify-between min-h-[32px]">
         <h2 className="font-label-caps text-label-caps uppercase opacity-70 text-muted-foreground">
           Action Sequence
         </h2>
-        <span className="text-body-sm opacity-50 text-muted-foreground">
-          {sequence.length} action{sequence.length !== 1 ? 's' : ''}
-        </span>
-      </div>
-
-      {/* Flow Preview */}
-      <div className="bg-card-light border border-border rounded-xl p-4 flex items-center gap-4 shadow-sm overflow-x-auto">
-        <span className="font-label-caps text-label-caps text-muted-foreground uppercase opacity-80 shrink-0">
-          Flow Preview:
-        </span>
         <div className="flex items-center gap-2">
-          {sequence.length === 0 ? (
-            <span className="text-body-sm text-muted-foreground italic">No actions added yet</span>
-          ) : (
-            sequence.map((act, i) => (
-              <React.Fragment key={act.id}>
-                <div
-                  className={`w-8 h-8 ${act.colorClass} border border-current/20 rounded-lg flex items-center justify-center shrink-0 relative`}
-                  title={act.title}
+          {!selectionMode ? (
+            <>
+              {sequence.length > 0 && (
+                <button
+                  onClick={() => setSelectionMode(true)}
+                  className="px-3 py-1 rounded-full border border-border text-body-sm text-foreground hover:bg-muted transition-colors"
                 >
-                  <span className="material-symbols-outlined text-[18px]">{act.icon}</span>
-                  {validationErrors[act.id] && (
-                    <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border border-background"></div>
-                  )}
-                </div>
-                {i < sequence.length - 1 && (
-                  <span className="material-symbols-outlined text-muted-foreground/50 text-[16px] shrink-0">
-                    arrow_forward
-                  </span>
-                )}
-              </React.Fragment>
-            ))
+                  Select
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <span className="text-body-sm text-primary font-medium">
+                {selectedIds.size} selected
+              </span>
+              <button
+                onClick={handleSelectAllToggle}
+                className="px-3 py-1 rounded-full border border-border text-body-sm text-foreground hover:bg-muted transition-colors"
+              >
+                {selectedIds.size === sequence.length ? 'Deselect All' : 'Select All'}
+              </button>
+              {selectedIds.size > 0 && selectedIds.size < sequence.length && (
+                <button
+                  onClick={() => setSelectedIds(new Set())}
+                  className="px-3 py-1 rounded-full border border-border text-body-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                >
+                  Clear
+                </button>
+              )}
+              <button
+                onClick={() => setShowConfirmDelete(true)}
+                disabled={selectedIds.size === 0}
+                className={`px-3 py-1 rounded-full text-body-sm flex items-center gap-1 transition-colors ${
+                  selectedIds.size === 0
+                    ? 'bg-muted text-muted-foreground cursor-not-allowed'
+                    : 'bg-red-500 text-white hover:bg-red-600'
+                }`}
+              >
+                <span className="material-symbols-outlined text-[16px]">delete</span>
+                Delete
+              </button>
+              <button
+                onClick={exitSelectionMode}
+                className="px-3 py-1 rounded-full bg-primary text-primary-foreground text-body-sm hover:opacity-90 transition-opacity"
+                title="Exit selection mode (Esc)"
+              >
+                Done
+              </button>
+            </>
           )}
         </div>
       </div>
 
+      {/* Flow Preview */}
+      <ActionFlowPreview
+        sequence={sequence}
+        validationErrors={validationErrors}
+        onReorder={onReorder}
+        onDelete={onDelete}
+        onIconClick={handleFlowIconClick}
+        selectionMode={selectionMode}
+        selectedIds={selectedIds}
+      />
+
       {/* Sequence Cards */}
-      <div className="flex flex-col gap-4">
-        {sequence.map((card, index) => (
-          <div
-            key={card.id}
-            draggable
-            onDragStart={(e) => handleDragStart(e, index)}
-            onDragOver={(e) => {
-              handleDragOver(e, index);
-              handleSidebarDragOver(e, index);
-            }}
-            onDrop={(e) => {
-              handleDrop(e, index);
-              handleSidebarDrop(e, index);
-            }}
-            onDragEnd={handleDragEnd}
-            className={`card-themeable bg-gradient-to-br from-card-medium to-card-dark border rounded-xl p-4 shadow-sm flex flex-col gap-4 transition-all ${getHighlightClass(index)} ${
-              dragIndex === index ? 'opacity-40 scale-95' : ''
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                {/* Drag Handle */}
-                <span
-                  className="material-symbols-outlined text-muted-foreground cursor-grab p-1 hover:text-primary active:cursor-grabbing select-none"
-                  title="Drag to reorder"
-                >
-                  drag_indicator
-                </span>
-                {/* Icon */}
-                <div className={`${card.colorClass} p-1.5 rounded-md flex`}>
-                  <span className="material-symbols-outlined text-[20px]">{card.icon}</span>
-                </div>
-                {/* Title */}
-                <span className="font-title-sm text-foreground">{card.title}</span>
-                {(card.type === 'run_script' || card.type === 'launch_app') && (
-                  <span className="bg-red-500/10 text-red-500 text-[10px] font-bold px-2 py-0.5 rounded border border-red-500/20 uppercase tracking-wider ml-2">Dangerous</span>
-                )}
-              </div>
-              {/* Controls */}
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => onMoveUp(index)}
-                  disabled={index === 0}
-                  className="text-muted-foreground hover:text-foreground disabled:opacity-30 p-1"
-                  title="Move up"
-                >
-                  <span className="material-symbols-outlined text-[20px]">keyboard_arrow_up</span>
-                </button>
-                <button
-                  onClick={() => onMoveDown(index)}
-                  disabled={index === sequence.length - 1}
-                  className="text-muted-foreground hover:text-foreground disabled:opacity-30 p-1"
-                  title="Move down"
-                >
-                  <span className="material-symbols-outlined text-[20px]">keyboard_arrow_down</span>
-                </button>
-                <button
-                  onClick={() => onDelete(card.id)}
-                  className="text-red-400 hover:text-red-500 p-1"
-                  title="Remove"
-                >
-                  <span className="material-symbols-outlined text-[20px]">delete</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Action-specific input */}
-            <div className="pl-12 pr-4 flex flex-col gap-2">
-              <label className="font-label-caps text-label-caps uppercase opacity-70 block text-muted-foreground flex justify-between">
-                <span className="flex items-center gap-1.5">
-                  {getFieldLabel(card.type)}
-                  {card.type === 'open_url' && (
-                    <span className="relative group/info inline-flex">
-                      <span className="material-symbols-outlined text-[14px] cursor-help normal-case opacity-70 group-hover/info:opacity-100 transition-opacity">
-                        info
-                      </span>
-                      <span className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 px-3 py-2 bg-foreground text-background text-[11px] leading-snug rounded-md whitespace-normal w-72 opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-opacity pointer-events-none z-50 font-body-sm shadow-lg normal-case tracking-normal">
-                        Type <span className="font-code-sm">google.com</span> or <span className="font-code-sm">www.google.com</span> — <span className="font-code-sm">https://</span> is added automatically. For local addresses like <span className="font-code-sm">192.168.1.1</span> or <span className="font-code-sm">localhost</span>, <span className="font-code-sm">http://</span> is used instead. Click <strong>Test</strong> to verify the URL loads.
-                      </span>
-                    </span>
-                  )}
-                </span>
-                {validationErrors[card.id] && (
-                  <span className="text-red-500 font-medium normal-case flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[14px]">warning</span>
-                    {validationErrors[card.id]}
-                  </span>
-                )}
-                {!validationErrors[card.id] && validationWarnings[card.id] && (
-                  <span className="text-amber-500 font-medium normal-case flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[14px]">cloud_off</span>
-                    {validationWarnings[card.id]}
-                  </span>
-                )}
-              </label>
-
-              {card.type === 'delay' ? (
-                <div className="flex items-center gap-4">
-                  <input
-                    type="range"
-                    min="250"
-                    max="10000"
-                    step="250"
-                    value={card.value}
-                    onChange={(e) => onUpdateValue(card.id, e.target.value)}
-                    className="flex-1 accent-primary"
-                  />
-                  <span className="font-body-sm font-semibold w-16 text-right text-foreground font-code-sm">
-                    {(Number(card.value) / 1000).toFixed(1)}s
-                  </span>
-                </div>
-              ) : card.type === 'set_volume' || card.type === 'set_brightness' ? (
-                <div className="flex items-center gap-4">
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={card.value}
-                    onChange={(e) => onUpdateValue(card.id, e.target.value)}
-                    className="flex-1 accent-primary"
-                  />
-                  <span className="font-body-sm font-semibold w-8 text-right text-foreground">
-                    {card.value}%
-                  </span>
-                </div>
-              ) : card.type === 'arrange_windows' ? (
-                (() => {
-                  let arrangeData = { layout: 'snap_left', orientation: 'vertical', apps: { tl: '', tr: '', bl: '', br: '' } };
-                  try {
-                    if (card.value.startsWith('{')) {
-                      const parsed = JSON.parse(card.value);
-                      arrangeData = { ...arrangeData, ...parsed, apps: { ...arrangeData.apps, ...(parsed.apps || {}) } };
-                    } else arrangeData.layout = card.value;
-                  } catch { /* ignore */ }
-                  
-                  const updateArrange = (updates: Partial<typeof arrangeData>) => {
-                    onUpdateValue(card.id, JSON.stringify({ ...arrangeData, ...updates }));
-                  };
-                  
-                  return (
-                    <div className="flex flex-col gap-3">
-                      <select
-                        value={arrangeData.layout}
-                        onChange={(e) => updateArrange({ layout: e.target.value, orientation: e.target.value === 'tri' ? 'main_left' : 'vertical' })}
-                        className="w-full bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-2 font-body-sm focus:ring-primary focus:outline-none"
-                      >
-                        <option value="snap_left">Snap Active Window to Left Half</option>
-                        <option value="snap_right">Snap Active Window to Right Half</option>
-                        <option value="maximize">Maximize Active Window</option>
-                        <option value="split_specific">Split Screen (2 Specific Apps)</option>
-                        <option value="tri">Tri-Grid (3 Specific Apps)</option>
-                        <option value="quad">Quad Grid (4 Specific Apps)</option>
-                      </select>
-
-                      {['snap_left', 'snap_right', 'maximize'].includes(arrangeData.layout) && (
-                        <input
-                          type="text"
-                          placeholder="Target App or Window Title (leave blank for active window)"
-                          value={arrangeData.apps.tl || ''}
-                          onChange={e => updateArrange({ apps: { ...arrangeData.apps, tl: e.target.value } })}
-                          className="w-full bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50"
-                        />
-                      )}
-
-                      {arrangeData.layout === 'split_specific' && (
-                        <>
-                          <select
-                            value={arrangeData.orientation}
-                            onChange={(e) => updateArrange({ orientation: e.target.value })}
-                            className="w-full bg-background/30 border border-border/30 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none"
-                          >
-                            <option value="vertical">Vertical Split (Left / Right)</option>
-                            <option value="horizontal">Horizontal Split (Top / Bottom)</option>
-                          </select>
-                          <div className="grid grid-cols-2 gap-2 mt-1">
-                            <input type="text" placeholder={arrangeData.orientation === 'horizontal' ? "Top App / Title (e.g. chrome)" : "Left App / Title (e.g. chrome)"} value={arrangeData.apps.tl} onChange={e => updateArrange({apps: {...arrangeData.apps, tl: e.target.value}})} className="bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
-                            <input type="text" placeholder={arrangeData.orientation === 'horizontal' ? "Bottom App / Title (e.g. facebook)" : "Right App / Title (e.g. facebook)"} value={arrangeData.apps.tr} onChange={e => updateArrange({apps: {...arrangeData.apps, tr: e.target.value}})} className="bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
-                          </div>
-                        </>
-                      )}
-
-                      {arrangeData.layout === 'tri' && (
-                        <>
-                          <select
-                            value={arrangeData.orientation}
-                            onChange={(e) => updateArrange({ orientation: e.target.value })}
-                            className="w-full bg-background/30 border border-border/30 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none"
-                          >
-                            <option value="main_left">Main App on Left</option>
-                            <option value="main_right">Main App on Right</option>
-                            <option value="main_top">Main App on Top</option>
-                            <option value="main_bottom">Main App on Bottom</option>
-                          </select>
-                          <div className="grid grid-cols-2 gap-2 mt-1">
-                            {arrangeData.orientation === 'main_left' && (
-                              <>
-                                <input type="text" placeholder="Main Left App" value={arrangeData.apps.tl} onChange={e => updateArrange({apps: {...arrangeData.apps, tl: e.target.value}})} className="row-span-2 bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
-                                <input type="text" placeholder="Top Right App" value={arrangeData.apps.tr} onChange={e => updateArrange({apps: {...arrangeData.apps, tr: e.target.value}})} className="bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
-                                <input type="text" placeholder="Bottom Right App" value={arrangeData.apps.br} onChange={e => updateArrange({apps: {...arrangeData.apps, br: e.target.value}})} className="bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
-                              </>
-                            )}
-                            {arrangeData.orientation === 'main_right' && (
-                              <>
-                                <input type="text" placeholder="Top Left App" value={arrangeData.apps.tl} onChange={e => updateArrange({apps: {...arrangeData.apps, tl: e.target.value}})} className="bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
-                                <input type="text" placeholder="Main Right App" value={arrangeData.apps.tr} onChange={e => updateArrange({apps: {...arrangeData.apps, tr: e.target.value}})} className="row-span-2 bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
-                                <input type="text" placeholder="Bottom Left App" value={arrangeData.apps.bl} onChange={e => updateArrange({apps: {...arrangeData.apps, bl: e.target.value}})} className="bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
-                              </>
-                            )}
-                            {arrangeData.orientation === 'main_top' && (
-                              <>
-                                <input type="text" placeholder="Main Top App" value={arrangeData.apps.tl} onChange={e => updateArrange({apps: {...arrangeData.apps, tl: e.target.value}})} className="col-span-2 bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
-                                <input type="text" placeholder="Bottom Left App" value={arrangeData.apps.bl} onChange={e => updateArrange({apps: {...arrangeData.apps, bl: e.target.value}})} className="bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
-                                <input type="text" placeholder="Bottom Right App" value={arrangeData.apps.br} onChange={e => updateArrange({apps: {...arrangeData.apps, br: e.target.value}})} className="bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
-                              </>
-                            )}
-                            {arrangeData.orientation === 'main_bottom' && (
-                              <>
-                                <input type="text" placeholder="Top Left App" value={arrangeData.apps.tl} onChange={e => updateArrange({apps: {...arrangeData.apps, tl: e.target.value}})} className="bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
-                                <input type="text" placeholder="Top Right App" value={arrangeData.apps.tr} onChange={e => updateArrange({apps: {...arrangeData.apps, tr: e.target.value}})} className="bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
-                                <input type="text" placeholder="Main Bottom App" value={arrangeData.apps.bl} onChange={e => updateArrange({apps: {...arrangeData.apps, bl: e.target.value}})} className="col-span-2 bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
-                              </>
-                            )}
-                          </div>
-                        </>
-                      )}
-                      
-                      {arrangeData.layout === 'quad' && (
-                        <div className="grid grid-cols-2 gap-2 mt-1">
-                          <input type="text" placeholder="Top Left App" value={arrangeData.apps.tl} onChange={e => updateArrange({apps: {...arrangeData.apps, tl: e.target.value}})} className="bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
-                          <input type="text" placeholder="Top Right App" value={arrangeData.apps.tr} onChange={e => updateArrange({apps: {...arrangeData.apps, tr: e.target.value}})} className="bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
-                          <input type="text" placeholder="Bottom Left App" value={arrangeData.apps.bl} onChange={e => updateArrange({apps: {...arrangeData.apps, bl: e.target.value}})} className="bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
-                          <input type="text" placeholder="Bottom Right App" value={arrangeData.apps.br} onChange={e => updateArrange({apps: {...arrangeData.apps, br: e.target.value}})} className="bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-1.5 font-body-sm focus:ring-primary focus:outline-none placeholder:opacity-50" />
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()
-              ) : card.type === 'toggle_dnd' || card.type === 'toggle_nightlight' ? (
-                <select
-                  value={card.value}
-                  onChange={(e) => onUpdateValue(card.id, e.target.value)}
-                  className="w-full bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-2 font-body-sm focus:ring-primary focus:outline-none"
-                >
-                  <option value="toggle">Toggle State</option>
-                  <option value="enable">Always Turn On</option>
-                  <option value="disable">Always Turn Off</option>
-                </select>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={card.value}
-                    onChange={(e) => onUpdateValue(card.id, e.target.value)}
-                    onBlur={() => {
-                      if (card.type !== 'open_url') return;
-                      let v = card.value.trim();
-                      if (!v) return;
-                      // Strip any leading ":" or "/" characters — user may have
-                      // removed the scheme but left "://" or "//" behind.
-                      v = v.replace(/^[:\/]+/, '');
-                      if (!v) return;
-                      // If a scheme is already present, leave it alone.
-                      if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) {
-                        onUpdateValue(card.id, v);
-                        return;
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleSortEnd}
+        autoScroll={{
+          enabled: !selectionMode,
+          threshold: { x: 0.2, y: 0.2 },
+          acceleration: autoScrollSpeed * 0.8,
+          interval: Math.max(6, 24 - autoScrollSpeed),
+        }}
+      >
+        <SortableContext items={sequence.map((a) => a.id)} strategy={verticalListSortingStrategy}>
+          <div className="flex flex-col gap-4">
+            {sequence.map((card, index) => (
+              <SortableActionCard
+                key={card.id}
+                card={card}
+                index={index}
+                total={sequence.length}
+                validationErrors={validationErrors}
+                validationWarnings={validationWarnings}
+                onDelete={onDelete}
+                onUpdateValue={onUpdateValue}
+                onMoveUp={onMoveUp}
+                onMoveDown={onMoveDown}
+                onSidebarDragOver={handleSidebarDragOver}
+                onSidebarDrop={handleSidebarDrop}
+                isSidebarDropTarget={sidebarDragOverIndex === index}
+                selectionMode={selectionMode}
+                isSelected={selectedIds.has(card.id)}
+                windowLayout={
+                  windowLayoutForCard && isArrangeable(card)
+                    ? {
+                        zones: windowLayoutForCard.zones,
+                        assignments: windowLayoutForCard.assignments,
+                        assignedZoneId: windowLayoutForCard.getAssignedZoneId(card.id),
+                        onAssign: (zoneId: string) =>
+                          windowLayoutForCard.assignZone(card.id, zoneId),
+                        findActionById: windowLayoutForCard.findActionById,
                       }
-                      // Choose http:// for local addresses, https:// otherwise.
-                      const isLocal =
-                        v.startsWith('192.') ||
-                        v === 'localhost' ||
-                        v.startsWith('localhost:') ||
-                        v.startsWith('localhost/');
-                      onUpdateValue(card.id, isLocal ? `http://${v}` : `https://${v}`);
-                    }}
-                    className={`flex-1 bg-background/50 border text-foreground rounded-md px-3 py-2 font-body-sm focus:outline-none shadow-inner ${validationErrors[card.id] ? 'border-red-500/50 focus:ring-red-500' : 'border-border/50 focus:ring-primary'}`}
-                  />
-                  {['launch_app', 'open_folder', 'open_file'].includes(card.type) && (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const pickerType = card.type === 'launch_app' ? 'app' : (card.type === 'open_file' ? 'file' : 'folder');
-                        const selected = await window.electronAPI?.selectPath(pickerType);
-                        if (selected) {
-                          onUpdateValue(card.id, selected);
-                        }
-                      }}
-                      className="px-3 py-2 bg-card hover:bg-card-light border border-border text-foreground rounded-md font-body-sm flex items-center gap-1.5 transition-colors shrink-0 cursor-pointer shadow-sm hover:border-primary/50"
-                      title="Browse..."
-                    >
-                      <span className="material-symbols-outlined text-[18px]">folder_open</span>
-                      <span>Browse</span>
-                    </button>
-                  )}
-                  {card.type === 'open_url' && !validationErrors[card.id] && card.value.trim() !== '' && (
-                    <button
-                      type="button"
-                      onClick={() => window.electronAPI?.testUrl(card.value)}
-                      className="px-3 py-2 bg-card hover:bg-card-light border border-border text-foreground rounded-md font-body-sm flex items-center gap-1.5 transition-colors shrink-0 cursor-pointer shadow-sm hover:border-primary/50"
-                      title="Open this URL in your default browser to test it"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">open_in_new</span>
-                      <span>Test</span>
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
+                    : undefined
+                }
+              />
+            ))}
           </div>
-        ))}
-      </div>
+        </SortableContext>
+      </DndContext>
 
       {/* Drop Zone */}
       <div
@@ -505,6 +586,15 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
           {dragOverDropZone ? 'Drop action here' : 'Drag actions here or click from sidebar'}
         </span>
       </div>
+
+      {/* Confirm delete modal */}
+      {showConfirmDelete && (
+        <ConfirmDeleteModal
+          actions={sequence.filter((a) => selectedIds.has(a.id))}
+          onConfirm={handleConfirmDelete}
+          onCancel={() => setShowConfirmDelete(false)}
+        />
+      )}
     </section>
   );
 };

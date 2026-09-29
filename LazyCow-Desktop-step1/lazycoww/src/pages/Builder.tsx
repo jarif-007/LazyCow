@@ -1,8 +1,9 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { ActionItem, CatalogItem, actionCatalog, SavedShortcut } from '../types/actions';
+import { ActionItem, CatalogItem, actionCatalog, SavedShortcut, WindowLayoutConfig } from '../types/actions';
 import { ActionSidebar } from '../components/ActionSidebar';
 import { ActionSequence } from '../components/ActionSequence';
 import { ComboBuilder } from '../components/ComboBuilder';
+import { WindowLayoutPanel } from '../components/WindowLayout/WindowLayoutPanel';
 import { useHotkeyRecorder } from '../hooks/useHotkeyRecorder';
 import { useActionValidation } from '../hooks/useActionValidation';
 
@@ -34,6 +35,11 @@ export const Builder: React.FC<BuilderProps> = ({ editData, isActionSidebarAutoC
   const [nameErrorMessage, setNameErrorMessage] = useState('');
   const [descError, setDescError] = useState(false);
   const [sequence, setSequence] = useState<ActionItem[]>([]);
+  const [windowLayout, setWindowLayout] = useState<WindowLayoutConfig>({
+    enabled: false,
+    layoutId: null,
+    assignments: {},
+  });
   const [hotkeyError, setHotkeyError] = useState('');
 
   const { recording: hotkeyRecording, recordedCombo, startRecording, stopRecording, clearCombo, setRecordedCombo } = useHotkeyRecorder('Win + Alt + D');
@@ -69,6 +75,9 @@ export const Builder: React.FC<BuilderProps> = ({ editData, isActionSidebarAutoC
       setShortcutDesc(editData.description);
       setSequence(editData.actions);
       if (editData.hotkey) setRecordedCombo(editData.hotkey);
+      setWindowLayout(
+        editData.windowLayout ?? { enabled: false, layoutId: null, assignments: {} }
+      );
     }
   }, [editData, setRecordedCombo]);
 
@@ -151,6 +160,7 @@ export const Builder: React.FC<BuilderProps> = ({ editData, isActionSidebarAutoC
       id: editData?.id || `sc-${Date.now()}`,
       name: shortcutName, description: shortcutDesc, hotkey, actions: sequence,
       createdAt: editData?.createdAt || new Date().toISOString(),
+      windowLayout,
     };
 
     if (editData) {
@@ -160,6 +170,7 @@ export const Builder: React.FC<BuilderProps> = ({ editData, isActionSidebarAutoC
 
     localStorage.setItem('lazycow-shortcuts', JSON.stringify(existing));
     setShortcutName(''); setShortcutDesc(''); setSequence([]); clearCombo();
+    setWindowLayout({ enabled: false, layoutId: null, assignments: {} });
     setNameError(false); setDescError(false); setHotkeyError(''); setNameErrorMessage('');
     onSaveSuccess?.();
   };
@@ -168,6 +179,7 @@ export const Builder: React.FC<BuilderProps> = ({ editData, isActionSidebarAutoC
     setShortcutName('');
     setShortcutDesc('');
     setSequence([]);
+    setWindowLayout({ enabled: false, layoutId: null, assignments: {} });
     clearCombo();
     setNameError(false);
     setDescError(false);
@@ -238,7 +250,23 @@ export const Builder: React.FC<BuilderProps> = ({ editData, isActionSidebarAutoC
             {hotkeyError && <p className="text-red-500 font-body-sm mt-2 text-center">{hotkeyError}</p>}
             <ComboBuilder onApply={(combo) => { setRecordedCombo(combo); setHotkeyError(''); }} onError={setHotkeyError} />
           </section>
-          <ActionSequence sequence={sequence} onDelete={deleteAction} onUpdateValue={updateValue} onMoveUp={moveUp} onMoveDown={moveDown} onReorder={reorder} onDropFromSidebar={handleDropFromSidebar} onDropAtEnd={handleDropAtEnd} />
+          <WindowLayoutPanel
+            value={windowLayout}
+            onChange={setWindowLayout}
+            sequence={sequence}
+          />
+          <ActionSequence
+            sequence={sequence}
+            onDelete={deleteAction}
+            onUpdateValue={updateValue}
+            onMoveUp={moveUp}
+            onMoveDown={moveDown}
+            onReorder={reorder}
+            onDropFromSidebar={handleDropFromSidebar}
+            onDropAtEnd={handleDropAtEnd}
+            windowLayout={windowLayout}
+            onWindowLayoutChange={setWindowLayout}
+          />
           <footer className="mt-12 py-6 border-t border-border flex items-center justify-between gap-4 w-full">
             <button onClick={handleDiscard} className="px-6 py-2 border border-border rounded-full font-title-sm hover:bg-muted transition-colors flex items-center gap-2 text-muted-foreground">
               <span className="material-symbols-outlined text-[20px]">close</span> Discard

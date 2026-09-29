@@ -22,6 +22,18 @@ contextMenu({
   showSearchWithGoogle: false,
 })
 
+// ── Single Instance Lock ──
+// LazyCow is a tray-resident app — only one process may run at a time.
+// If a second launch is attempted (double-click the icon, run `npm run dev`
+// while the app is already in the tray, etc.), the second process quits
+// immediately and hands control back to the running instance, which then
+// restores + focuses its window. This is the standard desktop-app model
+// (VS Code, Slack, Discord).
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+}
+
 // ── OS Lock: LazyCow is exclusively designed for Microsoft Windows ──
 if (process.platform !== 'win32') {
   app.whenReady().then(() => {
@@ -54,6 +66,16 @@ let executionNotifications = true
 
 app.on('before-quit', () => {
   isQuitting = true
+})
+
+// A second launch attempt was blocked by the single-instance lock.
+// Bring the existing window to the foreground instead of opening a new one.
+app.on('second-instance', () => {
+  if (win) {
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  }
 })
 
 ipcMain.on('update-general-settings', (_event, settings: { startAtLogin?: boolean; keepInTray?: boolean; executionNotifications?: boolean }) => {
@@ -479,191 +501,7 @@ async function runAction(action: ShortcutActionData): Promise<void> {
       await execAsync(`powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}`, { windowsHide: true })
       return
     }
-    case 'arrange_windows': {
-      let layout = 'snap_left'
-      let orientation = 'vertical'
-      let apps: Record<'tl' | 'tr' | 'bl' | 'br', string> = { tl: '', tr: '', bl: '', br: '' }
-      try {
-        if (action.value.startsWith('{')) {
-          const parsed = JSON.parse(action.value)
-          layout = parsed.layout || 'snap_left'
-          orientation = parsed.orientation || 'vertical'
-          apps = { ...apps, ...(parsed.apps || {}) }
-        } else {
-          layout = action.value
-        }
-      } catch { /* fallback to defaults */ }
-
-      const VALID_LAYOUTS = new Set(['snap_left', 'snap_right', 'maximize', 'split_specific', 'tri', 'quad'])
-      const VALID_ORIENTATIONS = new Set(['vertical', 'horizontal', 'main_left', 'main_right', 'main_top', 'main_bottom'])
-      if (!VALID_LAYOUTS.has(layout)) layout = 'snap_left'
-      if (!VALID_ORIENTATIONS.has(orientation)) orientation = 'vertical'
-
-      const SAFE_NAME_REGEX = /^[a-zA-Z0-9_.\s-]*$/
-      for (const slot of ['tl', 'tr', 'bl', 'br'] as const) {
-        const val = (apps[slot] || '').trim()
-        if (val && !SAFE_NAME_REGEX.test(val)) {
-          throw new Error(`Invalid application process name "${val}". Only alphanumeric characters, spaces, dots, dashes, and underscores are allowed.`)
-        }
-        apps[slot] = val
-      }
-
-      const script = `
-      Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
-      $code = @"
-      using System;
-      using System.Text;
-      using System.Collections.Generic;
-      using System.Runtime.InteropServices;
-
-      public class WinManager {
-          public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-
-          [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
-          [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
-          [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder strText, int maxCount);
-          [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr hWnd);
-          [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-          [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
-          [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-          [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-          [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-
-          public class WinItem {
-              public IntPtr Handle;
-              public string Title;
-              public string ProcessName;
-          }
-
-          public static List<WinItem> GetWindows() {
-              var list = new List<WinItem>();
-              EnumWindows((hWnd, lParam) => {
-                  if (!IsWindowVisible(hWnd)) return true;
-                  int len = GetWindowTextLength(hWnd);
-                  if (len == 0) return true;
-
-                  var sb = new StringBuilder(len + 1);
-                  GetWindowText(hWnd, sb, sb.Capacity);
-                  string title = sb.ToString();
-
-                  uint pid = 0;
-                  GetWindowThreadProcessId(hWnd, out pid);
-                  string procName = "";
-                  try {
-                      var p = System.Diagnostics.Process.GetProcessById((int)pid);
-                      procName = p.ProcessName;
-                  } catch {}
-
-                  if (procName.Equals("explorer", StringComparison.OrdinalIgnoreCase) && 
-                     (title.Equals("Program Manager", StringComparison.OrdinalIgnoreCase) || title.Length == 0)) {
-                      return true;
-                  }
-
-                  list.Add(new WinItem { Handle = hWnd, Title = title, ProcessName = procName });
-                  return true;
-              }, IntPtr.Zero);
-              return list;
-          }
-      }
-"@
-      Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue
-
-      $area = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-      $halfW = [math]::Floor($area.Width / 2)
-      $halfH = [math]::Floor($area.Height / 2)
-      $layout = "${layout}"
-      $ori = "${orientation}"
-
-      $usedHandles = [System.Collections.Generic.HashSet[IntPtr]]::new()
-
-      function PositionWindow($hwnd, $x, $y, $w, $h) {
-          if ($hwnd -and $hwnd -ne [IntPtr]::Zero) {
-              [WinManager]::ShowWindow($hwnd, 9)
-              Start-Sleep -Milliseconds 60
-              [WinManager]::MoveWindow($hwnd, $x, $y, $w, $h, $true)
-              [WinManager]::SetForegroundWindow($hwnd)
-          }
-      }
-
-      function FindAndMove($targetName, $x, $y, $w, $h) {
-          if (-not $targetName -or $targetName.Trim() -eq "") { return }
-          $clean = $targetName.Trim()
-
-          for ($attempt = 0; $attempt -lt 6; $attempt++) {
-              $windows = [WinManager]::GetWindows()
-              $match = $null
-              foreach ($w in $windows) {
-                  if ($usedHandles.Contains($w.Handle)) { continue }
-                  if ($w.ProcessName -match [regex]::Escape($clean) -or $w.Title -match [regex]::Escape($clean)) {
-                      $match = $w
-                      break
-                  }
-              }
-              if ($match) {
-                  $usedHandles.Add($match.Handle) | Out-Null
-                  PositionWindow $match.Handle $x $y $w $h
-                  return
-              }
-              Start-Sleep -Milliseconds 400
-          }
-      }
-
-      if ($layout -eq "quad") {
-          FindAndMove "${apps.tl}" $area.Left $area.Top $halfW $halfH
-          FindAndMove "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $halfH
-          FindAndMove "${apps.bl}" $area.Left ($area.Top + $halfH) $halfW $halfH
-          FindAndMove "${apps.br}" ($area.Left + $halfW) ($area.Top + $halfH) $halfW $halfH
-      } elseif ($layout -eq "split_specific") {
-          if ($ori -eq "horizontal") {
-              FindAndMove "${apps.tl}" $area.Left $area.Top $area.Width $halfH
-              FindAndMove "${apps.tr}" $area.Left ($area.Top + $halfH) $area.Width $halfH
-          } else {
-              FindAndMove "${apps.tl}" $area.Left $area.Top $halfW $area.Height
-              FindAndMove "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $area.Height
-          }
-      } elseif ($layout -eq "tri") {
-          if ($ori -eq "main_right") {
-              FindAndMove "${apps.tl}" $area.Left $area.Top $halfW $halfH
-              FindAndMove "${apps.bl}" $area.Left ($area.Top + $halfH) $halfW $halfH
-              FindAndMove "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $area.Height
-          } elseif ($ori -eq "main_top") {
-              FindAndMove "${apps.tl}" $area.Left $area.Top $area.Width $halfH
-              FindAndMove "${apps.bl}" $area.Left ($area.Top + $halfH) $halfW $halfH
-              FindAndMove "${apps.br}" ($area.Left + $halfW) ($area.Top + $halfH) $halfW $halfH
-          } elseif ($ori -eq "main_bottom") {
-              FindAndMove "${apps.tl}" $area.Left $area.Top $halfW $halfH
-              FindAndMove "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $halfH
-              FindAndMove "${apps.bl}" $area.Left ($area.Top + $halfH) $area.Width $halfH
-          } else {
-              FindAndMove "${apps.tl}" $area.Left $area.Top $halfW $area.Height
-              FindAndMove "${apps.tr}" ($area.Left + $halfW) $area.Top $halfW $halfH
-              FindAndMove "${apps.br}" ($area.Left + $halfW) ($area.Top + $halfH) $halfW $halfH
-          }
-      } else {
-          if ("${apps.tl}" -and "${apps.tl}".Trim() -ne "") {
-              if ($layout -eq "snap_left") { FindAndMove "${apps.tl}" $area.Left $area.Top $halfW $area.Height }
-              elseif ($layout -eq "snap_right") { FindAndMove "${apps.tl}" ($area.Left + $halfW) $area.Top $halfW $area.Height }
-              elseif ($layout -eq "maximize") { FindAndMove "${apps.tl}" $area.Left $area.Top $area.Width $area.Height }
-          } else {
-              $windows = [WinManager]::GetWindows()
-              $targetHwnd = [IntPtr]::Zero
-              foreach ($w in $windows) {
-                  if ($w.ProcessName -match "lazycow|electron" -or $w.Title -match "LazyCow") { continue }
-                  $targetHwnd = $w.Handle
-                  break
-              }
-              if ($targetHwnd -ne [IntPtr]::Zero) {
-                  if ($layout -eq "snap_left") { PositionWindow $targetHwnd $area.Left $area.Top $halfW $area.Height }
-                  elseif ($layout -eq "snap_right") { PositionWindow $targetHwnd ($area.Left + $halfW) $area.Top $halfW $area.Height }
-                  elseif ($layout -eq "maximize") { PositionWindow $targetHwnd $area.Left $area.Top $area.Width $area.Height }
-              }
-          }
-      }
-      `
-      const encodedScript = Buffer.from(script, 'utf16le').toString('base64')
-      await execAsync(`powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encodedScript}`, { windowsHide: true })
-      return
-    }
+    
     case 'run_script': {
       const controller = new AbortController()
       const { signal } = controller

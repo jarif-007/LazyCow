@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { SavedShortcut } from '../types/actions';
+import { SavedShortcut, LAYOUTS } from '../types/actions';
 
 interface ShortcutCardProps {
   shortcut: SavedShortcut;
@@ -102,8 +102,8 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
         )}
       </div>
 
-      {/* Hotkey */}
-      <div className="flex items-center gap-2">
+      {/* Hotkey + Window Layout badge */}
+      <div className="flex items-center gap-2 flex-wrap">
         <span className="font-code-sm font-medium bg-background/50 border border-border/50 px-3 py-1.5 rounded-md shadow-sm">
           {shortcut.hotkey || 'No Hotkey'}
         </span>
@@ -112,6 +112,22 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
             <span className="material-symbols-outlined text-[13px]">warning</span> Conflict
           </span>
         )}
+        {(() => {
+          const wl = shortcut.windowLayout;
+          if (!wl?.enabled || !wl.layoutId) return null;
+          const layoutDef = LAYOUTS.find((l) => l.id === wl.layoutId);
+          if (!layoutDef) return null;
+          const assignedCount = Object.keys(wl.assignments).length;
+          return (
+            <span
+              className="inline-flex items-center gap-1 bg-primary/10 text-primary border border-primary/30 text-[11px] font-medium px-2 py-0.5 rounded-md"
+              title={`Arranges apps into ${layoutDef.label} — ${assignedCount} of ${layoutDef.zoneCount} zone${layoutDef.zoneCount !== 1 ? 's' : ''} assigned`}
+            >
+              <span className="material-symbols-outlined text-[13px]">grid_view</span>
+              {layoutDef.label}
+            </span>
+          );
+        })()}
       </div>
 
       {/* Execution Log */}

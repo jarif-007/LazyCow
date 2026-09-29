@@ -8,8 +8,9 @@ interface SettingsGeneralProps {
     keepInTray: boolean;
     executionNotifications: boolean;
     generalShade: Shade;
+    autoScrollSpeed: number;
   };
-  onUpdate: (key: string, value: boolean | Shade) => void;
+  onUpdate: (key: string, value: boolean | Shade | number) => void;
   customColorMode: boolean;
 }
 
@@ -58,6 +59,58 @@ export const SettingsGeneral: React.FC<SettingsGeneralProps> = ({ settings, onUp
             <input type="checkbox" className="sr-only peer" checked={settings.executionNotifications} onChange={(e) => onUpdate('executionNotifications', e.target.checked)} />
             <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all" />
           </label>
+        </div>
+
+        {/* ── Auto-scroll speed ── */}
+        <div className="p-4 flex flex-col gap-3">
+          <div>
+            <h3 className="font-body-md font-medium">Auto-scroll speed</h3>
+            <p className="text-body-sm opacity-80">
+              How fast the sequence scrolls when you drag a card or a selection toward the top or bottom edge.
+            </p>
+          </div>
+
+          {/* Presets */}
+          <div className="flex items-center gap-2">
+            {[
+              { label: 'Slow', value: 3 },
+              { label: 'Medium', value: 6 },
+              { label: 'Fast', value: 12 },
+            ].map((p) => (
+              <button
+                key={p.label}
+                onClick={() => onUpdate('autoScrollSpeed', p.value)}
+                className={`px-3 py-1 rounded-full text-body-sm border transition-colors ${
+                  settings.autoScrollSpeed === p.value
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'border-border text-foreground hover:bg-muted'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Fine-grained slider */}
+          <div className="flex items-center gap-3">
+            <span className="text-body-sm text-muted-foreground shrink-0">Slow</span>
+            <input
+              type="range"
+              min="2"
+              max="20"
+              step="1"
+              value={settings.autoScrollSpeed}
+              onChange={(e) => onUpdate('autoScrollSpeed', Number(e.target.value))}
+              className="flex-1 accent-primary"
+            />
+            <span className="text-body-sm text-muted-foreground shrink-0">Fast</span>
+            <span className="font-code-sm font-semibold w-8 text-right text-foreground">
+              {settings.autoScrollSpeed}
+            </span>
+          </div>
+          <p className="text-[11px] text-muted-foreground opacity-70">
+            Higher values scroll faster when the cursor is pushed deeper into the edge zone. Presets are a starting point — drag the slider for custom.
+          </p>
         </div>
 
 

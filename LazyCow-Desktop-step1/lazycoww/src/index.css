@@ -241,7 +241,8 @@ body {
     transform: translateZ(0);
     backface-visibility: hidden;
     -webkit-overflow-scrolling: touch;
-    scroll-behavior: smooth;
+    /* scroll-behavior removed — 'smooth' fights @dnd-kit's auto-scroll
+       during card reordering. Native scroll still feels fine. */
 }
 
 h1, h2, h3, h4, h5, h6, p, span, a, label, button {

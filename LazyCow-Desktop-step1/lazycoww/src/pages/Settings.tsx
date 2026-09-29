@@ -15,6 +15,8 @@ interface LocalSettings {
   executionNotifications: boolean;
   generalShade: Shade;
   dataShade: Shade;
+  /** Auto-scroll acceleration during card drag and drag-select. 2 (slow) – 20 (fast). */
+  autoScrollSpeed: number;
 }
 
 const DEFAULT_SETTINGS: LocalSettings = {
@@ -23,6 +25,7 @@ const DEFAULT_SETTINGS: LocalSettings = {
   executionNotifications: true,
   generalShade: 'light',
   dataShade: 'light',
+  autoScrollSpeed: 6,
 };
 
 interface SettingsProps {
@@ -53,7 +56,7 @@ export default function Settings({ themeMode, onThemeModeChange, customColorMode
     }
   }, []);
 
-  const updateSetting = (key: string, value: boolean | string) => {
+  const updateSetting = (key: string, value: boolean | string | number) => {
   const updated = { ...settings, [key]: value };
   setSettings(updated);
   localStorage.setItem('lazycow_settings', JSON.stringify(updated));

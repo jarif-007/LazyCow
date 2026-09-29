@@ -50,6 +50,10 @@ function App() {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
    const [editShortcut, setEditShortcut] = useState<SavedShortcut | null>(null);
 
+  // Gate: prevents the theme-persistence effects from overwriting localStorage
+  // with defaults before the load effect has finished hydrating state.
+  const [themeHydrated, setThemeHydrated] = useState(false);
+
   // ── Auto-collapse sidebars based on window width ──
   // Below 900px: main sidebar forces to collapsed icon mode.
   // Below 1100px: ActionSidebar (in Builder) forces to collapsed icon mode.
@@ -91,11 +95,11 @@ function App() {
     const savedCustomMode = localStorage.getItem('lazycow-custom-color-mode') === 'true';
     const savedCustomTheme = (localStorage.getItem('lazycow-custom-theme') as ThemeName) || 'coffee';
     const savedThemeMode = (localStorage.getItem('lazycow-theme-mode') as ThemeMode) || 'system';
-    
+
     setCustomColorMode(savedCustomMode);
     setCustomTheme(savedCustomTheme);
     setThemeMode(savedThemeMode);
-    
+
     // Apply dark mode immediately from saved state
     if (savedThemeMode === 'dark') {
       document.documentElement.classList.add('dark');
@@ -103,6 +107,9 @@ function App() {
       document.documentElement.classList.remove('dark');
     }
     // For 'system', we'll let the electron listener handle it
+
+    // Mark hydration complete — allow persistence effects to run from here on.
+    setThemeHydrated(true);
   }, []);
 
   // ── Splash screen ──
@@ -170,9 +177,14 @@ function App() {
       document.documentElement.style.setProperty('--primary', hexToHSL(systemAccent));
     }
 
-    localStorage.setItem('lazycow-custom-color-mode', String(customColorMode));
-    localStorage.setItem('lazycow-custom-theme', customTheme);
-  }, [customColorMode, customTheme, systemAccent]);
+    // Only persist AFTER the load effect has hydrated state, otherwise the
+    // initial default (customColorMode=false, theme=coffee) is written
+    // immediately on mount and clobbers the user's saved choice.
+    if (themeHydrated) {
+      localStorage.setItem('lazycow-custom-color-mode', String(customColorMode));
+      localStorage.setItem('lazycow-custom-theme', customTheme);
+    }
+  }, [customColorMode, customTheme, systemAccent, themeHydrated]);
 
   // ── Force re-render when dark class changes ──
   const [, setTick] = useState(0);
@@ -187,8 +199,7 @@ function App() {
   // ── Handlers ──
   const applyThemeMode = (mode: ThemeMode) => {
     setThemeMode(mode);
-    localStorage.setItem('lazycow-theme-mode', mode);
-    
+
     if (mode === 'dark') {
       document.documentElement.classList.add('dark');
     } else if (mode === 'light') {
@@ -201,13 +212,18 @@ function App() {
         document.documentElement.classList.remove('dark');
       }
     }
+
+    // Guard against writing before load-hydration has settled.
+    if (themeHydrated) {
+      localStorage.setItem('lazycow-theme-mode', mode);
+    }
   };
 
   const setCustomColorModeHandler = (enabled: boolean) => {
     setCustomColorMode(enabled);
-    // Preserve current dark state
-    const isDark = document.documentElement.classList.contains('dark');
-    localStorage.setItem('lazycow-dark', String(isDark));
+    // The class-apply effect writes lazycow-custom-color-mode once state
+    // commits. We intentionally do NOT write a legacy lazycow-dark key —
+    // nothing reads it on load, so it can only cause drift.
   };
 
   const setCustomThemeHandler = (theme: ThemeName) => {
@@ -217,15 +233,11 @@ function App() {
 
   const toggleDarkMode = () => {
     const isDark = document.documentElement.classList.contains('dark');
-    if (isDark) {
-      document.documentElement.classList.remove('dark');
-      setThemeMode('light');
-      localStorage.setItem('lazycow-theme-mode', 'light');
-    } else {
-      document.documentElement.classList.add('dark');
-      setThemeMode('dark');
-      localStorage.setItem('lazycow-theme-mode', 'dark');
-    }
+    const nextMode: ThemeMode = isDark ? 'light' : 'dark';
+    if (isDark) document.documentElement.classList.remove('dark');
+    else document.documentElement.classList.add('dark');
+    setThemeMode(nextMode);
+    if (themeHydrated) localStorage.setItem('lazycow-theme-mode', nextMode);
   };
 
   const handleTabClick = useCallback((tab: string) => {

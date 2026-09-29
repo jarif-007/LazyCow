@@ -28,7 +28,16 @@
     <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
     
     <style>
-      /* Splash screen styles */
+      /* Splash screen styles — colours are driven by CSS variables set by
+         the inline bootstrap script below, so the splash matches the user's
+         saved theme from the very first paint (no FOUC). */
+      :root {
+        --splash-bg: #F5F0EA;
+        --splash-title: #5C3A1E;
+        --splash-loader: #E0D5C7;
+        --splash-bar: #8B5E3C;
+      }
+
       #splash-screen {
         position: fixed;
         inset: 0;
@@ -36,83 +45,117 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        background-color: #F5F2ED;
+        background-color: var(--splash-bg);
         transition: opacity 0.4s ease-out, visibility 0.4s ease-out;
       }
-      
-      .dark #splash-screen,
-      body.dark #splash-screen {
-        background-color: #1a1410;
-      }
-      
+
       #splash-screen.hidden {
         opacity: 0;
         visibility: hidden;
         pointer-events: none;
       }
-      
+
       .splash-content {
         text-align: center;
       }
-      
+
       .splash-logo {
         font-size: 48px;
         margin-bottom: 16px;
         animation: pulse 1.5s ease-in-out infinite;
       }
-      
+
       .splash-title {
         font-family: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         font-size: 28px;
         font-weight: 700;
-        color: #5C3A1E;
+        color: var(--splash-title);
         margin-bottom: 12px;
       }
-      
-      .dark .splash-title,
-      body.dark .splash-title {
-        color: #D4A574;
-      }
-      
+
       .splash-loader {
         width: 40px;
         height: 4px;
-        background: #E0D5C7;
+        background: var(--splash-loader);
         border-radius: 2px;
         margin: 0 auto;
         overflow: hidden;
       }
-      
-      .dark .splash-loader,
-      body.dark .splash-loader {
-        background: #3D2A1A;
-      }
-      
+
       .splash-loader-bar {
         width: 40%;
         height: 100%;
-        background: #8B5E3C;
+        background: var(--splash-bar);
         border-radius: 2px;
         animation: loading 1s ease-in-out infinite;
       }
-      
-      .dark .splash-loader-bar,
-      body.dark .splash-loader-bar {
-        background: #D4A574;
-      }
-      
+
       @keyframes pulse {
         0%, 100% { transform: scale(1); }
         50% { transform: scale(1.1); }
       }
-      
+
       @keyframes loading {
         0% { transform: translateX(-100%); }
         100% { transform: translateX(350%); }
       }
     </style>
+
+    <script>
+      // ── Synchronous theme bootstrap ──
+      // Runs BEFORE the splash paints, reads saved preferences from
+      // localStorage, and applies the correct theme class + splash colours.
+      // Prevents the "coffee flash" that happens when the splash renders
+      // with hardcoded defaults while React is still booting.
+      (function () {
+        try {
+          var customMode = localStorage.getItem('lazycow-custom-color-mode') === 'true';
+          var customTheme = localStorage.getItem('lazycow-custom-theme') || 'coffee';
+          var themeMode = localStorage.getItem('lazycow-theme-mode') || 'system';
+
+          var isDark = false;
+          if (themeMode === 'dark') isDark = true;
+          else if (themeMode === 'light') isDark = false;
+          else isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+          // Apply dark class so no downstream CSS depends on stale state.
+          document.documentElement.classList.toggle('dark', isDark);
+
+          // Palette — matches index.css theme values, converted to hex.
+          var palette = {
+            coffee: {
+              light: { bg: '#F5F0EA', title: '#5C3A1E', loader: '#E0D5C7', bar: '#8B5E3C' },
+              dark:  { bg: '#1F1712', title: '#D4A574', loader: '#3D2A1A', bar: '#D4A574' }
+            },
+            ocean: {
+              light: { bg: '#EFF4FA', title: '#1E3A5F', loader: '#D0E0EB', bar: '#0D7B9E' },
+              dark:  { bg: '#0F1826', title: '#7EC5D8', loader: '#1B2A42', bar: '#3A9EC2' }
+            },
+            forest: {
+              light: { bg: '#F1F5F1', title: '#1F4D2A', loader: '#D0E5D0', bar: '#2E7D3B' },
+              dark:  { bg: '#121F19', title: '#7EC986', loader: '#1B2E1B', bar: '#3E9E4D' }
+            },
+            windows: {
+              light: { bg: '#F2F2F2', title: '#1A1A1A', loader: '#E0E0E0', bar: '#0078D4' },
+              dark:  { bg: '#212121', title: '#FFFFFF', loader: '#3D3D3D', bar: '#0078D4' }
+            }
+          };
+
+          var key = customMode ? customTheme : 'windows';
+          var colors = isDark ? palette[key].dark : palette[key].light;
+
+          var root = document.documentElement;
+          root.style.setProperty('--splash-bg', colors.bg);
+          root.style.setProperty('--splash-title', colors.title);
+          root.style.setProperty('--splash-loader', colors.loader);
+          root.style.setProperty('--splash-bar', colors.bar);
+        } catch (e) {
+          /* fall back to defaults defined in :root — harmless */
+        }
+      })();
+    </script>
   </head>
-  <body class="theme-coffee">
+  <body>
     <!-- Splash Screen -->
     <div id="splash-screen">
       <div class="splash-content">

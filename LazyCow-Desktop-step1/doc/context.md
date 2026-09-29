@@ -79,7 +79,14 @@ LazyCow/
 │           │   ├── useHotkeyRecorder.ts # Reusable global keyboard capture hook
 │           │   └── useActionValidation.ts # Shared validation for action sequences (sync + debounced path checks)
 │           ├── components/
-│           │   ├── ActionSequence.tsx # Task chain visual builder, sliders, pickers, DnD reorder
+│           │   ├── ActionSequence.tsx # Orchestrator: DnD, selection mode, auto-scroll, drop zone
+│           │   ├── ActionSequence/    # Sub-components for the action list
+│           │   │   ├── SortableActionCard.tsx # Single card with useSortable + selection checkbox
+│           │   │   ├── ActionValueInput.tsx   # Per-type value renderer dispatcher
+│           │   │   ├── UrlInput.tsx           # URL field + Test button + auto-prefix
+│           │   │   ├── ActionFlowPreview.tsx  # Wrap-aware icon strip with drag-reorder
+│           │   │   ├── ConfirmDeleteModal.tsx # Multi-action delete confirmation
+│           │   │   └── LayoutThumbnail.tsx    # (moved to WindowLayout/, see below)
 │           │   ├── ActionSidebar.tsx  # Collapsible catalog sidebar with drag-to-add
 │           │   ├── BlockedTriggerList.tsx # Searchable blocked triggers list
 │           │   ├── CollapsedSearchPopover.tsx # Command-palette search popover for collapsed ActionSidebar
@@ -90,9 +97,13 @@ LazyCow/
 │           │   ├── SettingsBlockedTriggers.tsx # Blocked triggers and OS-critical hotkey config
 │           │   ├── SettingsDangerZone.tsx # 3-step factory reset with confirmation
 │           │   ├── SettingsFooter.tsx # Version & metadata footer
-│           │   ├── SettingsGeneral.tsx # Startup, tray, and notification options
-│           │   ├── ShortcutCard.tsx   # Dashboard shortcut card with menu and execution status
-│           │   └── Sidebar.tsx        # Collapsible primary navigation sidebar
+│           │   ├── SettingsGeneral.tsx # Startup, tray, notification + auto-scroll slider
+│           │   ├── ShortcutCard.tsx   # Dashboard card with menu + Window Layout badge
+│           │   ├── Sidebar.tsx        # Collapsible primary navigation sidebar
+│           │   └── WindowLayout/      # Shortcut-level window arrangement feature
+│           │       ├── WindowLayoutPanel.tsx  # Toggle + layout picker + progress
+│           │       ├── LayoutThumbnail.tsx    # Visual preview of a layout with icons
+│           │       └── PositionDropdown.tsx   # Per-card zone assignment dropdown
 │           └── pages/
 │               ├── Builder.tsx        # Shortcut creation/editing with live validation
 │               ├── Library.tsx        # Saved shortcut catalog & execution dashboard
@@ -110,6 +121,7 @@ LazyCow/
 
 #### 1. `electron/main.ts`
 - **Platform Gate:** Validates `process.platform === 'win32'` at startup. If non-Windows, displays an error dialog and exits immediately.
+- **Single Instance Lock:** Calls `app.requestSingleInstanceLock()` before `app.whenReady()`. If a second instance is launched, it immediately quits and hands control back to the running one via the `second-instance` event, which restores + focuses the existing window. This is the standard tray-app model (VS Code, Slack, Discord) — LazyCow is never meant to run twice.
 - **GPU Workaround:** Calls `app.disableHardwareAcceleration()` immediately after imports (before `app.whenReady()`). Required for laptops whose integrated GPU driver causes visual glitches (frozen white regions, color tints, broken ClearType) with Chromium's default Direct3D backend. Do not remove without confirming on a machine with the affected GPU class.
 - **Native Context Menu:** Wires up `electron-context-menu` at module load so right-clicking any input, textarea, or contentEditable shows the standard Cut/Copy/Paste/Select All menu. Electron does not do this by default — every text field would be unusable without it. `showInspectElement` is enabled only in dev (`VITE_DEV_SERVER_URL`).
 - **Window Management:** Creates 1200x800 `BrowserWindow` with `autoHideMenuBar: true`, custom icon, and hidden titlebar. Minimizes/closes to system tray if `keepInTray` is enabled.
@@ -129,12 +141,6 @@ LazyCow/
     3. DDC/CI via `dxva2.dll` (`DdcMonitorHelper` P/Invoke calling `SetPhysicalMonitorBrightness`) for external desktop monitors.
   - **`toggle_dnd`**: Configures Windows Focus Assist registry (`NOC_GLOBAL_SETTING_ALLOW_TOASTS`).
   - **`toggle_nightlight`**: Toggles Windows BlueLightReduction state in CloudStore registry.
-  - **`arrange_windows`**: Comprehensive Win32 window positioning engine via `WinManager`:
-    - Uses `user32.dll` `EnumWindows` and `GetWindowText` to enumerate actual visible top-level windows on the desktop (avoiding `Get-Process` worker process pitfalls).
-    - Window handle tracking (`$usedHandles`) to tile multiple windows from the same application (e.g. separate Chrome/browser windows).
-    - 2.4-second polling retry loop for newly launched apps to render before positioning.
-    - Automatic `ShowWindow(hwnd, SW_RESTORE)` to un-maximize or un-minimize windows before resizing.
-    - Active window fallback skipping LazyCow, with optional target app name input in the UI.
   - **`delay`**: Pauses sequence execution for a configurable duration (`ms`) via `await new Promise(r => setTimeout(r, ms))` so launched applications or scripts have time to initialize before subsequent steps.
   - **`run_script`**: Spawns commands in `cmd.exe` with 120s timeout and process tree kill capability (`taskkill /pid /t /f`).
 - **Shortcut Cancellation (`cancel-shortcut`):**
@@ -146,6 +152,7 @@ LazyCow/
 - **Path Checking (`check-path-exists`):** Verifies file/directory existence using `fs.existsSync`.
 - **URL Test (`test-url`):** Opens a URL in the default browser for a quick preview without executing a shortcut. Used by the **Test** button on `open_url` action cards. Format-checks the URL (scheme must be http/https, host must be present) before opening.
 - **Global Hotkey Registration:** Listens for registered shortcut keys, checks for dangerous actions, emits `hotkey-needs-confirm` or runs shortcut, and notifies on registration failures via `onHotkeyRegisterFailed`.
+- **Window Layout (planned):** A new runtime engine will position shortcut-launched windows into one of 7 predefined layouts (6 matching Windows Snap Layouts + quad grid). Runs after all `launch_app` / `open_folder` / `open_file` / `open_url` actions have fired. Uses the same `EnumWindows`-based polling approach as the removed `arrange_windows` action, but driven by shortcut-level config rather than an inline action. Conflict rules: free zone → place; occupied zone → center-small fallback (60%); last app may scavenge leftover free zones from earlier placements. **Not yet implemented — this is Batch 2.**
 
 #### 2. `electron/preload.ts` & `electron/electron-env.d.ts`
 - Securely exposes `window.electronAPI`:
@@ -165,18 +172,18 @@ LazyCow/
 
 ### B. Action Catalog & Types (`src/types/actions.ts`)
 
-- **11 Supported Action Types (All Active):**
+- **10 Supported Action Types (All Active):**
   1. `launch_app` — Application Path (`.exe` only)
   2. `open_url` — Website URL
   3. `open_folder` — Folder Path
   4. `open_file` — File Path
-  5. `arrange_windows` — Window Layout (Snap Left/Right, Maximize, Split, Tri-Grid, Quad-Grid)
-  6. `set_volume` — Volume Level (0–100% Slider)
-  7. `toggle_dnd` — DND Configuration (Toggle, Enable, Disable)
-  8. `toggle_nightlight` — Night Light Mode (Toggle, Enable, Disable)
-  9. `set_brightness` — Brightness Level (0–100% Slider)
-  10. `delay` — Wait / Delay Duration (100ms–60,000ms, with 0.25s–10.0s interactive step slider)
-  11. `run_script` — Terminal Command
+  5. `set_volume` — Volume Level (0–100% Slider)
+  6. `toggle_dnd` — DND Configuration (Toggle, Enable, Disable)
+  7. `toggle_nightlight` — Night Light Mode (Toggle, Enable, Disable)
+  8. `set_brightness` — Brightness Level (0–100% Slider)
+  9. `delay` — Wait / Delay Duration (100ms–60,000ms, with 0.25s–10.0s interactive step slider)
+  10. `run_script` — Terminal Command
+- **Window Layout moved to shortcut-level.** The old `arrange_windows` action was removed. Arrangement is now a property of the shortcut (`windowLayout` field), configured once in the Builder via the `WindowLayoutPanel` and applied after all eligible actions have fired.
 - **Blocked System Triggers:** 17 protected default Windows shortcuts (`Alt+F4`, `Ctrl+Alt+Del`, `Win+L`, `Win+D`, `Win+R`, `Win+E`, etc.).
 
 ---
@@ -185,9 +192,17 @@ LazyCow/
 
 - **`ActionSidebar.tsx`:** Collapsible action catalog. Expanded mode shows full action cards with search. Collapsed mode shows icon strip with hover tooltips and a search icon that opens the `CollapsedSearchPopover`. Auto-collapses below 1100px window width (forced; user cannot re-expand until window grows).
 - **`CollapsedSearchPopover.tsx`:** Command-palette style centered popover opened from the collapsed ActionSidebar's search icon. Contains auto-focused input, live filtering by action name OR category, grouped results, Escape/Enter keyboard support. Uses React `createPortal` to escape parent `transform` stacking context. Clicking a result adds the action and closes the popover.
-- **`ActionSequence.tsx`:** Drag-and-drop action cards with visual flow preview, direct slider controls for Volume, Brightness, and Delay duration, dropdown controls for DND and Night Light, visual window layout configuration, and native **"Browse"** file pickers. For `open_url` actions: includes a **Test** button (opens the URL in the default browser via the `testUrl` IPC), an **info tooltip** explaining the auto-prefix behavior, and smart auto-prefixing on blur. **Auto-prefix rules:** private/loopback ranges (`10.`, `127.`, `169.254.`, `172.16–31.`, `192.168.`, `localhost`) get `http://`; everything else gets `https://`. An orphan `://`, `//`, or `:` is stripped first. Users who explicitly type a scheme keep it.
+- **`ActionSequence.tsx`:** Orchestrator for the action list. Renders the header row (Select / Delete / Select All / Clear / Done), the Flow Preview, and the card list. Wraps the list in `DndContext` + `SortableContext` from `@dnd-kit` for smooth internal reorder. Manages selection mode (click toggle, continuous drag-select via a single global `pointermove` + rAF loop, edge auto-scroll using the user's speed preference). Integrates the `ConfirmDeleteModal` for multi-delete.
+- **`ActionSequence/SortableActionCard.tsx`:** A single action card. Uses `useSortable` from `@dnd-kit/sortable`. Renders the drag handle (dnd-kit listeners), checkbox (selection mode), title + Dangerous badge, ↑/↓/trash controls, the `PositionDropdown` (when Window Layout is on), and delegates the value editor to `ActionValueInput`.
+- **`ActionSequence/ActionValueInput.tsx`:** Dispatcher that picks the right editor for each action type. Renders sliders for Volume / Brightness / Delay, dropdowns for DND / Night Light, URL editor for `open_url`, and generic text + Browse for `launch_app` / `open_folder` / `open_file` / `run_script`.
+- **`ActionSequence/UrlInput.tsx`:** URL-specific editor. Auto-prefixes on blur — private/loopback ranges (`10.`, `127.`, `169.254.`, `172.16–31.`, `192.168.`, `localhost`) get `http://`, everything else gets `https://`. Orphan `://`, `//`, `:` are stripped first. Users who type a scheme explicitly keep it. Includes a **Test** button (via `testUrl` IPC) when the URL is valid.
+- **`ActionSequence/ActionFlowPreview.tsx`:** Compact wrap-aware icon strip summarising the sequence. Icons are draggable via `@dnd-kit`'s `rectSortingStrategy` for a fast reorder that doesn't require touching the cards. Clicking an icon scrolls to and flashes its card. Hovering shows a tooltip with the action's title + value (arrange-style values are humanized). Wrap layout means all actions stay visible — no horizontal scroll.
+- **`ActionSequence/ConfirmDeleteModal.tsx`:** Rendered via `createPortal(..., document.body)` so parent `transform`s don't trap it. Summarises the actions being removed by title + count, has a ✗ close button (works without Esc), supports Esc to cancel and Enter to confirm, and includes a "don't show these hints again" checkbox persisted to `lazycow-hide-modal-hints`.
+- **`WindowLayout/WindowLayoutPanel.tsx`:** Shortcut-level panel above the action sequence. Toggle enables arrangement; 7 layout thumbnails (Windows' 6 + quad) are filtered by the eligible action count. Live preview updates as users assign positions from the cards. Shows amber warnings when a layout becomes invalid (too few eligible apps) or when extra apps won't be arranged.
+- **`WindowLayout/LayoutThumbnail.tsx`:** Pure visual mockup of a layout with each zone drawn by percentage. Displays assigned action icons (colored), empty-zone labels, and an optional ✗ clear button. Supports drag-to-swap between zones.
+- **`WindowLayout/PositionDropdown.tsx`:** Custom dropdown rendered via `createPortal` for escaping card overflow. Positioned with fixed coordinates computed from the trigger button. Auto-flips above/below based on viewport space and closes on scroll, outside click, or Escape. Disabled zones show "(taken by <Action Title>)"
 - **`Builder.tsx`:** Shortcut builder with real-time name uniqueness checking, hotkey conflict detection, modifier-first validation, unsaved changes safety modal, and full responsive layout (see Section 2's Responsive Layout subsection). Uses the shared `useActionValidation` hook to **disable Save** when any action is invalid or unsupported, showing *"Fix N invalid action(s) before saving."* Restores the shortcut's hotkey when opening for edit.
-- **`ShortcutCard.tsx`:** Dashboard shortcut card with 3-dot dropdown menu (Edit Flow, Duplicate, Rename, Delete), hotkey conflict warning badge, elapsed duration analytics (`Sequence Complete • 1.4s`), live step execution log, amber **"Cancelling..."** button state with spinner when cancel is requested, and **"Cancelled after: <action title>"** state display. Menu is disabled while the shortcut is running. Uses solid `bg-background/95` and `bg-background/70` for the shade picker and action-icon pills — **no `backdrop-blur`** (removed for performance).
+- **`ShortcutCard.tsx`:** Dashboard shortcut card with 3-dot dropdown menu (Edit Flow, Duplicate, Rename, Delete), hotkey conflict warning badge, **Window Layout badge** (shows layout label + assigned zone count via tooltip when `windowLayout.enabled`), elapsed duration analytics (`Sequence Complete • 1.4s`), live step execution log, amber **"Cancelling..."** button state with spinner when cancel is requested, and **"Cancelled after: <action title>"** state display. Menu is disabled while the shortcut is running. Uses solid `bg-background/95` and `bg-background/70` for the shade picker and action-icon pills — **no `backdrop-blur`** (removed for performance).
 - **`Library.tsx`:** Shortcut card dashboard with live step progress ring, execution log, search filter, duplicate workflow generator (`(Copy)` naming & hotkey decoupling), inline rename modal, dropdown management, and cancel handler that forwards to `cancelShortcut`.
 - **`Settings.tsx` & Subcomponents:** Manages appearance, theme switching, startup launch, system tray minimization, execution notifications, blocked triggers, and factory reset.
 
@@ -195,6 +210,9 @@ LazyCow/
 
 - **`useHotkeyRecorder.ts`:** Captures global key combinations for the trigger field. Uses capture-phase `keydown` so all keystrokes are swallowed during recording. Returns `{ recording, recordedCombo, startRecording, stopRecording, clearCombo, setRecordedCombo }`.
 - **`useActionValidation.ts`:** Single source of truth for action-sequence validation. Runs synchronous checks (empty values, format, numeric range) immediately and debounced path-existence checks (~600ms) via `checkPathExists`. Flags actions whose `type` is not in the current `actionCatalog` as **unsupported**. Returns `{ errors, warnings, unsupportedIds, isValid }` (`warnings` is reserved for future offline/soft-failure states but currently always empty). Consumed by both `ActionSequence.tsx` (inline errors) and `Builder.tsx` (Save gating). **URL validation rules (format-only, no TLD whitelist, no DNS):** empty → error; schemeless with dot + chars after → pending (blur will auto-prefix); IPv4-shaped → strict 4-segment range check; IPv6 requires brackets; malformed → generic error.
+- **`lazycow_settings.autoScrollSpeed`** — New number field (2–20) controlling auto-scroll pacing during card drag and drag-select. Managed by a slider + Slow/Medium/Fast presets in Settings → General.
+- **`lazycow-hide-modal-hints`** — Boolean. When true, the confirm-delete modal hides the small `Esc` / `Enter` keyboard badges on its buttons. Reset automatically by the Danger Zone's factory reset (which calls `localStorage.clear()`).
+- **`lazycow-custom-tlds`** — **Removed.** The custom TLD manager was deleted; TLD validation is no longer used. Any stale value is silently ignored.
 
 ---
 
@@ -247,13 +265,21 @@ npm run build
 14. **No `backdrop-blur` in Modals or Overlays:** `backdrop-blur-*` forces Chromium to blur the entire backdrop on every frame the modal is open, and to recompute on open/close. Under software rendering (which the GPU workaround forces) this is measurably expensive. Use solid `bg-background/90` (or `/95` for tighter overlays) instead.
 15. **rAF-Throttle Resize Listeners:** Any `window.addEventListener('resize', ...)` must be wrapped in a `requestAnimationFrame` throttle so the handler runs at most once per frame. Without it, the handler fires hundreds of times during a drag and causes visible lag.
 16. **Native Context Menu is Mandatory:** `electron-context-menu` in `main.ts` enables right-click → copy/paste/cut/select-all across the app. Removing it breaks every text field. Chromium's default is no menu at all — this is not optional.
+17. **Single Instance Lock:** The `app.requestSingleInstanceLock()` call in `main.ts` prevents multiple Electron processes. Without it, running `npm run dev` while the app is in the tray starts a second process — two writers to the same `localStorage`, causing settings to silently reset. Never remove the lock. The `second-instance` handler must always restore + focus the existing window.
+18. **Window Layout Is Shortcut-Level, Not an Action:** Arrangement is a property of the shortcut (`windowLayout` field), applied after all eligible actions fire. Do not reintroduce a standalone `arrange_windows` action — it created ordering ambiguity (user must remember to place it last) and complicated the UI (assignments needed to see the full sequence, which an action card cannot do).
+19. **Selection-Mode Auto-Scroll Uses a Single RAF Loop:** Drag-select toggling, auto-scroll pacing, and edge-zone detection all run in one requestAnimationFrame loop inside `ActionSequence.tsx`, keyed off the physical pointer button state (`e.buttons & 1`). Do not split these into separate listeners — the earlier split implementation raced with `pointermove` handlers and caused ghost selections after button release.
+20. **Floating Dropdowns Use Portals:** Any custom dropdown or popover that must escape an overflow-clipped parent (like the Position dropdown inside a card) renders via `createPortal(..., document.body)` with fixed coordinates from `getBoundingClientRect()`. Same reasoning as rule 9 — a parent `transform` or `overflow: hidden` traps absolutely-positioned children.
 
 ---
 
 ## 7. CURRENT PROJECT STATUS & FEATURE ROADMAP
 
 ### A. Fully Implemented & Verified Features
-* **11 Action Types:** Launch App (`.exe` only), Open URL, Open Folder, Open File, Arrange Windows (5 Win32 layout presets), Set Volume (WASAPI COM), Toggle DND (Focus Assist), Toggle Night Light, Set Brightness (WMI/CIM/DDC-CI), Wait / Delay (0.25s–10s slider), Run Terminal Script.
+* **10 Action Types:** Launch App (`.exe` only), Open URL, Open Folder, Open File, Set Volume (WASAPI COM), Toggle DND (Focus Assist), Toggle Night Light, Set Brightness (WMI/CIM/DDC-CI), Wait / Delay (0.25s–10s slider), Run Terminal Script.
+* **Shortcut-Level Window Layout (UI complete, runtime planned):** A toggle in the Builder enables arrangement. Users pick from 7 layouts (Windows' 6 + quad), assign eligible actions to zones via per-card Position dropdowns, and see a live preview in the layout thumbnail. The runtime engine that actually positions windows at execution time is Batch 2 — currently only the config + badge are wired.
+* **Selection Mode + Multi-Delete:** Toggle via header `Select` button, or long-press (~400ms) on any card. Continuous drag-select toggles cards under the cursor. `Select All` / `Clear` / `Done` in the header; a red `Delete` opens a count-summarising confirmation modal (Esc / Enter / ✗ / Cancel all supported). `lazycow-hide-modal-hints` can suppress the small keyboard-hint badges.
+* **Flow Preview Reorder:** Wrap-aware icon strip above the cards. Icons are draggable (dnd-kit `rectSortingStrategy`), click-to-jump to the corresponding card, colored, with rich hover tooltips. Reordering works without touching the cards.
+* **Auto-Scroll During Drag:** Card drag and drag-select auto-scroll at the container edges with a speed curve the user controls via Settings → General → "Auto-scroll speed" (Slow 3 / Medium 6 / Fast 12 presets + slider 2–20). Warmup ramps the speed over ~900ms so the first moment of scroll isn't jarring.
 * **Shortcut Builder:** Visual drag-and-drop sequencing, live name uniqueness validation, hotkey collision checking, ComboBuilder modifier constructor, native OS Browse pickers. **Save is disabled when any action is invalid or unsupported**, with a red inline message under the Save button.
 * **Action Validation:** Shared `useActionValidation` hook validates every action synchronously (format, range, empty) and asynchronously (path existence). Checks run debounced at 400ms and produce per-action error messages.
 * **URL Helpers:** Automatic `https://` prefixing on blur (with orphan-scheme cleanup), a **Test** button to preview the URL in the default browser without executing the shortcut, and an info tooltip explaining the auto-prefix behavior.
@@ -273,6 +299,16 @@ npm run build
 5. **Scheduled / Automatic Triggers:** Time-based shortcut execution (e.g., Run "Work Setup" every weekday at 9:00 AM) using node-cron or Windows Task Scheduler.
 
 ### C. Recently Completed
+
+**Session 5 (Window Layout + selection mode + dnd-kit, uncommitted at time of writing):**
+- Replaced HTML5 native drag in `ActionSequence.tsx` with `@dnd-kit` — internal reorder is now smooth. Split the file into `ActionSequence/` sub-components: `SortableActionCard`, `ActionValueInput`, `UrlInput`, `ActionFlowPreview`, `ConfirmDeleteModal`.
+- Rebuilt selection mode: header toggle, long-press entry (400ms), continuous drag-select (click-toggle / hover-toggle-on-different-card), edge auto-scroll, Select All / Clear / Done.
+- Multi-delete confirmation modal shows a count summary per action title. Esc / Enter / ✗ / Cancel all dismiss or confirm. "Don't show hints again" persists to `lazycow-hide-modal-hints`.
+- Auto-scroll: single RAF loop keyed off physical pointer state; speed configurable via new `autoScrollSpeed` setting (2–20, default 6) with Slow/Medium/Fast presets + slider.
+- Flow Preview: wrap-aware layout (no horizontal scroll), draggable icons, click-to-jump, colored badges, humanized tooltips.
+- New shortcut-level `windowLayout` config: 7 layouts, `WindowLayoutPanel`, `LayoutThumbnail`, `PositionDropdown`. Live preview, zone assignment, drag-to-swap, amber warnings for invalid state. `ShortcutCard` shows a layout badge when enabled.
+- Removed the deprecated `arrange_windows` action entirely (catalog, types, `getFieldLabel`, `ActionValueInput`, `ArrangeWindowsInput.tsx`, main process handler). Replaced by the shortcut-level feature above.
+- Added `app.requestSingleInstanceLock()` in `main.ts` — resolves the "`npm run dev` while tray app running causes double-instance localStorage race" bug that made theme changes randomly reset.
 
 **Session 1 (cancellation & responsive layout):**
 - Removed Immediate cancel mode — cancellation is now always graceful.
@@ -333,11 +369,17 @@ npm run build
 **Phase E (additional bug):**
 - Security Warning modal in `Library.tsx` shows an empty list when the shortcut's only dangerous action is an `open_file` with a dangerous extension (`.exe`, `.ps1`, etc.). The trigger check in `runShortcut()` flags these, but the modal's `<span>` list only filters `run_script` and `launch_app`. Fix: hoist `DANGEROUS_EXTENSIONS` to module scope and extend the filter to include `open_file` with a dangerous extension, showing *"Open: <path>"*.
 
-**Phase 3 — Drag-and-Drop Rebuild (`@dnd-kit`):**
-- Replace HTML5 native drag in `ActionSequence.tsx` (internal reorder) and `ActionSidebar.tsx` → `ActionSequence.tsx` (sidebar drop).
-- Install `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities`.
-- Animates only `transform` + `opacity` — smooth even under software rendering.
-- Effort: 1 focused session. Medium risk (interaction-heavy).
+**Phase 3 — Drag-and-Drop Rebuild (`@dnd-kit`):** ✅ **Done** (Session 5). Internal card reorder uses dnd-kit; sidebar → sequence drop still uses HTML5 native drag as a temporary measure.
+
+**Window Layout Runtime Engine (Batch 2, next):**
+- New IPC: `arrange-windows-shortcut` — takes the shortcut's `windowLayout` config + the list of actions it references.
+- Poll for the newly-opened windows (extends the current 2.4s loop to 6s with decaying interval).
+- Detect zone occupancy by enumerating existing windows and checking rectangle overlap >30%.
+- Apply the rules: free zone → place; occupied zone → center-small (60% × 60%, centered); last app may scavenge leftover free zones from earlier placements.
+- Toast on any partial failure.
+
+**Window Layout Overlay Animation (Batch 3):**
+- Transparent frameless BrowserWindow overlay appears for ~600ms during arrangement. Fades in zone outlines, animates each app's icon flying to its zone, then fades out as the real windows are placed. Uses the user's chosen theme color.
 
 **Phase 4 — Keyboard Shortcuts:**
 - Ctrl+N (new shortcut), Ctrl+, (settings), Escape (close modal), Ctrl+S (save in Builder), Ctrl+1/2/3 (tab switch).
