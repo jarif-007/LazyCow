@@ -9,6 +9,18 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs'
 import { z } from 'zod'
+import contextMenu from 'electron-context-menu'
+
+// ── Native right-click context menu (copy / paste / cut / select all) ──
+// Without this, Electron shows nothing on right-click — which breaks a
+// basic expectation for every text field, input, and contentEditable.
+contextMenu({
+  showInspectElement: !!process.env.VITE_DEV_SERVER_URL,
+  showCopyImage: true,
+  showSaveImageAs: true,
+  showLookUpSelection: true,
+  showSearchWithGoogle: false,
+})
 
 // ── OS Lock: LazyCow is exclusively designed for Microsoft Windows ──
 if (process.platform !== 'win32') {
