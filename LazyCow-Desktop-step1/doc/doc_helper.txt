@@ -1,0 +1,114 @@
+LAZYCOW — QUICK REFERENCE FOR STARTING A NEW AI CHAT
+═════════════════════════════════════════════════════════════════════════
+
+WHAT TO DO AT THE START OF EVERY NEW CHAT
+─────────────────────────────────────────
+
+1. Double-click lazycoww\boot.bat  (or run from lazycoww\: npm run boot)
+   → Generates doc\SESSION_BOOT.md and copies it to clipboard.
+
+   Lite mode (smaller paste, context.md omitted):
+      From lazycoww\:  node scripts\boot.mjs --lite
+   Use lite mode when SESSION_BOOT.md is over ~25k tokens, or for
+   quick sessions that won't touch architecture.
+
+2. Open a new chat.
+
+3. Paste the clipboard (Ctrl+V). Send.
+
+4. The AI will:
+   a. Read §0–§7 of the boot file
+   b. Reply with a 5-line summary (tone / mission / last stop / blocker / next ask)
+   c. Ask for Batch 1 code files
+   d. Wait for you to paste them
+
+5. Paste each batch the AI asks for:
+   - Batch 1: electron/main.ts, electron/preload.ts,
+              electron/electron-env.d.ts, electron/windowLayout.ts
+   - Batch 2: src/types/actions.ts, src/pages/Library.tsx,
+              src/pages/Builder.tsx
+   - Batch 3 (only if needed): package.json, tsconfig.json,
+              vite.config.ts
+
+6. The AI summarizes each file and asks for the next batch.
+
+7. After all batches, it confirms the full picture and asks
+   "Shall we start with <next action>?"
+
+8. Say "go" — work resumes.
+
+═════════════════════════════════════════════════════════════════════════
+WHAT EACH .md FILE DOES (in doc/)
+═════════════════════════════════════════════════════════════════════════
+
+voice.md         — How I talk. How I want the AI to talk. My workflow
+                   rhythm. Things that frustrate me. Proactive-suggestion
+                   triggers (checkpoint/commit/archive). Boot file size
+                   thresholds.
+
+decisions.md     — Append-only log of WHY the code looks like it does.
+                   Every decision + alternatives + why we rejected them.
+                   AI reads this so it doesn't re-suggest failed ideas.
+
+missions.md      — Active work queues (checklists). What's being built,
+                   what's blocked, what's next. Includes recurring
+                   Doc hygiene mission.
+
+handoff.md       — Where the last session stopped. Current focus,
+                   sub-task state, blockers, uncommitted changes,
+                   §5-PENDING (in-flight work).
+                   AI reads this to know exactly where to resume.
+
+journal.md       — Change history. Auto-stubbed by the git hook on
+                   every commit. AI fills in the details during
+                   "checkpoint".
+
+onboarding.md    — Step-by-step: how the AI should onboard itself when
+                   it reads a fresh SESSION_BOOT.md. Tells it to
+                   confirm, ask for batches, wait, etc.
+
+context.md       — Master architecture blueprint. Tech stack, directory
+                   layout, action types, coding rules, roadmap.
+                   (Omitted in --lite boot mode.)
+
+SESSION_BOOT.md  — GENERATED. Don't edit. This is all 7 md files +
+                   git state + onboarding instructions, concatenated.
+
+═════════════════════════════════════════════════════════════════════════
+KEYWORDS THE AI RESPONDS TO (and proactively suggests)
+═════════════════════════════════════════════════════════════════════════
+
+"checkpoint"      →  AI updates handoff.md §1–§5, ticks missions.md,
+                     fills any pending journal.md stub.
+
+"commit"          →  AI gives you git add + commit -m + push commands.
+                     The post-commit hook auto-stubs journal.md.
+                     AI fills in the stub at the next checkpoint.
+
+"sync"            →  Same as "checkpoint".
+
+"archive journal" →  Split journal.md when it exceeds ~500 lines.
+                     AI moves older entries to journal-archive.md.
+
+The AI will proactively suggest these based on context — you don't
+have to remember them.
+
+═════════════════════════════════════════════════════════════════════════
+IF THE AI FORGETS SOMETHING
+═════════════════════════════════════════════════════════════════════════
+
+- If it skips onboarding: tell it "read §0 first, follow it step by step".
+- If it suggests a reverted idea: tell it "check decisions.md — we tried that".
+- If it asks for a file that's not on the batch list: it's being cautious;
+  send it if you have it, or say "that file doesn't exist — here's what we have".
+- If it tries to write code without saying "go": say "no code yet, discuss first".
+
+═════════════════════════════════════════════════════════════════════════
+WHAT TO DO AT THE END OF A SESSION
+═════════════════════════════════════════════════════════════════════════
+
+1. Say "checkpoint" — AI updates handoff/missions/journal.
+2. Say "commit" — AI gives git commands; run them.
+3. Close the chat.
+
+Next session: boot.bat + paste. Done.

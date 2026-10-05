@@ -14,6 +14,10 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const step1Root = path.resolve(here, '..', '..')
 const docDir = path.join(step1Root, 'doc')
 
+// --lite flag: when passed (`node scripts/boot.mjs --lite`), context.md is
+// omitted from the boot file. Use this when the full boot exceeds ~25k tokens.
+const LITE_MODE = process.argv.includes('--lite')
+
 /**
  * Read a doc file, returning a fallback if missing.
  * @param {string} f
@@ -68,6 +72,21 @@ When you make an architectural decision: append to doc/decisions.md.
 When a fix fails: append "Tried: <approach> — <why>" to the bug's entry in §2, plus a "Next attempt:" line.
 Never suggest an approach listed under "Tried:" in decisions.md or handoff.md.
 
+Proactively suggest "checkpoint" when:
+- we finish a sub-task or close a bug
+- we make or reverse a decision
+- ~30 minutes of work has passed with no checkpoint
+- I sound like I might step away ("ok", "cool", "let me try", "brb")
+
+Proactively suggest "commit" when:
+- a batch of changes is verified working
+- we're about to start a big new thing
+- the working tree has been dirty across more than one topic
+
+Proactively suggest "archive journal" when:
+- journal.md exceeds ~500 lines
+- you notice the boot file is getting heavy (~25k tokens or more)
+
 ---
 
 `
@@ -75,7 +94,9 @@ Never suggest an approach listed under "Tried:" in decisions.md or handoff.md.
 const onboarding = `# §0 Onboarding — how to set yourself up\n\n${read('onboarding.md')}\n\n---\n\n`
 const voice = `# §1 Voice & Rhythm\n\n${read('voice.md')}\n\n---\n\n`
 const decisions = `# §2 Decisions (append-only — do not suggest reverted alternatives)\n\n${read('decisions.md')}\n\n---\n\n`
-const context = `# §3 Context — stable architecture\n\n${read('context.md')}\n\n---\n\n`
+const context = LITE_MODE
+    ? `# §3 Context — stable architecture\n\n(context.md omitted in --lite mode. Ask me for it if you need the full architecture.)\n\n---\n\n`
+    : `# §3 Context — stable architecture\n\n${read('context.md')}\n\n---\n\n`
 const missions = `# §4 Missions — active work queues\n\n${read('missions.md')}\n\n---\n\n`
 const handoff = `# §5 Handoff — where the last session stopped\n\n${read('handoff.md')}\n\n---\n\n`
 const journal = `# §6 Journal — recent changes\n\n${read('journal.md')}\n\n---\n\n`

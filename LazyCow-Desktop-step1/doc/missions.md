@@ -21,3 +21,10 @@ Status: NOT STARTED
 ## Mission: Library & Settings responsive audit
 Status: NOT STARTED
 - [ ] Test at 800–900px width (context.md §7.E flags this as untested)
+
+## Mission: Doc hygiene (recurring)
+Status: ONGOING
+- [ ] Archive journal.md when it exceeds ~500 lines → journal-archive.md
+- [ ] Archive decisions.md when it exceeds ~200 entries → decisions-archive.md
+- [ ] Check SESSION_BOOT.md token count monthly
+- [ ] Move completed work from context.md §7.C to §7.A when it's a month old

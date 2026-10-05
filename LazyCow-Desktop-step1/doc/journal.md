@@ -24,3 +24,10 @@ Format:
 - **Files:** doc/voice.md, doc/decisions.md, doc/missions.md, doc/handoff.md, doc/journal.md, doc/onboarding.md; lazycoww/scripts/boot.mjs; lazycoww/boot.bat; lazycoww/.githooks/post-commit; lazycoww/jsconfig.json
 - **Verified:** yes — boot.mjs writes to LazyCow-Desktop-step1/doc/SESSION_BOOT.md (~15000 tokens, all 7 sections populated). Hook fires on commit (stub auto-appended).
 - **Commit:** 83d99a7
+
+## 2026-10-06 — docs: fill in journal stub for boot system commit
+- **Issue:** (fill in)
+- **Solution:** (fill in)
+- **Files:** (fill in)
+- **Verified:** (fill in)
+- **Commit:** bd40686
