@@ -38,3 +38,17 @@ Format:
 - **Files:** doc/doc_helper.txt (new); doc/.gitignore (new); doc/voice.md; doc/missions.md; lazycoww/scripts/boot.mjs
 - **Verified:** yes — boot.mjs generates the boot file successfully in both normal and --lite mode. Hook stubs on commit.
 - **Commit:** 89e4626
+
+## 2026-10-06 — feat: Window Layout runtime engine — DPI fix verified, system windows filtered
+- **Issue:** Window Layout engine couldn't place windows correctly. Notepad moved but never filled the target zone on 1920×1080 @ 125% display scaling. Root cause: PowerShell was running DPI-unaware, so it computed zone rectangles in virtualized coordinates (1536×864) instead of physical (1920×1080).
+- **Solution:** Applied `__COMPAT_LAYER=HIGHDPIAWARE` env var when spawning PowerShell (via `execFile` options) + `SetThreadDpiAwarenessContext(-4)` (PER_MONITOR_AWARE_V2) at script top. Also added `using System;` to the inline C# for `IntPtr`. Normalized single-object `ConvertTo-Json` output to an array. Added system-window blocklist (`TextInputHost`, `ShellExperienceHost`, `SearchHost`, `StartMenuExperienceHost`, etc.) to stop invisible overlays from triggering false occupancy. Added zero-size window filter.
+- **Files:** electron/windowLayout.ts; electron/main.ts; electron/preload.ts; electron/electron-env.d.ts; src/types/actions.ts
+- **Verified:** yes — `SCREEN_DEBUG: area=0,30 1920x1050 BoundsW=1920x1080` (physical pixels confirmed). Notepad fills left half. MoveWindow returned True.
+- **Commit:** 0e6a10b
+
+## 2026-10-06 — feat(window-layout): claim assigned zones + bring to front (Batch 2d)
+- **Issue:** (fill in)
+- **Solution:** (fill in)
+- **Files:** (fill in)
+- **Verified:** (fill in)
+- **Commit:** 2143330
