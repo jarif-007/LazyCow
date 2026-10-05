@@ -196,9 +196,6 @@ export async function arrangeWindows(
   // Strip UTF-8 BOM and whitespace that PowerShell may prepend.
   const clean = stdout.replace(/^\uFEFF/, '').trim()
 
-  // Temporary debug — remove once the engine is stable.
-  console.log('[windowLayout] raw stdout:', JSON.stringify(clean.slice(0, 500)))
-
   try {
     const parsed = JSON.parse(clean) as PlacementResult | PlacementResult[]
     // PowerShell's ConvertTo-Json returns a bare object for single items,
