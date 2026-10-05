@@ -63,6 +63,13 @@ Status: NOT STARTED
 - [ ] None are imported anywhere in the current code
 - [ ] Defer until after Session 6's docs commit lands
 
+## Mission: Boot system — fix stale-handoff false positive
+Status: NOT STARTED
+- [ ] `boot.mjs` compares `handoff.md`'s `Last commit:` line against `git rev-parse HEAD` with exact string equality. Any commit that touches `handoff.md` moves HEAD past the value in the file, so the warning fires on a clean tree.
+- [ ] Proposed fix: compare against `git log --format=%h -1 -- <non-doc paths>` — the last commit that touched code, not docs. Or allow a small delta before warning.
+- [ ] Alternative: accept the header as informational only, remove the check entirely.
+- [ ] Decision needed before implementing.
+
 ## Mission: Doc hygiene (recurring)
 Status: ONGOING
 - [ ] Archive journal.md when it exceeds ~500 lines → journal-archive.md

@@ -1,23 +1,23 @@
 # LazyCow — Handoff
 
 Last updated: 2026-10-06
-Last commit: bb6fe9f
+Last commit: da558bb
 Working tree: CLEAN
 
 ## §1 Current Focus
 Session 6 fully wrapped: Window Layout engine, broken-path pre-flight,
-Test Layout/Flow, richer toasts, Not-Arranged App Visibility, and Q2b
-(broken-action auto-scroll) are all shipped + verified + committed.
+Test Layout/Flow, richer toasts, Not-Arranged App Visibility, Q2b
+(broken-action auto-scroll), and 2e (diagnostics cleanup) are all
+shipped + verified + committed.
 
 No sub-task is currently in flight. Next pick from `missions.md`. Candidates
 in rough priority order:
-1. `2e` — remove SCREEN_DEBUG / PLACE_DEBUG / PLACE_RESULT diagnostics
-2. Security Warning modal `open_file` filter bug (§2 Bugs)
-3. README accuracy pass (currently markets non-existent features)
-4. Batch 3 — Window Layout overlay animation
-5. Library & Settings responsive audit at 800–900px
-6. Dependency cleanup (4 unused deps)
-7. NFR Phases 4–6 (keyboard shortcuts, motion polish, perceived performance)
+1. Security Warning modal `open_file` filter bug (§2 Bugs)
+2. README accuracy pass (currently markets non-existent features)
+3. Batch 3 — Window Layout overlay animation
+4. Library & Settings responsive audit at 800–900px
+5. Dependency cleanup (4 unused deps)
+6. NFR Phases 4–6 (keyboard shortcuts, motion polish, perceived performance)
 
 ## §2 Sub-task State
 
@@ -63,7 +63,6 @@ in rough priority order:
 
 ### Not started
 - Batch 3 — overlay animation (deferred)
-- Cleanup — remove SCREEN_DEBUG / PLACE_DEBUG / PLACE_RESULT diagnostics from windowLayout.ts (keep OCCUPIED_BY)
 - Dependency cleanup (4 unused deps)
 - README accuracy pass
 - Security Warning modal `open_file` filter bug (see Bugs below)
@@ -88,20 +87,21 @@ Not-Arranged App Visibility verified manually on 2026-10-06:
 End-to-end parallel-path verification from a saved shortcut is still pending.
 
 ## §4 Open Questions
-- When to remove SCREEN_DEBUG / PLACE_DEBUG / PLACE_RESULT from `windowLayout.ts`?
-  Decision: after the next end-to-end verification. Keep OCCUPIED_BY permanently.
+- (none — the diagnostics-removal question is closed. `2e` shipped on
+  2026-10-05; `SCREEN_DEBUG`, `PLACE_DEBUG`, and `PLACE_RESULT` are gone.
+  `OCCUPIED_BY`, `PLACE_SKIP`, and `UNASSIGNED_CENTER` are kept.)
 
 ## §5 Uncommitted (mirrors git status)
 
 Working tree: CLEAN. All Session 6 follow-up work committed and pushed.
 
 Recent commits (most recent first):
-- `adb09a3` docs: fill journal entry for Q2b (Fix Paths auto-scroll)
-- `eb7ea9e` docs: record Q2b completion in handoff
-- `f795b32` feat: auto-scroll Builder to the broken action when Fix Paths is clicked
-- `c785388` docs: fill journal entry for unassigned-window centering
-- `270afb1` docs: sync boot files for unassigned-window centering
-- `9a813e2` fix(window-layout): center unassigned windows at native size
+- `24db73a` docs: mark 2e complete in missions
+- `3440424` docs: fill journal entry for windowLayout debug cleanup
+- `da558bb` chore: remove debug stdout dump from windowLayout
+- `6dd4baa` docs: bump handoff to post-Session-6 HEAD
+- `bb6fe9f` docs: mark Q2b complete in missions; add Security Warning bug mission
+- `4810142` checkpoint: close Session 6 (Q2b + Not-Arranged complete, tree clean)
 
 ### §5-PENDING (in flight — cleared on confirmation)
 - (nothing pending)
