@@ -59,3 +59,10 @@ Format:
 - **Files:** doc/journal.md
 - **Verified:** yes (routine documentation)
 - **Commit:** 4d2d8d9
+
+## 2026-10-06 — docs: fill journal stubs for DPI fix + Batch 2d commits
+- **Issue:** Two prior commits (0e6a10b DPI fix, 2143330 Batch 2d) had `(fill in)` stubs at the bottom of journal.md.
+- **Solution:** Filled both stubs with real issue/solution/files/verified content.
+- **Files:** doc/journal.md
+- **Verified:** yes (routine documentation)
+- **Commit:** 79289b0

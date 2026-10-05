@@ -1,13 +1,14 @@
 # LazyCow — Handoff
 
 Last updated: 2026-10-06
-Last commit: 89e4626
-Working tree: DIRTY (5 modified, 1 untracked — see §5)
+Last commit: 79289b0
+Working tree: CLEAN (journal.md may show a fresh stub — see §5)
 
 ## §1 Current Focus
 Shortcut-level Window Layout **runtime engine** (Batch 2).
-Engine is VERIFIED end-to-end: DPI fix working, Notepad snaps to left half
-on 1920×1080 @ 125%. Next: Batch 2c — wire engine into runShortcutActions.
+Engine is VERIFIED end-to-end on 1920×1080 @ 125%: DPI fix working, claim-the-zone
+behavior working, 4-app quad grid verified. Next: Batch 2c — wire engine into
+runShortcutActions so it fires automatically when a shortcut runs.
 
 ## §2 Sub-task State
 ### Done & verified
@@ -37,7 +38,7 @@ on 1920×1080 @ 125%. Next: Batch 2c — wire engine into runShortcutActions.
 
 ### Bugs / blockers
 - (none blocking — DPI bug resolved)
-- Compiled dist-electron/main.js has mangled registry paths in the windowLayout C# block (backslashes dropped by the build step). Source is correct; the built artifact is not. This is a build-step bug, not a source bug. Low priority.
+- Compiled dist-electron/main.js has mangled registry paths in the windowLayout C# block (backslashes dropped by the build step). Source is correct; the built artifact is not. Low priority.
 
 ## §3 Last Verified Test
 DevTools `window.electronAPI.arrangeWindowsShortcut({...})` for Notepad on 1920×1080 @ 125%:
@@ -47,23 +48,25 @@ DevTools `window.electronAPI.arrangeWindowsShortcut({...})` for Notepad on 1920�
 - Terminal: `PLACE_RESULT: MoveWindow returned True` ✅
 - Visual: Notepad fills left half top-to-bottom, edge-to-edge ✅
 
+4-app quad grid on 1920×1080 @ 125%:
+- Result: `[{tl: placed},{tr: placed},{bl: placed},{br: placed}]` ✅
+- Visual: four Notepads in four quadrants, all visible at once ✅
+
 ## §4 Open Questions
 - When to remove SCREEN_DEBUG / PLACE_DEBUG / PLACE_RESULT from windowLayout.ts?
   Decision: after Batch 2c is stable. Keep OCCUPIED_BY permanently.
-- Multi-placement test (2 Notepads left+right, 4 in quad) — not yet run.
 
 ## §5 Uncommitted (mirrors git status)
-- M electron/electron-env.d.ts
-- M electron/main.ts
-- M electron/preload.ts
-- M src/types/actions.ts
-- U electron/windowLayout.ts
-- M doc/journal.md (stub from last commit)
-
-(`../../rccomponentsActionSequence` stray file deleted.)
+- M doc/journal.md (stub from commit 79289b0, to be filled at next checkpoint)
 
 ### §5-PENDING (in flight — cleared on confirmation)
-(none — Batch 2d confirmed working. 4-app quad grid verified end-to-end.)
+- Batch 2c — wire Window Layout engine into shortcut execution:
+  - Extend ShortcutSchema in main.ts with windowLayout field
+  - Add buildPlacementsFromShortcut() helper in main.ts
+  - Call arrangeWindows() after action loop in runShortcutActions
+  - Pass windowLayout from Library.tsx in the runShortcut payload
+- Awaiting: user applies edits, restarts, tests by creating a real shortcut
+  with 2 launch_app actions + Window Layout enabled.
 
 ## §6 Bootstrap order
 1. electron/main.ts, electron/preload.ts, electron/electron-env.d.ts, electron/windowLayout.ts
