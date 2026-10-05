@@ -20,13 +20,18 @@ on 1920×1080 @ 125%. Next: Batch 2c — wire engine into runShortcutActions.
   - `Array.isArray` normalization for single-object JSON
   - System window blocklist (TextInputHost, ShellExperienceHost, SearchHost, etc.)
   - Zero-size window filter
+- **Batch 2d — claim-the-zone + bring-to-front.** 4-app quad grid verified end-to-end on 1920×1080 @ 125%.
+  - `ForceForeground` via AttachThreadInput + BringWindowToTop + SetForegroundWindow
+  - Occupancy check demoted to `Log-Zone-Occupancy` (diagnostic-only)
+  - `Place-Centered` removed
+  - C# `out _` discard replaced with named variable (PS 5.1 compiler compat)
 
 ### Done in code, NOT verified
 - (none — engine is verified)
 
 ### Not started
 - Batch 2c: call engine from runShortcutActions after action loop.
-- Pass windowLayout from Library.tsx → runShortcut payload.
+- Batch 2c.2: pass windowLayout from Library.tsx → runShortcut payload.
 - Batch 3: overlay animation (deferred).
 - Cleanup: remove SCREEN_DEBUG / PLACE_DEBUG / PLACE_RESULT diagnostics once 2c is stable (keep OCCUPIED_BY).
 
@@ -58,7 +63,7 @@ DevTools `window.electronAPI.arrangeWindowsShortcut({...})` for Notepad on 1920�
 (`../../rccomponentsActionSequence` stray file deleted.)
 
 ### §5-PENDING (in flight — cleared on confirmation)
-(none — DPI fix confirmed working)
+(none — Batch 2d confirmed working. 4-app quad grid verified end-to-end.)
 
 ## §6 Bootstrap order
 1. electron/main.ts, electron/preload.ts, electron/electron-env.d.ts, electron/windowLayout.ts

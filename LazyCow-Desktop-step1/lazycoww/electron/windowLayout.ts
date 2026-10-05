@@ -271,6 +271,10 @@ public class WinArranger {
     [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
     [StructLayout(LayoutKind.Sequential)]
@@ -388,6 +392,28 @@ public class WinArranger {
             return "auto";
         } catch { return "auto"; }
     }
+
+    // Reliably bring a window to the front, even when called from a
+    // background process. AttachThreadInput temporarily merges our input
+    // queue with the current foreground thread, which unlocks
+    // SetForegroundWindow for the duration of the call.
+    public static void ForceForeground(IntPtr hWnd) {
+        IntPtr fore = GetForegroundWindow();
+        uint forePid = 0;
+        uint foreThread = GetWindowThreadProcessId(fore, out forePid);
+        uint thisThread = GetCurrentThreadId();
+        bool attached = false;
+        try {
+            if (foreThread != thisThread) {
+                attached = AttachThreadInput(foreThread, thisThread, true);
+            }
+            ShowWindow(hWnd, 9);           // SW_RESTORE (un-minimize)
+            BringWindowToTop(hWnd);
+            SetForegroundWindow(hWnd);
+        } finally {
+            if (attached) AttachThreadInput(foreThread, thisThread, false);
+        }
+    }
 }
 "@
 Add-Type -TypeDefinition $code
@@ -419,9 +445,6 @@ while ([DateTime]::UtcNow -lt $deadline) {
 # ── Track which handles we've already placed ──
 $usedHandles = [System.Collections.Generic.HashSet[IntPtr]]::new()
 $results = @()
-$freeZones = [System.Collections.Generic.List[object]]::new()
-foreach ($p in $placements) { $freeZones.Add($p) | Out-Null }
-$placedZones = @{}
 
 function Find-Window($placement) {
     $proc = $placement.process
@@ -451,7 +474,9 @@ function Find-Window($placement) {
     return $null
 }
 
-function Is-Zone-Occupied($zoneX, $zoneY, $zoneW, $zoneH, $ourHandle) {
+# Diagnostic-only: logs who was in the way, but does NOT affect placement.
+# Batch 2d — we now claim the assigned zone unconditionally (Windows Snap behavior).
+function Log-Zone-Occupancy($zoneX, $zoneY, $zoneW, $zoneH, $ourHandle) {
     $targetX = $areaX + $zoneX * $areaW
     $targetY = $areaY + $zoneY * $areaH
     $targetW = $zoneW * $areaW
@@ -467,11 +492,9 @@ function Is-Zone-Occupied($zoneX, $zoneY, $zoneW, $zoneH, $ourHandle) {
         if ($ox2 -le $ox -or $oy2 -le $oy) { continue }
         $overlapArea = ($ox2 - $ox) * ($oy2 - $oy)
         if ($overlapArea / $zoneArea -gt 0.3) {
-            [Console]::Error.WriteLine("OCCUPIED_BY: proc=$($w.ProcessName) title='$($w.Title)' overlap=$([Math]::Round($overlapArea / $zoneArea * 100, 1))%")
-            return $true
+            [Console]::Error.WriteLine("OCCUPIED_BY (claimed anyway): proc=$($w.ProcessName) title='$($w.Title)' overlap=$([Math]::Round($overlapArea / $zoneArea * 100, 1))%")
         }
     }
-    return $false
 }
 
 function Place-Window($hwnd, $zoneX, $zoneY, $zoneW, $zoneH) {
@@ -480,26 +503,21 @@ function Place-Window($hwnd, $zoneX, $zoneY, $zoneW, $zoneH) {
     $targetW = [int]($zoneW * $areaW)
     $targetH = [int]($zoneH * $areaH)
     [Console]::Error.WriteLine("PLACE_DEBUG: hwnd=" + $hwnd + " target=" + $targetX + "," + $targetY + " " + $targetW + "x" + $targetH)
-    [WinArranger]::ShowWindow($hwnd, 9) | Out-Null
+    [WinArranger]::ShowWindow($hwnd, 9) | Out-Null   # SW_RESTORE — un-minimize
     Start-Sleep -Milliseconds 50
     $ok = [WinArranger]::MoveWindow($hwnd, $targetX, $targetY, $targetW, $targetH, $true)
     [Console]::Error.WriteLine("PLACE_RESULT: MoveWindow returned " + $ok)
+    # Batch 2d — claim the space. Bring to front, matching Windows Snap.
+    [WinArranger]::ForceForeground($hwnd)
 }
 
-function Place-Centered($hwnd) {
-    $w = [int]($areaW * 0.6)
-    $h = [int]($areaH * 0.6)
-    $x = $areaX + [int](($areaW - $w) / 2)
-    $y = $areaY + [int](($areaH - $h) / 2)
-    [WinArranger]::ShowWindow($hwnd, 9) | Out-Null
-    Start-Sleep -Milliseconds 50
-    [WinArranger]::MoveWindow($hwnd, $x, $y, $w, $h, $true) | Out-Null
-}
+# Place-Centered removed in Batch 2d — we claim the assigned zone instead.
 
 # ── Process each placement ──
+# Batch 2d — claim the assigned zone unconditionally (Windows Snap behavior).
+# No occupancy fallback, no shifting, no scavenging.
 for ($i = 0; $i -lt $placements.Count; $i++) {
     $p = $placements[$i]
-    $isLast = ($i -eq $placements.Count - 1)
     $w = Find-Window $p
 
     if (-not $w) {
@@ -513,45 +531,12 @@ for ($i = 0; $i -lt $placements.Count; $i++) {
     }
 
     $usedHandles.Add($w.Handle) | Out-Null
-    $occupied = Is-Zone-Occupied $p.x $p.y $p.w $p.h $w.Handle
-
-    if (-not $occupied) {
-        Place-Window $w.Handle $p.x $p.y $p.w $p.h
-        $placedZones[$p.zoneId] = $true
-        $results += [PSCustomObject]@{
-            zoneId = $p.zoneId
-            actionTitle = $p.title
-            status = 'placed'
-        }
-    } elseif ($isLast) {
-        # Last app: try to scavenge a free zone from placements that failed.
-        $free = $freeZones | Where-Object { -not $placedZones.ContainsKey($_.zoneId) -and $_.zoneId -ne $p.zoneId } | Select-Object -First 1
-        if ($free) {
-            Place-Window $w.Handle $free.x $free.y $free.w $free.h
-            $placedZones[$free.zoneId] = $true
-            $results += [PSCustomObject]@{
-                zoneId = $p.zoneId
-                actionTitle = $p.title
-                status = 'placed'
-                reason = "Moved to free zone '$($free.zoneLabel)'"
-            }
-        } else {
-            Place-Centered $w.Handle
-            $results += [PSCustomObject]@{
-                zoneId = $p.zoneId
-                actionTitle = $p.title
-                status = 'fallback_centered'
-                reason = 'All zones occupied'
-            }
-        }
-    } else {
-        Place-Centered $w.Handle
-        $results += [PSCustomObject]@{
-            zoneId = $p.zoneId
-            actionTitle = $p.title
-            status = 'fallback_centered'
-            reason = "Zone '$($p.zoneLabel)' occupied"
-        }
+    Log-Zone-Occupancy $p.x $p.y $p.w $p.h $w.Handle  # diagnostic only
+    Place-Window $w.Handle $p.x $p.y $p.w $p.h
+    $results += [PSCustomObject]@{
+        zoneId = $p.zoneId
+        actionTitle = $p.title
+        status = 'placed'
     }
 }
 

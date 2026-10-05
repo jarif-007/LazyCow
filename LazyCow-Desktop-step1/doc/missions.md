@@ -6,10 +6,11 @@ Status: IN PROGRESS
 - [x] 2b.1 — electron/windowLayout.ts created (uncommitted)
 - [x] 2b.2 — rewire IPC handler in main.ts to call arrangeWindows (uncommitted)
 - [x] 2b.DPI — DPI fix verified end-to-end (Notepad snaps to left half on 1920×1080 @ 125%)
-- [ ] 2b.Multi — test 2 placements (split 50/50) and 4 placements (quad)
+- [x] 2b.Multi — 4-app quad grid verified end-to-end (all placed, all visible)
+- [x] 2d — claim-the-zone behavior verified end-to-end
 - [ ] 2c — call engine from runShortcutActions after action loop
 - [ ] 2c.2 — pass windowLayout from Library.tsx → runShortcut payload
-- [ ] 2d — remove SCREEN_DEBUG / PLACE_DEBUG / PLACE_RESULT diagnostics (keep OCCUPIED_BY)
+- [ ] 2e — remove SCREEN_DEBUG / PLACE_DEBUG / PLACE_RESULT diagnostics (keep OCCUPIED_BY)
 - [ ] 3 — overlay animation (Option C, deferred)
 
 **Blocker:** (none — DPI bug resolved)

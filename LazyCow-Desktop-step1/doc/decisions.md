@@ -55,3 +55,17 @@ Append-only. Never delete. Each entry: date, decision, alternatives, why, conseq
 - **Why:** `ConvertTo-Json` collapses single-element arrays to a bare object, which broke `Array.isArray(parsed)` check.
 - **Consequence:** single-placement tests now work.
 - **Status:** active
+## 2026-10-06 — Claim the assigned zone (supersedes "No shift-to-nearest")
+- **Decision:** When a shortcut's Window Layout runs, every assigned app claims its zone unconditionally. Occupied zones are still claimed — the occupying window goes behind. Each placed window is brought to the front (`ForceForeground` via `AttachThreadInput` + `SetForegroundWindow`).
+- **Supersedes:** 2026-09-28 "No shift-to-nearest-zone on occupied slot" (the old center-small fallback).
+- **Alternatives:**
+  - Fallback to center-small (old decision) — rejected because it broke the user's mental model. Users expect the shortcut's apps to land where they assigned them, like Windows Snap does.
+  - Shift to nearest free zone — still rejected; silently violates design.
+  - Minimize other windows — rejected as too destructive for a hotkey. Users would lose track of windows they had open, and accidental hotkey presses would be jarring.
+- **Why:** A hotkey trigger is an explicit "I want my workspace now" action. Windows Snap itself overwrites whatever's in the target zone. Users already understand this pattern. Covering a window is trivially reversible (Alt+Tab / taskbar click); minimizing 30 windows is not.
+- **Consequence:**
+  - `windowLayout.ts` no longer falls back on occupancy — every placement is `placed` or `not_found`.
+  - `Is-Zone-Occupied` renamed to `Log-Zone-Occupancy` — diagnostic only, logged on stderr.
+  - `Place-Centered` removed.
+  - Each app is un-minimized (`SW_RESTORE`) and brought to front via `ForceForeground`.
+- **Status:** active
