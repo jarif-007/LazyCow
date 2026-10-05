@@ -1,0 +1,15 @@
+#!/bin/sh
+# Auto-append a stub entry to doc/journal.md on every commit.
+# The AI fills in Issue/Solution/Files/Verified during the next checkpoint.
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+DOC="$REPO_ROOT/LazyCow-Desktop-step1/doc/journal.md"
+SUBJ=$(git log -1 --pretty=%s)
+HASH=$(git log -1 --pretty=%h)
+DATE=$(date +%Y-%m-%d)
+
+if [ -f "$DOC" ]; then
+  printf "\n## %s — %s\n- **Issue:** (fill in)\n- **Solution:** (fill in)\n- **Files:** (fill in)\n- **Verified:** (fill in)\n- **Commit:** %s\n" \
+    "$DATE" "$SUBJ" "$HASH" >> "$DOC"
+  echo "📓 Stub appended to doc/journal.md — fill it in on the next checkpoint."
+fi
