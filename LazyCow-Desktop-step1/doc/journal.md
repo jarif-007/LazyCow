@@ -47,8 +47,15 @@ Format:
 - **Commit:** 0e6a10b
 
 ## 2026-10-06 — feat(window-layout): claim assigned zones + bring to front (Batch 2d)
-- **Issue:** (fill in)
-- **Solution:** (fill in)
-- **Files:** (fill in)
-- **Verified:** (fill in)
+- **Issue:** The old engine fell back to center-small when a zone was occupied, which broke the user's design (apps didn't land where assigned). Users expected Windows Snap behavior — apps overwrite whatever's in the target zone.
+- **Solution:** Removed occupancy blocking entirely. Every placement now claims its zone unconditionally. `Place-Window` calls `ShowWindow(SW_RESTORE)` (un-minimize) + `MoveWindow` + `ForceForeground` (via AttachThreadInput + BringWindowToTop + SetForegroundWindow). `Is-Zone-Occupied` renamed to `Log-Zone-Occupancy` (diagnostic-only). `Place-Centered` removed. Simplified main placement loop to `placed` or `not_found`.
+- **Files:** electron/windowLayout.ts
+- **Verified:** yes — 4-app quad grid on 1920×1080 @ 125%: all four Notepads fill their quadrants, all visible at once.
 - **Commit:** 2143330
+
+## 2026-10-06 — docs: fill journal stub for DPI fix commit
+- **Issue:** The post-commit hook stubbed commit 0e6a10b with `(fill in)` placeholders that needed real content.
+- **Solution:** Filled the stub with the DPI fix issue/solution/files/verified details.
+- **Files:** doc/journal.md
+- **Verified:** yes (routine documentation)
+- **Commit:** 4d2d8d9
