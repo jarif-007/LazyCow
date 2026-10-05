@@ -107,3 +107,10 @@ Format:
 - **Files:** src/pages/Library.tsx (brokenShortcuts Map, pre-flight loop, ShortcutCard render, LibraryProps signature); src/components/ShortcutCard.tsx (ShortcutCardProps interface, destructure, brokenActionId prop, Fix Paths button call); src/App.tsx (focusActionId state, handleEditShortcut, handleSaveSuccess, Builder render); src/pages/Builder.tsx (BuilderProps interface, destructure, focusActionId useEffect with retry loop)
 - **Verified:** yes — manual test: click Fix Paths on a shortcut with a broken action → Builder opens → auto-scrolls to the broken action → flashes it with the primary-colored ring.
 - **Commit:** f795b32
+
+## 2026-10-05 — chore: remove debug stdout dump from windowLayout
+- **Issue:** `windowLayout.ts` still logged the raw PowerShell stdout on every run — a "Temporary debug" line left over from the DPI and claim-the-zone debugging. The PowerShell template already had `SCREEN_DEBUG`, `PLACE_DEBUG`, and `PLACE_RESULT` removed in an earlier pass, but this JS-side `console.log` was missed.
+- **Solution:** Deleted the two-line `console.log('[windowLayout] raw stdout:', ...)` block in `arrangeWindows`. Kept `OCCUPIED_BY`, `PLACE_SKIP`, and `UNASSIGNED_CENTER` — they fire on specific events (not every placement) and remain useful for future debugging.
+- **Files:** electron/windowLayout.ts (arrangeWindows)
+- **Verified:** yes — tsc clean. A/B tested: with the log removed, an assigned action still snaps to its zone and an unassigned action still centers at native size, on top. Toast reports `2 of 2 apps placed`. Terminal no longer prints `[windowLayout] raw stdout:`.
+- **Commit:** da558bb
