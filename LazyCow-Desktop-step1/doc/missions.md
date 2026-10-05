@@ -15,7 +15,7 @@ Status: COMPLETE (Session 6)
 - [x] User-judge — Position dropdown's "Not arranged" option is the primary control
 - [x] Test Layout button + info (i) popover in WindowLayoutPanel
 - [x] Test Flow button in Builder footer
-- [ ] 2e — remove SCREEN_DEBUG / PLACE_DEBUG / PLACE_RESULT diagnostics (keep OCCUPIED_BY)
+- [x] 2e — remove SCREEN_DEBUG / PLACE_DEBUG / PLACE_RESULT diagnostics (kept OCCUPIED_BY, PLACE_SKIP, UNASSIGNED_CENTER)
 
 **Blocker:** (none)
 
