@@ -35,9 +35,23 @@ Append-only. Never delete. Each entry: date, decision, alternatives, why, conseq
 - **Consequence:** context.md §6 rule about -EncodedCommand has an explicit exception for windowLayout.ts.
 - **Status:** active
 
-## 2026-10-01 — DPI awareness approach (status: uncertain)
-- **Decision:** make PowerShell DPI-aware via `__COMPAT_LAYER=HIGHDPIAWARE` env var on execFile + `SetThreadDpiAwarenessContext` in script.
-- **Alternatives:** `SetProcessDPIAware()` in script (tried; no-op because PowerShell initialized GDI before the script runs).
-- **Why:** the DPI-unaware PowerShell computes zone rectangles in virtualized coordinates (1536×864 on 1920×1080 @ 125%), causing partial placement.
-- **Consequence:** Not yet verified. **Verify whether this fix actually landed in electron/windowLayout.ts on disk.**
-- **Status:** PENDING VERIFICATION
+## 2026-10-06 — DPI awareness fix VERIFIED
+- **Decision:** make PowerShell DPI-aware via `__COMPAT_LAYER=HIGHDPIAWARE` env var on execFile + `SetThreadDpiAwarenessContext(-4)` in script (PER_MONITOR_AWARE_V2). Plus `using System;` in the C# block for `IntPtr`.
+- **Alternatives:** `SetProcessDPIAware()` alone (tried; no-op because PowerShell initialized GDI before the script runs).
+- **Why:** the DPI-unaware PowerShell computed zone rectangles in virtualized coordinates (1536×864 on 1920×1080 @ 125%), causing partial placement.
+- **Consequence:** VERIFIED — Notepad now snaps to the full left half. `SCREEN_DEBUG` reports `1920x1050` (physical) instead of `1536x864` (virtualized).
+- **Status:** active
+
+## 2026-10-06 — Block system helper windows from occupancy detection
+- **Decision:** in `GetWindows`, blocklist known Windows system helper processes: `TextInputHost`, `ShellExperienceHost`, `SearchHost`, `StartMenuExperienceHost`, `LockApp`, `SystemSettings`, `SecurityHealthSystray`, `SystemSettingsBroker`, `Microsoft.YourPhone`. Also skip any window with `w <= 0 || h <= 0`.
+- **Alternatives:** detect invisible overlays by transparency — unreliable, no public API.
+- **Why:** `TextInputHost.exe` ("Windows Input Experience") covers the entire screen but is invisible to the user. The occupancy check flagged every zone as occupied, blocking placement.
+- **Consequence:** Occupancy now reflects what the user actually sees. Extend the blocklist if more false positives surface.
+- **Status:** active
+
+## 2026-10-06 — Normalize single-object PowerShell JSON to array
+- **Decision:** after `JSON.parse`, wrap bare objects in `[ ]` — `Array.isArray(parsed) ? parsed : [parsed]`.
+- **Alternatives:** force PowerShell to always emit `@(...)` — brittle with `ConvertTo-Json`.
+- **Why:** `ConvertTo-Json` collapses single-element arrays to a bare object, which broke `Array.isArray(parsed)` check.
+- **Consequence:** single-placement tests now work.
+- **Status:** active

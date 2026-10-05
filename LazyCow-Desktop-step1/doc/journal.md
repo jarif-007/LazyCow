@@ -26,8 +26,15 @@ Format:
 - **Commit:** 83d99a7
 
 ## 2026-10-06 — docs: fill in journal stub for boot system commit
-- **Issue:** (fill in)
-- **Solution:** (fill in)
-- **Files:** (fill in)
-- **Verified:** (fill in)
+- **Issue:** The previous commit's stub (83d99a7, boot system) had `(fill in)` placeholders that needed real content before they could be trusted as history.
+- **Solution:** Filled the stub with issue/solution/files/verified for the boot system work.
+- **Files:** doc/journal.md
+- **Verified:** yes (routine documentation)
 - **Commit:** bd40686
+
+## 2026-10-06 — docs: add boot system workflow reference for contributors
+- **Issue:** Teammates pulling the repo had no explanation of what each .md file in doc/ was for, or how the boot workflow operates. Needed a discoverable entry point.
+- **Solution:** Added doc_helper.txt as a contributor-facing reference: what each .md does, what keywords the AI responds to ("checkpoint", "commit"), batch-paste workflow for new sessions, and troubleshooting tips. Gitignored SESSION_BOOT.md and touchlog.txt (build artifacts). Polished boot.mjs with --lite flag and proactive-suggestion meta-prompt. Updated voice.md and missions.md accordingly.
+- **Files:** doc/doc_helper.txt (new); doc/.gitignore (new); doc/voice.md; doc/missions.md; lazycoww/scripts/boot.mjs
+- **Verified:** yes — boot.mjs generates the boot file successfully in both normal and --lite mode. Hook stubs on commit.
+- **Commit:** 89e4626

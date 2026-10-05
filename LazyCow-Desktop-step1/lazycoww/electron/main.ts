@@ -10,6 +10,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { z } from 'zod'
 import contextMenu from 'electron-context-menu'
+import { arrangeWindows, type Placement } from './windowLayout'
 
 // ── Native right-click context menu (copy / paste / cut / select all) ──
 // Without this, Electron shows nothing on right-click — which breaks a
@@ -240,6 +241,65 @@ ipcMain.handle('test-url', async (_event, url: string) => {
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+// ──────────────────────────────────────────────
+// WINDOW LAYOUT RUNTIME
+// ──────────────────────────────────────────────
+// Positions shortcut-launched windows into a fixed layout after the
+// action sequence completes. Placement rules are documented in
+// electron/windowLayout.ts.
+
+const WindowLayoutRequestSchema = z.object({
+  shortcutName: z.string().max(200),
+  layoutId: z.enum([
+    'split_50',
+    'split_67_33',
+    'split_33_67',
+    'thirds',
+    'main_left',
+    'main_right',
+    'quad',
+  ]),
+  placements: z
+    .array(
+      z.object({
+        zoneId: z.string().max(50),
+        zoneLabel: z.string().max(100),
+        zone: z.object({
+          x: z.number(),
+          y: z.number(),
+          w: z.number(),
+          h: z.number(),
+        }),
+        actionType: z.string().max(50),
+        actionValue: z.string().max(8192),
+        actionTitle: z.string().max(200),
+      })
+    )
+    .max(10),
+})
+
+ipcMain.handle('arrange-windows-shortcut', async (_event, rawRequest: unknown) => {
+  try {
+    const req = WindowLayoutRequestSchema.parse(rawRequest)
+    const placements: Placement[] = req.placements.map((p) => ({
+      zoneId: p.zoneId,
+      zoneLabel: p.zoneLabel,
+      zone: p.zone,
+      actionType: p.actionType,
+      actionValue: p.actionValue,
+      actionTitle: p.actionTitle,
+    }))
+
+    const results = await arrangeWindows(placements)
+    console.log('[arrange-windows-shortcut] results:', JSON.stringify(results, null, 2))
+    return results
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error('[arrange-windows-shortcut] failed:', message)
+    return []
   }
 })
 

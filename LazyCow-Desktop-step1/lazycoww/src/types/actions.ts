@@ -72,6 +72,29 @@ export interface WindowLayoutConfig {
   assignments: Record<string, string>;
 }
 
+/** Runtime payload sent from the renderer to the main process. */
+export interface WindowLayoutRequest {
+  shortcutName: string;
+  layoutId: LayoutId;
+  /** Ordered by zone position — the runtime processes them in this order. */
+  placements: Array<{
+    zoneId: string;
+    zoneLabel: string;
+    zone: { x: number; y: number; w: number; h: number };
+    actionType: string;
+    actionValue: string;
+    actionTitle: string;
+  }>;
+}
+
+/** Runtime result — one entry per attempted placement. */
+export interface WindowLayoutResult {
+  zoneId: string;
+  actionTitle: string;
+  status: 'placed' | 'fallback_centered' | 'not_found' | 'skipped';
+  reason?: string;
+}
+
 export const LAYOUTS: LayoutDefinition[] = [
   {
     id: 'split_50',

@@ -5,12 +5,14 @@ Status: IN PROGRESS
 - [x] 2a — IPC plumbing (committed d67bce4)
 - [x] 2b.1 — electron/windowLayout.ts created (uncommitted)
 - [x] 2b.2 — rewire IPC handler in main.ts to call arrangeWindows (uncommitted)
-- [ ] 2b.3 — call engine from runShortcutActions after action loop
-- [ ] 2c — pass windowLayout from Library.tsx → runShortcut payload
+- [x] 2b.DPI — DPI fix verified end-to-end (Notepad snaps to left half on 1920×1080 @ 125%)
+- [ ] 2b.Multi — test 2 placements (split 50/50) and 4 placements (quad)
+- [ ] 2c — call engine from runShortcutActions after action loop
+- [ ] 2c.2 — pass windowLayout from Library.tsx → runShortcut payload
+- [ ] 2d — remove SCREEN_DEBUG / PLACE_DEBUG / PLACE_RESULT diagnostics (keep OCCUPIED_BY)
 - [ ] 3 — overlay animation (Option C, deferred)
-- [ ] Verify DPI fix actually works on 1920×1080 @ 125%
 
-**Blocker:** Notepad moves but doesn't fill left half. Last observed result: `not_found → "Could not parse engine output"` before temp-file fix. Not retested after.
+**Blocker:** (none — DPI bug resolved)
 
 ## Mission: NFR Phases 4–6
 Status: NOT STARTED

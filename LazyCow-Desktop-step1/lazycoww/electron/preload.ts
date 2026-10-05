@@ -20,6 +20,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── URL test (opens in default browser, no shortcut executed) ──
   testUrl: (url: string) => ipcRenderer.invoke('test-url', url),
 
+  // ── Window Layout runtime (positions windows into a layout) ──
+  arrangeWindowsShortcut: (request: unknown) =>
+    ipcRenderer.invoke('arrange-windows-shortcut', request),
+
   // ── Cancellation ──
   cancelShortcut: (shortcutId: string) => ipcRenderer.invoke('cancel-shortcut', { shortcutId }),
 
