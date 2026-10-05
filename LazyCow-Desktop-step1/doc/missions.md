@@ -68,7 +68,44 @@ Status: NOT STARTED
 - [ ] `boot.mjs` compares `handoff.md`'s `Last commit:` line against `git rev-parse HEAD` with exact string equality. Any commit that touches `handoff.md` moves HEAD past the value in the file, so the warning fires on a clean tree.
 - [ ] Proposed fix: compare against `git log --format=%h -1 -- <non-doc paths>` — the last commit that touched code, not docs. Or allow a small delta before warning.
 - [ ] Alternative: accept the header as informational only, remove the check entirely.
-- [ ] Decision needed before implementing.
+- [ ] Decision needed before implementing — **preferred approach:** compare against the last non-doc commit hash. Cheap, no behavior change, ends the false-positive warnings.
+
+## Mission: Performance profile (hardware-adaptive timings)
+Status: NOT STARTED
+- [ ] Add `lazycow_settings.performanceProfile: 'fast' | 'balanced' | 'slow'` — user-facing dropdown in Settings → General.
+- [ ] Auto-detect on first run via PowerShell (`Get-PhysicalDisk` for SSD/HDD, `Win32_ComputerSystem` for RAM) — preselect a profile, user can override.
+- [ ] Extract every timing constant into a single `getTimings(profile)` module shared by main + renderer. No more scattered magic numbers.
+- [ ] Affects: Window Layout poll warmup + taper, layout budget base, launch_app waits, broken-path debounce, hotkey re-trigger guard, auto-scroll default, boot watchdog.
+- [ ] Test all three tiers (fast / balanced / slow).
+- [ ] **Rationale:** any feature that's unusable on low-end hardware is a failure of the app. The app must adapt to the user's machine, not the other way around.
+
+## Mission: Performance profile (hardware-adaptive timings)
+Status: NOT STARTED
+- [ ] Add `lazycow_settings.performanceProfile: 'fast' | 'balanced' | 'slow'` — user-facing dropdown in Settings → General.
+- [ ] Auto-detect on first run via PowerShell (`Get-PhysicalDisk` for SSD/HDD, `Win32_ComputerSystem` for RAM) — preselect a profile, user can override.
+- [ ] Extract every timing constant into a single `getTimings(profile)` module shared by main + renderer. No more scattered magic numbers.
+- [ ] Affects: Window Layout poll warmup + taper, layout budget base, launch_app waits, broken-path debounce, hotkey re-trigger guard, auto-scroll default, boot watchdog.
+- [ ] Test all three tiers (fast / balanced / slow).
+- [ ] **Rationale:** any feature that's unusable on low-end hardware is a failure of the app. The app must adapt to the user's machine, not the other way around.
+
+## Mission: Workspace Closer (v1 — window-handle tracking)
+Status: NOT STARTED (deferred)
+- [ ] Per-shortcut toggle in a new `WorkspaceCloserPanel.tsx` in Builder. Default OFF.
+- [ ] Open-phase watcher records HWNDs for windows appearing after each shortcut's `openedAt` (persistent enum, backoff interval, 60s cap).
+- [ ] Hotkey double-press within 4s triggers close mode. Single press runs open as usual and clears any stale state.
+- [ ] Close phase: `WM_CLOSE` to each tracked HWND. Decaying recheck at 1/3/6/12/20s. Never force-kill.
+- [ ] Toast with progress + "Undo" (10s). Library card shows "Reopen Workspace" while state exists.
+- [ ] Panel note explains that system-state actions (volume, brightness, DND, Night Light) don't participate — only windows get closed.
+- [ ] In-memory state; lost on restart. Documented limitation.
+- [ ] **Covers all window-producing actions:** `launch_app`, `open_folder`, `open_file`, `open_url`, and `run_script` if it opens a GUI window.
+- [ ] **Rationale:** the app must feel safe. Never close what it didn't open. Never force-close. Always provide Undo.
+- [ ] Slow-hardware hardening is part of v1, not v2 — see Performance profile mission.
+
+## Mission: Text expansion / snippet manager (deferred)
+Status: NOT STARTED (v2 roadmap — own session, own risk budget)
+- [ ] **Decision logged 2026-10-06:** deferred. The idea is high-value (60–80% less typing on repeated content) but requires a global low-level keyboard hook (`uiohook-napi`) — a native binary, ~5MB, with real AV/corporate-policy risk. Not compatible with the current "pure TS/JS + Electron" architecture without accepting that dependency permanently.
+- [ ] If revisited: ship the toggle first (pause/resume control), test in one app, one trigger type, one session. Expand only if v1 holds.
+- [ ] **Interim alternative:** hotkey-triggered snippet paste (uses only `globalShortcut` + clipboard + synthetic paste — no native hook). Gets ~70% of the value at ~5% of the risk. Not committed; just a note.
 
 ## Mission: Doc hygiene (recurring)
 Status: ONGOING
