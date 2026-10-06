@@ -32,17 +32,12 @@ Status: NOT STARTED (deferred)
 - [ ] Uses the user's chosen theme color
 
 ## Mission: Not-Arranged App Visibility (bug)
-Status: NOT STARTED
-- [ ] **Symptom:** Shortcut launches Notepad (assigned to Left) + Calculator (Not Arranged). Notepad snaps to Left and comes to front. Calculator launches but appears **behind** Notepad instead of on top.
-- [ ] **Cause:** The engine only calls `ForceForeground` on windows it *places*. Unassigned windows are never touched, so Windows decides their z-order — and it often leaves them behind.
-- [ ] **Fix (proposed — Option A from the diagnostic):** After the placement pass, walk every launch-type action and bring-to-front any window that wasn't placed. No resize, no centering. Just make every launched window visible, newest on top.
-- [ ] **Touches:**
-  - `main.ts` — `buildPlacementsFromShortcut` returns a placement for every launch-type action, with `isUnassigned: true` for ones with no zone.
-  - Zod schema — accepts the `isUnassigned` flag.
-  - `windowLayout.ts` — second pass in the PowerShell loop; `Bring-Unassigned-Window` finds the window and calls `ForceForeground` only (skip `MoveWindow`).
-  - Optional safety: if the window is fully off-screen, center it at native size.
-- [ ] **Open question for the user:** Should `open_folder` actions also be brought to front? A user might open a folder "just to have it available" without wanting their layout disturbed. Lean: yes, but needs a decision before coding.
-- [ ] **Source:** Diagnosed in a previous chat that hit its length limit (2026-10-06). Full reasoning preserved in the chat — key lines: "every app the shortcut launched should be visible", "the newest is on top because it was brought to front last".
+Status: COMPLETE
+- [x] **Symptom:** Shortcut launches Notepad (assigned to Left) + Calculator (Not Arranged). Notepad snaps to Left and comes to front. Calculator launches but appears **behind** Notepad instead of on top.
+- [x] **Cause:** The engine only called `ForceForeground` on windows it *placed*. Unassigned windows were never touched, so Windows decided their z-order — and it often left them behind.
+- [x] **Fix:** After the placement pass, every arrangeable action the user didn't assign is brought to front and centered on the primary monitor at its native size. No resize.
+- [x] **Touches:** `main.ts` (`buildPlacementsFromShortcut` emits `isUnassigned: true` for unassigned actions, Zod schema accepts the flag); `windowLayout.ts` (`Placement.isUnassigned`, `ScriptPlacement.isUnassigned`, new `Bring-Unassigned-Window` PowerShell helper, loop branches on the flag).
+- [x] **Verified:** manual test — Calculator (Not Arranged) appears centered on top of Notepad (assigned Left).
 
 ## Mission: NFR Phases 4–6
 Status: NOT STARTED

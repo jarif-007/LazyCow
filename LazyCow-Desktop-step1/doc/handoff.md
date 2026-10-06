@@ -2,15 +2,17 @@
 
 Last updated: 2026-10-06
 Last commit: babb9cc
-Working tree: DIRTY — 11 files modified (see §5)
+Working tree: DIRTY — 5 files modified (see §5)
 
 ## §1 Current Focus
-Session 6 just wrapped up a batch of Window Layout work — all uncommitted.
-The engine is complete: fires in parallel with the action loop, per-shortcut
-time budget, per-placement polling, user-judge via "Not arranged". Broken-path
-pre-flight, Test Layout, Test Flow, and the info (i) button are live.
-Next: commit the batch — docs first, then code (see §5) — then move to Q2b
-(auto-scroll + highlight the broken action in Builder when "Fix Paths" is clicked).
+Session 6 follow-up — Not-Arranged App Visibility fix, ready to commit.
+Unassigned launch-type actions now come to front and center on the primary
+monitor at native size (no resize). `Bring-Unassigned-Window` in
+`windowLayout.ts` handles the centering; `buildPlacementsFromShortcut` emits
+`isUnassigned: true` placements for every arrangeable action the user didn't
+zone. Verified manually with Notepad (assigned Left) + Calculator (Not Arranged).
+Next: commit the fix (code + docs), then move to Q2b — auto-scroll + highlight
+the broken action in Builder when "Fix Paths" is clicked.
 
 ## §2 Sub-task State
 
@@ -45,6 +47,7 @@ Next: commit the batch — docs first, then code (see §5) — then move to Q2b
 - **Info (i) button** with portal popover next to Test Layout.
 - **Richer completion toasts** — layout summary appended.
 - **`useActionValidation` re-runs on window focus** so inline errors refresh after the user fixes a path in Explorer.
+- **Not-Arranged App Visibility.** Unassigned launch-type actions are brought to front and centered on the primary monitor at their native size — no resize. `buildPlacementsFromShortcut` emits a placement for every arrangeable action, with `isUnassigned: true` for ones with no zone. New `Bring-Unassigned-Window` PowerShell helper does the centering + `ForceForeground`. Verified manually — Calculator (Not Arranged) now appears centered on top of Notepad (assigned Left).
 
 ### Done in code, NOT verified by user
 - Broken-path pre-flight (badge + Fix Paths + hotkey refusal)
@@ -72,7 +75,11 @@ Engine + claim-the-zone (Batch 2d) verified on 1920×1080 @ 125%:
 - Visual: Notepad fills left half, edge-to-edge ✅
 - 4-app quad: `[{tl: placed},{tr: placed},{bl: placed},{br: placed}]` ✅
 
-End-to-end via the shortcut path (`runShortcutActions` → parallel layout) not yet formally verified by the user.
+Not-Arranged App Visibility verified manually on 2026-10-06:
+- Notepad (assigned Left) + Calculator (Not Arranged) → Notepad snaps to Left, Calculator appears centered on top.
+- No resize applied to the unassigned window. Terminal confirms `UNASSIGNED_CENTER` fires.
+
+End-to-end parallel-path verification from a saved shortcut is still pending.
 
 ## §4 Open Questions
 - When to remove SCREEN_DEBUG / PLACE_DEBUG / PLACE_RESULT from `windowLayout.ts`?
@@ -80,25 +87,19 @@ End-to-end via the shortcut path (`runShortcutActions` → parallel layout) not 
 
 ## §5 Uncommitted (mirrors git status)
 
-11 files modified — code + docs together. Tree is dirty across multiple topics.
+5 files modified — code + docs together.
 
-**Code (9 files):**
-- `electron/main.ts` — parallel engine, budget, broken-path pre-flight, richer toasts
-- `electron/preload.ts` — small type cleanups
-- `electron/electron-env.d.ts` — `layoutResults` field on `onShortcutComplete`
-- `electron/windowLayout.ts` — per-placement polling
-- `src/components/ShortcutCard.tsx` — Broken Path badge, Fix Paths button, layout results line
-- `src/components/WindowLayout/WindowLayoutPanel.tsx` — Test Layout button, info (i) popover
-- `src/hooks/useActionValidation.ts` — re-runs on window focus
-- `src/pages/Builder.tsx` — Test Layout + Test Flow handlers
-- `src/pages/Library.tsx` — broken-path pre-flight loop, layoutResults state
+**Code (2 files):**
+- `electron/main.ts` — `buildPlacementsFromShortcut` emits `isUnassigned: true` placements, Zod schema accepts the flag
+- `electron/windowLayout.ts` — `Placement.isUnassigned`, `ScriptPlacement.isUnassigned`, new `Bring-Unassigned-Window` PowerShell helper, loop branches on the flag
 
-**Docs (2 files, appended to in this checkpoint):**
-- `doc/decisions.md` — six new entries appended
-- `doc/journal.md` — pending (fills at next checkpoint)
+**Docs (3 files):**
+- `doc/decisions.md` — new entry: "Unassigned windows are centered at native size, never resized"
+- `doc/handoff.md` — this fix recorded in §2
+- `doc/missions.md` — Not-Arranged App Visibility marked COMPLETE
 
 ### §5-PENDING (in flight — cleared on confirmation)
-- (nothing pending; the doc reconciliation IS the current in-flight work)
+- (nothing pending — the Not-Arranged fix is verified and ready to commit)
 
 ## §6 Bootstrap order
 1. electron/main.ts, electron/preload.ts, electron/electron-env.d.ts, electron/windowLayout.ts

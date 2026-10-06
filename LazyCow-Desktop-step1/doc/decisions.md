@@ -157,3 +157,17 @@ Append-only. Never delete. Each entry: date, decision, alternatives, why, conseq
   - Both generate synthetic shortcut IDs (`test-layout-<ts>` / `test-flow-<ts>`) so they never collide with saved shortcuts.
   - The info (i) button next to Test Layout documents the three-part story (what it does / when to use it / what to do if an app looks wrong).
 - **Status:** active
+
+## 2026-10-06 — Unassigned windows are centered at native size, never resized
+- **Decision:** When a shortcut's Window Layout is enabled, every arrangeable action the user did **not** assign to a zone is brought to front and centered on the primary monitor at its current size. No resize. No "last position" memory.
+- **Alternatives:**
+  - Leave unassigned windows where Windows put them (initial behavior). Rejected — the user saw Calculator launch *behind* Notepad, which felt broken.
+  - Bring to front only, no move (Option C from the diagnostic). Rejected — the user explicitly wanted centered, not last-position.
+  - Center at 60% × 60% (the old center-small fallback). Rejected — resizing a window the user didn't ask to arrange violates "don't touch it" and can glitch on UWP apps that refuse resizes.
+- **Why:** Users expect launched apps to be visible and predictable. "Centered at native size" is the least surprising behavior: it doesn't fight Windows' own positioning too much, doesn't resize, and lands every unassigned window in the same place.
+- **Consequence:**
+  - `buildPlacementsFromShortcut` emits a placement for every arrangeable action, with `isUnassigned: true` for unassigned ones.
+  - `Bring-Unassigned-Window` in `windowLayout.ts` computes the primary monitor's center and calls `MoveWindow` unconditionally, then `ForceForeground`. No off-screen check.
+  - Windows' "remember last position" behavior is intentionally overridden for unassigned apps in layout-enabled shortcuts. Apps that *are* assigned a zone still honor that assignment; only unassigned ones get centered.
+  - UWP apps that refuse `MoveWindow` may ignore this and Windows may snap them to its own default — usually still centered, so the user sees what they asked for anyway.
+- **Status:** active
