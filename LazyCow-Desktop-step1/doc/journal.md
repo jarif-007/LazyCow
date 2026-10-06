@@ -74,22 +74,23 @@ Format:
 - **Verified:** yes (routine documentation)
 - **Commit:** babb9cc
   
-## 2026-10-06 — docs: sync boot files with Session 6 (parallel engine, broken-path, Test Layout)
-- **Issue:** The boot files had drifted from the code after Session 6's Window Layout work — the engine was wired up and verified, but the docs still described it as "planned" and listed the center-small fallback (superseded by claim-the-zone).
-- **Solution:** Full reconciliation across the five boot files. context.md updated for the parallel engine, per-shortcut budget, per-placement polling, user-judge mechanism, broken-path pre-flight, Test Layout/Flow, info (i) button, and richer toasts. decisions.md appended six new entries. handoff.md rewritten. missions.md ticked Batch 2 to COMPLETE and added Q2b, Batch 3, README accuracy, and dependency cleanup missions.
-- **Files:** doc/context.md, doc/handoff.md, doc/missions.md, doc/decisions.md, doc/journal.md
-- **Verified:** routine documentation
-- **Commit:** <pending — filled at next checkpoint>
 ## 2026-10-06 — feat(window-layout): parallel engine, per-shortcut budget, per-placement polling
-- **Issue:** (fill in)
-- **Solution:** (fill in)
-- **Files:** (fill in)
-- **Verified:** (fill in)
+- **Issue:** The Window Layout engine ran once the action loop finished — so a shortcut with delays or a slow launch left the user staring at a small, unarranged window for seconds. The 800ms settle delay in `launch_app` added to that. And a single global poll loop meant one slow launch delayed every placement.
+- **Solution:** `runShortcutActions` now creates the `arrangeWindows` promise *before* iterating actions, so arrangement happens concurrently with the remaining launches. `estimateShortcutBudgetMs()` sizes the poll window per-shortcut (5s base + per-action estimates, capped at 60s). Per-placement polling — 15ms warmup for 800ms → taper to a 200ms maximum — snaps each window the moment it appears. `SETTLE_TIME` retired; `launch_app`'s 800ms wait removed. `windowLayout` field added to `ShortcutSchema` and threaded through `runShortcut` from the renderer.
+- **Files:** electron/main.ts (runShortcutActions, estimateShortcutBudgetMs, buildPlacementsFromShortcut, ShortcutSchema, completion toast); electron/windowLayout.ts (per-placement polling loop, Find-Window, Place-Window); electron/preload.ts; electron/electron-env.d.ts (layoutResults on onShortcutComplete)
+- **Verified:** tsc clean. Engine end-to-end (Batch 2d) previously verified on 1920×1080 @ 125% — 4-app quad grid all placed. The parallel-run + budget path still needs a full end-to-end test from a saved shortcut.
 - **Commit:** 8d10cc4
 
 ## 2026-10-06 — feat: broken-path pre-flight, Test Layout/Flow, richer completion toasts
-- **Issue:** (fill in)
-- **Solution:** (fill in)
-- **Files:** (fill in)
-- **Verified:** (fill in)
+- **Issue:** Shortcuts with missing files or folders failed mid-sequence with a generic log line, and the user got no warning before triggering one via hotkey. Test Layout and Test Flow had no UI surface at all. Completion toasts told you "done" or "failed" but nothing about layout placement.
+- **Solution:** Library.tsx now runs a debounced (250ms) broken-path check on mount, on shortcuts change, and on window focus, feeding a "Broken Path" badge and a "Fix Paths" redirect on `ShortcutCard`. `findFirstBrokenPath` in main.ts refuses hotkey-triggered runs with a native toast naming the first broken path. Test Layout button added to `WindowLayoutPanel` (launch-type actions only, applies layout, no side effects). Test Flow button added to Builder footer (full end-to-end with the same validation gate as Save). Info (i) popover added next to Test Layout with a three-section explanation including the user-judge advice. Completion toasts append a layout summary (`3 of 4 apps placed`) and per-action failure lists. `useActionValidation` re-runs on window focus so inline errors refresh after the user fixes a path in Explorer.
+- **Files:** src/pages/Library.tsx (broken-path pre-flight, layoutResults state); src/pages/Builder.tsx (handleTestLayout, handleTestFlow); src/components/ShortcutCard.tsx (Broken Path badge, Fix Paths button, layout results line); src/components/WindowLayout/WindowLayoutPanel.tsx (Test Layout button, info (i) popover); src/hooks/useActionValidation.ts (focus refresh)
+- **Verified:** tsc clean. The individual UI surfaces have not yet been formally tested by the user end-to-end.
 - **Commit:** 490588b
+
+## 2026-10-06 — docs: sync boot files with Session 6 (parallel engine, broken-path, Test Layout)
+- **Issue:** The boot files had drifted from the code after Session 6's Window Layout work — the engine was wired up and verified, but the docs still described it as "planned" and listed the center-small fallback (superseded by claim-the-zone).
+- **Solution:** Full reconciliation across the five boot files. `context.md` updated for the parallel engine, per-shortcut budget, per-placement polling, user-judge mechanism, broken-path pre-flight, Test Layout/Flow, info (i) button, and richer toasts — plus two new §6 rules (21: user-judge via unassignment, 22: UWP heuristic is fallback only). `decisions.md` appended six new entries. `handoff.md` rewritten with the current state. `missions.md` ticked Batch 2 to COMPLETE and added Q2b, Not-Arranged App Visibility, README accuracy, and dependency cleanup missions. `journal.md` — this entry.
+- **Files:** doc/context.md, doc/handoff.md, doc/missions.md, doc/decisions.md, doc/journal.md
+- **Verified:** routine documentation. tsc clean on the code tree at commit time.
+- **Commit:** 03e4d4f
