@@ -89,6 +89,12 @@ export interface Placement {
   actionType: string
   actionValue: string
   actionTitle: string
+  /**
+   * True when the user left this action unassigned. The engine brings the
+   * window to front without resizing it. See decisions.md — "User-judge
+   * replaces UWP heuristic as the primary mechanism".
+   */
+  isUnassigned?: boolean
 }
 
 export interface PlacementResult {
@@ -164,6 +170,7 @@ export async function arrangeWindows(
     actionType: p.actionType,
     actionValue: p.actionValue,
     title: p.actionTitle,
+    isUnassigned: p.isUnassigned === true,
   }))
 
   const script = buildScript(placementsForScript, engineTimeoutMs)
@@ -224,6 +231,7 @@ interface ScriptPlacement {
   actionType: string
   actionValue: string
   title: string
+  isUnassigned: boolean
 }
 
 function buildScript(placements: ScriptPlacement[], engineTimeoutMs: number): string {
@@ -603,6 +611,29 @@ function Place-Window($hwnd, $zoneX, $zoneY, $zoneW, $zoneH, $isUwp) {
 
 # Place-Centered removed in Batch 2d — we claim the assigned zone instead.
 
+# Bring an unassigned window to front, centered on the primary monitor
+# at its current size. We never resize — some apps (UWP especially) refuse
+# to be resized and Windows snaps them back, causing a visual glitch.
+# Centering at native size is deterministic: whatever Windows remembers
+# about the window's last position, it comes back to the middle of the
+# screen where the user expects to see it.
+function Bring-Unassigned-Window($hwnd) {
+    $cur = $null
+    foreach ($wi in $allWindows) {
+        if ($wi.Handle -eq $hwnd) { $cur = $wi; break }
+    }
+
+    if ($cur) {
+        $prim = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+        $cx = [int]($prim.Left + ($prim.Width - $cur.W) / 2)
+        $cy = [int]($prim.Top + ($prim.Height - $cur.H) / 2)
+        [Console]::Error.WriteLine("UNASSIGNED_CENTER: hwnd=" + $hwnd + " size=" + $cur.W + "x" + $cur.H + " — centering to " + $cx + "," + $cy)
+        [WinArranger]::MoveWindow($hwnd, $cx, $cy, $cur.W, $cur.H, $true) | Out-Null
+    }
+
+    [WinArranger]::ForceForeground($hwnd)
+}
+
 # ── Place each window as soon as it appears (Batch 2c-polish v2) ──
 # One global polling loop. Each iteration re-scans ALL not-yet-placed
 # placements. A slow or failed launch never blocks the others — apps that
@@ -620,18 +651,30 @@ while ([DateTime]::UtcNow -lt $deadline -and $placed.Count -lt $placements.Count
     $allWindows = [WinArranger]::GetWindows()
 
     foreach ($p in $placements) {
-        if ($placed.ContainsKey($p.zoneId)) { continue }
+        $key = if ($p.isUnassigned) { "unassigned-$($p.actionValue)" } else { $p.zoneId }
+        if ($placed.ContainsKey($key)) { continue }
         $w = Find-Window $p
         if (-not $w) { continue }
 
         $usedHandles.Add($w.Handle) | Out-Null
-        $placed[$p.zoneId] = $true
-        Log-Zone-Occupancy $p.x $p.y $p.w $p.h $w.Handle  # diagnostic only
-        Place-Window $w.Handle $p.x $p.y $p.w $p.h $w.IsUwp
-        $results += [PSCustomObject]@{
-            zoneId = $p.zoneId
-            actionTitle = $p.title
-            status = 'placed'
+        $placed[$key] = $true
+
+        if ($p.isUnassigned) {
+            Bring-Unassigned-Window $w.Handle
+            $results += [PSCustomObject]@{
+                zoneId = $p.zoneId
+                actionTitle = $p.title
+                status = 'placed'
+                reason = 'unassigned — brought to front'
+            }
+        } else {
+            Log-Zone-Occupancy $p.x $p.y $p.w $p.h $w.Handle  # diagnostic only
+            Place-Window $w.Handle $p.x $p.y $p.w $p.h $w.IsUwp
+            $results += [PSCustomObject]@{
+                zoneId = $p.zoneId
+                actionTitle = $p.title
+                status = 'placed'
+            }
         }
     }
 
@@ -647,7 +690,8 @@ while ([DateTime]::UtcNow -lt $deadline -and $placed.Count -lt $placements.Count
 
 # Anything never found becomes not_found
 foreach ($p in $placements) {
-    if (-not $placed.ContainsKey($p.zoneId)) {
+    $key = if ($p.isUnassigned) { "unassigned-$($p.actionValue)" } else { $p.zoneId }
+    if (-not $placed.ContainsKey($key)) {
         $results += [PSCustomObject]@{
             zoneId = $p.zoneId
             actionTitle = $p.title

@@ -276,6 +276,7 @@ const WindowLayoutRequestSchema = z.object({
         actionType: z.string().max(50),
         actionValue: z.string().max(8192),
         actionTitle: z.string().max(200),
+        isUnassigned: z.boolean().optional().default(false),
       })
     )
     .max(10),
@@ -291,6 +292,7 @@ ipcMain.handle('arrange-windows-shortcut', async (_event, rawRequest: unknown) =
       actionType: p.actionType,
       actionValue: p.actionValue,
       actionTitle: p.actionTitle,
+      isUnassigned: p.isUnassigned,
     }))
 
     const results = await arrangeWindows(placements)
@@ -439,7 +441,10 @@ function buildPlacementsFromShortcut(shortcut: ShortcutData): Placement[] {
   const zones = LAYOUT_ZONES[wl.layoutId as LayoutId]
   if (!zones) return []
 
+  const assignedActionIds = new Set(Object.values(wl.assignments))
   const placements: Placement[] = []
+
+  // 1. Assigned placements — placed into their zone.
   for (const [zoneId, actionId] of Object.entries(wl.assignments)) {
     const zone = zones.find((z) => z.id === zoneId)
     if (!zone) continue
@@ -453,8 +458,29 @@ function buildPlacementsFromShortcut(shortcut: ShortcutData): Placement[] {
       actionType: action.type,
       actionValue: action.value,
       actionTitle: action.title || action.type,
+      isUnassigned: false,
     })
   }
+
+  // 2. Unassigned placements — every arrangeable action the user did NOT
+  //    assign. The engine brings these windows to front without resizing
+  //    (centering only if they land fully off-screen). This is what makes
+  //    an unassigned Calculator visible on top of an arranged Notepad,
+  //    instead of hidden behind it.
+  for (const action of shortcut.actions) {
+    if (!ARRANGEABLE_TYPES.has(action.type)) continue
+    if (assignedActionIds.has(action.id)) continue
+    placements.push({
+      zoneId: 'unassigned',
+      zoneLabel: 'Not arranged',
+      zone: { x: 0, y: 0, w: 0, h: 0 },
+      actionType: action.type,
+      actionValue: action.value,
+      actionTitle: action.title || action.type,
+      isUnassigned: true,
+    })
+  }
+
   return placements
 }
 
