@@ -10,8 +10,9 @@ interface ShortcutCardProps {
   onDelete: (id: string) => void;
   onRun: (id: string) => void;
   onCancel: (id: string) => void;
-    onDuplicate: (s: SavedShortcut) => void;
+  onDuplicate: (s: SavedShortcut) => void;
   hasHotkeyConflict?: boolean;
+  hasBrokenPath?: boolean;
   isCancelling?: boolean;
   execution?: {
     status: 'idle' | 'running' | 'success' | 'error' | 'cancelled';
@@ -19,13 +20,19 @@ interface ShortcutCardProps {
     errors?: string[];
     durationMs?: number;
     cancelledAfter?: string;
+    layoutResults?: Array<{
+      zoneId: string;
+      actionTitle: string;
+      status: 'placed' | 'fallback_centered' | 'not_found' | 'skipped';
+      reason?: string;
+    }>;
   };
   customColorMode: boolean;
 }
 
 export const ShortcutCard: React.FC<ShortcutCardProps> = ({
   shortcut, shade, onShadeChange, onEditFlow, onRename, onDelete, onRun, onCancel, onDuplicate,
-   hasHotkeyConflict, isCancelling, execution, customColorMode,
+   hasHotkeyConflict, hasBrokenPath, isCancelling, execution, customColorMode,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const execState = execution || { status: 'idle' as const, currentStepIndex: -1, errors: [] as string[] };
@@ -112,6 +119,11 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
             <span className="material-symbols-outlined text-[13px]">warning</span> Conflict
           </span>
         )}
+        {hasBrokenPath && (
+          <span className="inline-flex items-center gap-1 bg-amber-500/15 text-amber-500 border border-amber-500/30 text-[11px] font-medium px-2 py-0.5 rounded-md" title="This shortcut references a file or folder that no longer exists. Open Edit Flow to fix.">
+            <span className="material-symbols-outlined text-[13px]">warning</span> Broken Path
+          </span>
+        )}
         {(() => {
           const wl = shortcut.windowLayout;
           if (!wl?.enabled || !wl.layoutId) return null;
@@ -144,24 +156,40 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
             return <span key={idx} className={`transition-all duration-300 ${cls}`}>{step}</span>;
           })}
           {execState.status === 'success' && (
-            <div className="mt-2 pt-2 border-t border-white/10 flex items-center justify-between text-green-400 font-semibold">
-              <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-[16px]">check_circle</span>
-                <span className="text-[12px] uppercase tracking-wider">Sequence Complete</span>
+            <>
+              <div className="mt-2 pt-2 border-t border-white/10 flex items-center justify-between text-green-400 font-semibold">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                  <span className="text-[12px] uppercase tracking-wider">Sequence Complete</span>
+                </div>
+                {execState.durationMs !== undefined && (
+                  <span className="text-[12px] font-normal opacity-80">
+                    {(execState.durationMs / 1000).toFixed(1)}s
+                  </span>
+                )}
               </div>
-              {execState.durationMs !== undefined && (
-                <span className="text-[12px] font-normal opacity-80">
-                  {(execState.durationMs / 1000).toFixed(1)}s
-                </span>
-              )}
-            </div>
+              {execState.layoutResults && execState.layoutResults.length > 0 && (() => {
+                const placed = execState.layoutResults.filter((r) => r.status === 'placed').length;
+                const total = execState.layoutResults.length;
+                const allPlaced = placed === total;
+                return (
+                  <div className={`mt-1 text-[11px] font-normal ${allPlaced ? 'text-green-400/80' : 'text-amber-400/90'}`}>
+                    {allPlaced
+                      ? `Window layout: ${placed} of ${total} apps placed`
+                      : `Window layout: ${placed} of ${total} placed — some apps couldn't be arranged`}
+                  </div>
+                );
+              })()}
+            </>
           )}
           {execState.status === 'error' && (
             <div className="mt-2 pt-2 border-t border-white/10 flex flex-col gap-1 text-red-400 font-semibold">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="material-symbols-outlined text-[16px]">error</span>
-                  <span className="text-[12px] uppercase tracking-wider">One or more steps failed</span>
+                  <span className="text-[12px] uppercase tracking-wider">
+                    {(execState.errors || []).length} of {shortcut.actions.length} step{(shortcut.actions.length !== 1) ? 's' : ''} failed
+                  </span>
                 </div>
                 {execState.durationMs !== undefined && (
                   <span className="text-[12px] font-normal opacity-80">
@@ -213,10 +241,32 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
         )
       ) : (
         <button
-          onClick={() => onRun(shortcut.id)}
-          className="w-full mt-auto bg-primary text-primary-foreground py-3 rounded-lg font-title-sm text-body-md opacity-90 group-hover:opacity-100 transition-opacity"
+          onClick={() => {
+            if (hasBrokenPath) {
+              // Clicking the broken-path button takes the user straight
+              // into the Builder to fix it, instead of being a dead end.
+              onEditFlow(shortcut);
+              return;
+            }
+            onRun(shortcut.id);
+          }}
+          title={hasBrokenPath ? 'Open Edit Flow to fix broken paths' : undefined}
+          className={`w-full mt-auto py-3 rounded-lg font-title-sm text-body-md transition-opacity flex items-center justify-center gap-2 ${
+            hasBrokenPath
+              ? 'bg-amber-500/90 text-white hover:bg-amber-500'
+              : 'bg-primary text-primary-foreground opacity-90 group-hover:opacity-100'
+          }`}
         >
-          {execState.status === 'success' ? 'Run Again' : execState.status === 'cancelled' ? 'Run Again' : 'Run Shortcut'}
+          {hasBrokenPath ? (
+            <>
+              <span className="material-symbols-outlined text-[18px]">build</span>
+              Fix Paths
+            </>
+          ) : execState.status === 'success' || execState.status === 'cancelled' ? (
+            'Run Again'
+          ) : (
+            'Run Shortcut'
+          )}
         </button>
       )}
     </div>

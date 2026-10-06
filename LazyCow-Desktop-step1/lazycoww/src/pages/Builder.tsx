@@ -41,6 +41,7 @@ export const Builder: React.FC<BuilderProps> = ({ editData, isActionSidebarAutoC
     assignments: {},
   });
   const [hotkeyError, setHotkeyError] = useState('');
+  const [testRunning, setTestRunning] = useState(false);
 
   const { recording: hotkeyRecording, recordedCombo, startRecording, stopRecording, clearCombo, setRecordedCombo } = useHotkeyRecorder('Win + Alt + D');
   const hotkey = recordedCombo || 'Win + Alt + D';
@@ -138,6 +139,98 @@ export const Builder: React.FC<BuilderProps> = ({ editData, isActionSidebarAutoC
   };
 
   const handleDescChange = (v: string) => { setShortcutDesc(v); setDescError(v.trim() === ''); };
+
+  // ── Test Layout ──
+  // Launches only the launch-type actions so the user can preview the
+  // window layout. Skips scripts, delays, and system actions.
+  const handleTestLayout = async () => {
+    const previewActions = sequence.filter((a) =>
+      a.type === 'launch_app' ||
+      a.type === 'open_file' ||
+      a.type === 'open_folder' ||
+      a.type === 'open_url'
+    );
+
+    if (previewActions.length === 0) return;
+
+    const previewShortcut: SavedShortcut = {
+      id: `test-layout-${Date.now()}`,
+      name: shortcutName.trim() || 'Test Layout',
+      description: shortcutDesc.trim() || 'Preview',
+      hotkey: '',
+      actions: previewActions,
+      createdAt: new Date().toISOString(),
+      windowLayout,
+    };
+
+    setTestRunning(true);
+    try {
+      await window.electronAPI?.runShortcut(previewShortcut);
+    } catch (err) {
+      console.error('[Test Layout] failed:', err);
+    } finally {
+      setTimeout(() => setTestRunning(false), 800);
+    }
+  };
+
+  // ── Test Flow ──
+  // Full end-to-end test: runs every validation check that Save would run,
+  // then executes the shortcut exactly like clicking "Run" in the Library.
+  // Side effects happen — scripts run, delays wait, system actions fire.
+  const handleTestFlow = async () => {
+    // Run the same gate as Save.
+    if (!isFormValid) {
+      setNameError(shortcutName.trim() === '');
+      setDescError(shortcutDesc.trim() === '');
+      return;
+    }
+    if (sequence.length === 0) {
+      window.alert('Please add at least one action to the sequence before testing.');
+      return;
+    }
+
+    const existing: SavedShortcut[] = JSON.parse(localStorage.getItem('lazycow-shortcuts') || '[]');
+
+    // Duplicate name check (same as Save)
+    const duplicateName = existing.find(
+      (s) => s.name.toLowerCase() === shortcutName.trim().toLowerCase() && s.id !== editData?.id
+    );
+    if (duplicateName) {
+      setNameError(true);
+      setNameErrorMessage(`A shortcut named "${duplicateName.name}" already exists.`);
+      return;
+    }
+
+    // Duplicate hotkey check (same as Save)
+    if (hotkey && hotkey !== 'Listening...') {
+      const duplicateHotkey = existing.find(
+        (s) => s.hotkey === hotkey && s.id !== editData?.id
+      );
+      if (duplicateHotkey) {
+        setHotkeyError(`Hotkey "${hotkey}" is already used by "${duplicateHotkey.name}".`);
+        return;
+      }
+    }
+
+    const testShortcut: SavedShortcut = {
+      id: `test-flow-${Date.now()}`,
+      name: shortcutName.trim(),
+      description: shortcutDesc.trim(),
+      hotkey,
+      actions: sequence,
+      createdAt: new Date().toISOString(),
+      windowLayout,
+    };
+
+    setTestRunning(true);
+    try {
+      await window.electronAPI?.runShortcut(testShortcut);
+    } catch (err) {
+      console.error('[Test Flow] failed:', err);
+    } finally {
+      setTimeout(() => setTestRunning(false), 800);
+    }
+  };
 
   const handleSave = () => {
     if (!isFormValid) { setNameError(shortcutName.trim() === ''); setDescError(shortcutDesc.trim() === ''); return; }
@@ -254,6 +347,8 @@ export const Builder: React.FC<BuilderProps> = ({ editData, isActionSidebarAutoC
             value={windowLayout}
             onChange={setWindowLayout}
             sequence={sequence}
+            onTestLayout={handleTestLayout}
+            testRunning={testRunning}
           />
           <ActionSequence
             sequence={sequence}
@@ -272,8 +367,24 @@ export const Builder: React.FC<BuilderProps> = ({ editData, isActionSidebarAutoC
               <span className="material-symbols-outlined text-[20px]">close</span> Discard
             </button>
             <div className="flex items-center gap-4">
-              <button className="px-6 py-2 border border-border rounded-full font-title-sm hover:bg-muted transition-colors flex items-center gap-2 text-foreground">
-                <span className="material-symbols-outlined text-[20px]">play_arrow</span> Test Flow
+              <button
+                onClick={handleTestFlow}
+                disabled={sequence.length === 0 || testRunning}
+                title={
+                  sequence.length === 0
+                    ? 'Add at least one action to test'
+                    : "Runs the shortcut exactly like Library's Run button — all actions, all delays, all side effects."
+                }
+                className={`px-6 py-2 border border-border rounded-full font-title-sm transition-colors flex items-center gap-2 ${
+                  sequence.length === 0 || testRunning
+                    ? 'text-muted-foreground opacity-50 cursor-not-allowed'
+                    : 'text-foreground hover:bg-muted'
+                }`}
+              >
+                <span className={`material-symbols-outlined text-[20px] ${testRunning ? 'animate-spin' : ''}`}>
+                  {testRunning ? 'progress_activity' : 'play_arrow'}
+                </span>
+                {testRunning ? 'Running...' : 'Test Flow'}
               </button>
               <button onClick={handleSave} disabled={!isFormValid}
                 className={`px-8 py-2.5 rounded-full font-title-sm shadow-md transition-all flex items-center gap-2 ${isFormValid ? 'bg-primary text-primary-foreground hover:opacity-90' : 'bg-muted text-muted-foreground opacity-50 cursor-not-allowed grayscale'}`}>

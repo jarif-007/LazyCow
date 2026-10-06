@@ -18,6 +18,10 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
   );
 
   const [failedHotkeys, setFailedHotkeys] = useState<Set<string>>(new Set());
+  // Set of shortcut IDs that have at least one broken path.
+  // Populated after Library mounts and on refresh; used to gate the Run
+  // button and show the amber "Broken Path" badge on the card.
+  const [brokenShortcuts, setBrokenShortcuts] = useState<Set<string>>(new Set());
 
   const refreshShortcuts = useCallback(() => {
     const loaded: SavedShortcut[] = JSON.parse(localStorage.getItem('lazycow-shortcuts') || '[]');
@@ -28,12 +32,79 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
 
   useEffect(() => { refreshShortcuts(); }, [refreshShortcuts]);
 
+  // ── Pre-flight path validation ──
+  // Runs a debounced check on every path-based action in every shortcut.
+  // Any shortcut with a broken path goes into `brokenShortcuts`, which:
+  //   - greys out the Run button on the card
+  //   - shows an amber "Broken Path" badge
+  //   - prevents the hotkey from firing it (handled in main.ts)
+  useEffect(() => {
+    let cancelled = false;
+
+    const run = async () => {
+      if (!window.electronAPI?.checkPathExists) return;
+
+      const broken = new Set<string>();
+
+      for (const sc of shortcuts) {
+        for (const a of sc.actions) {
+          // Only check path-based action types
+          if (
+            a.type !== 'launch_app' &&
+            a.type !== 'open_file' &&
+            a.type !== 'open_folder'
+          ) continue;
+
+          const val = (a.value || '').trim();
+          if (!val) {
+            // Empty value = broken (it was never set)
+            broken.add(sc.id);
+            break;
+          }
+
+          try {
+            const exists = await window.electronAPI.checkPathExists(val);
+            if (!exists) {
+              broken.add(sc.id);
+              break; // one broken path is enough to flag the whole shortcut
+            }
+          } catch {
+            // If the IPC itself errors, don't flag the shortcut
+          }
+        }
+      }
+
+      if (!cancelled) setBrokenShortcuts(broken);
+    };
+
+    // Small debounce so it doesn't hammer IPC on rapid state changes
+    const t = setTimeout(run, 250);
+
+    // Re-run validation whenever the window regains focus. If the user
+    // went to Explorer to fix a file and came back, this refreshes the
+    // badge without needing a page reload.
+    const onFocus = () => { void run(); };
+    window.addEventListener('focus', onFocus);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [shortcuts]);
+
   const [executions, setExecutions] = useState<Record<string, {
     status: 'idle' | 'running' | 'success' | 'error' | 'cancelled';
     currentStepIndex: number;
     errors?: string[];
     durationMs?: number;
     cancelledAfter?: string;
+    layoutResults?: Array<{
+      zoneId: string;
+      actionTitle: string;
+      status: 'placed' | 'fallback_centered' | 'not_found' | 'skipped';
+      reason?: string;
+    }>;
   }>>({});
   // Tracks which shortcuts have a cancel request in flight (button shows "Cancelling...")
   const [cancellingIds, setCancellingIds] = useState<Set<string>>(new Set());
@@ -46,8 +117,13 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
     if (resetTimers.current[card.id]) clearTimeout(resetTimers.current[card.id]);
     setExecutions((p) => ({ ...p, [card.id]: { status: 'running', currentStepIndex: 0 } }));
 
-    window.electronAPI?.runShortcut({ id: card.id, name: card.name, hotkey: card.hotkey, actions: card.actions })
-      .catch(() => { /* completion / errors also arrive via the shortcut-complete event */ });
+    window.electronAPI?.runShortcut({
+      id: card.id,
+      name: card.name,
+      hotkey: card.hotkey,
+      actions: card.actions,
+      windowLayout: card.windowLayout,
+    }).catch(() => { /* completion / errors also arrive via the shortcut-complete event */ });
   }, []);
 
   const runShortcut = (id: string) => {
@@ -88,7 +164,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
       setExecutions((p) => ({ ...p, [shortcutId]: { ...(p[shortcutId] || { status: 'running' }), status: 'running', currentStepIndex: stepIndex } }));
     });
 
-      const offComplete = window.electronAPI?.onShortcutComplete(({ shortcutId, results, durationMs, cancelled, lastActionTitle }) => {
+      const offComplete = window.electronAPI?.onShortcutComplete(({ shortcutId, results, durationMs, cancelled, lastActionTitle, layoutResults }) => {
       const failed = results.filter((r) => !r.success);
       const status: 'success' | 'error' | 'cancelled' = cancelled
         ? 'cancelled'
@@ -103,6 +179,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
           errors: failed.map((f) => f.error || 'Unknown error'),
           durationMs,
           cancelledAfter: cancelled ? (lastActionTitle || undefined) : undefined,
+          layoutResults: layoutResults || undefined,
         },
       }));
       // Drop the "cancelling" flag now that execution has stopped
@@ -245,6 +322,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
             onCancel={handleCancelShortcut}
             onDuplicate={handleDuplicate}
             hasHotkeyConflict={failedHotkeys.has(card.id)}
+            hasBrokenPath={brokenShortcuts.has(card.id)}
             isCancelling={cancellingIds.has(card.id)}
             execution={executions[card.id]}
             customColorMode={customColorMode}

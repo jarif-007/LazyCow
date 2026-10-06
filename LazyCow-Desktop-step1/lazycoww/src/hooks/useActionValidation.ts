@@ -192,9 +192,17 @@ export function useActionValidation(sequence: ActionItem[]): ValidationState {
     };
 
     const timeout = setTimeout(run, 600);
+
+    // Re-run validation when the window regains focus. If the user went
+    // to Explorer to fix a file path (or copy a file into place), this
+    // refreshes the inline error so it doesn't linger stale.
+    const onFocus = () => { void run(); };
+    window.addEventListener('focus', onFocus);
+
     return () => {
       cancelled = true;
       clearTimeout(timeout);
+      window.removeEventListener('focus', onFocus);
     };
   }, [sequence]);
 

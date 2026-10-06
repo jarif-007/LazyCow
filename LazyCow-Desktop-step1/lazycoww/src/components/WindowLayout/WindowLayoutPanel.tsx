@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import {
   ActionItem,
   isArrangeable,
@@ -12,13 +13,103 @@ interface WindowLayoutPanelProps {
   value: WindowLayoutConfig;
   onChange: (next: WindowLayoutConfig) => void;
   sequence: ActionItem[];
+  /** Called when the user clicks "Test Layout". Filtering is the caller's job. */
+  onTestLayout?: () => void;
+  /** True while the Test Layout run is in flight. */
+  testRunning?: boolean;
 }
 
 export const WindowLayoutPanel: React.FC<WindowLayoutPanelProps> = ({
   value,
   onChange,
   sequence,
+  onTestLayout,
+  testRunning = false,
 }) => {
+  const [showTestInfo, setShowTestInfo] = React.useState(false);
+  const [testInfoPosition, setTestInfoPosition] = React.useState<React.CSSProperties | null>(null);
+  const testInfoBtnRef = React.useRef<HTMLButtonElement>(null);
+  // Delayed-close timer — lets the cursor travel from the button to the
+  // popover without the tooltip flickering shut on the way.
+  const testInfoCloseTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const POPOVER_WIDTH = 320;        // w-80
+  const POPOVER_HEIGHT_ESTIMATE = 260;
+  const EDGE = 8;
+
+  /** Compute a clamped popover position that always stays inside the viewport. */
+  const computePopoverPosition = (): React.CSSProperties => {
+    const btn = testInfoBtnRef.current;
+    if (!btn) return {};
+    const r = btn.getBoundingClientRect();
+
+    // Horizontal: prefer aligning the popover's left with the button's left,
+    // but shift left if it would run off the right edge.
+    let left = r.left;
+    if (left + POPOVER_WIDTH > window.innerWidth - EDGE) {
+      left = window.innerWidth - POPOVER_WIDTH - EDGE;
+    }
+    if (left < EDGE) left = EDGE;
+
+    // Vertical: prefer below the button. Flip above if not enough room.
+    const spaceBelow = window.innerHeight - r.bottom - EDGE;
+    const spaceAbove = r.top - EDGE;
+
+    if (spaceBelow >= POPOVER_HEIGHT_ESTIMATE || spaceBelow >= spaceAbove) {
+      const top = Math.min(r.bottom + EDGE, window.innerHeight - EDGE - POPOVER_HEIGHT_ESTIMATE);
+      return { top, left, width: POPOVER_WIDTH };
+    }
+    // Flip above
+    const top = Math.max(EDGE, r.top - POPOVER_HEIGHT_ESTIMATE - EDGE);
+    return { top, left, width: POPOVER_WIDTH };
+  };
+
+  const openTestInfo = () => {
+    if (testInfoCloseTimerRef.current) {
+      clearTimeout(testInfoCloseTimerRef.current);
+      testInfoCloseTimerRef.current = null;
+    }
+    setTestInfoPosition(computePopoverPosition());
+    setShowTestInfo(true);
+  };
+
+  const scheduleCloseTestInfo = () => {
+    if (testInfoCloseTimerRef.current) clearTimeout(testInfoCloseTimerRef.current);
+    testInfoCloseTimerRef.current = setTimeout(() => {
+      setShowTestInfo(false);
+      testInfoCloseTimerRef.current = null;
+    }, 140);
+  };
+
+  // Clear any pending timer on unmount
+  React.useEffect(() => () => {
+    if (testInfoCloseTimerRef.current) clearTimeout(testInfoCloseTimerRef.current);
+  }, []);
+
+  // Keep the popover anchored while the user scrolls or resizes.
+  // If the anchor button moves out of view, close the popover entirely —
+  // matches native <select> behaviour.
+  React.useEffect(() => {
+    if (!showTestInfo) return;
+    const reposition = () => setTestInfoPosition(computePopoverPosition());
+    const onScroll = () => {
+      const btn = testInfoBtnRef.current;
+      if (!btn) return;
+      const r = btn.getBoundingClientRect();
+      if (r.bottom < 0 || r.top > window.innerHeight) {
+        setShowTestInfo(false);
+      } else {
+        reposition();
+      }
+    };
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', reposition);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showTestInfo]);
   const eligibleActions = sequence.filter(isArrangeable);
   const eligibleCount = eligibleActions.length;
   const canEnable = eligibleCount >= 2;
@@ -205,6 +296,68 @@ export const WindowLayoutPanel: React.FC<WindowLayoutPanelProps> = ({
               </span>
             )}
           </div>
+
+          {/* Test Layout — launches launch-type actions and previews the layout. */}
+          {onTestLayout && (
+            <div className="mt-4 pt-4 border-t border-border flex items-center gap-3">
+              <button
+                type="button"
+                onClick={onTestLayout}
+                disabled={testRunning || eligibleCount === 0}
+                className={`px-4 py-2 rounded-full font-title-sm text-body-sm flex items-center gap-2 transition-colors ${
+                  testRunning || eligibleCount === 0
+                    ? 'bg-muted text-muted-foreground cursor-not-allowed'
+                    : 'bg-primary text-primary-foreground hover:opacity-90'
+                }`}
+              >
+                <span className={`material-symbols-outlined text-[18px] ${testRunning ? 'animate-spin' : ''}`}>
+                  {testRunning ? 'progress_activity' : 'play_arrow'}
+                </span>
+                {testRunning ? 'Testing...' : 'Test Layout'}
+              </button>
+
+              <button
+                type="button"
+                ref={testInfoBtnRef}
+                onMouseEnter={openTestInfo}
+                onMouseLeave={scheduleCloseTestInfo}
+                onClick={() => {
+                  if (showTestInfo) {
+                    setShowTestInfo(false);
+                  } else {
+                    openTestInfo();
+                  }
+                }}
+                className="w-6 h-6 rounded-full text-muted-foreground hover:text-foreground flex items-center justify-center transition-colors"
+                aria-label="When should I use Test Layout?"
+              >
+                <span className="material-symbols-outlined text-[18px]">info</span>
+              </button>
+
+              {showTestInfo && createPortal(
+                <div
+                  className="fixed z-[500] p-4 bg-foreground text-background text-[12px] leading-relaxed rounded-xl shadow-2xl"
+                  style={testInfoPosition ?? { top: 0, left: 0, width: POPOVER_WIDTH }}
+                  onMouseEnter={openTestInfo}
+                  onMouseLeave={scheduleCloseTestInfo}
+                >
+                  <p className="font-semibold mb-2">Test Layout</p>
+                  <p className="opacity-90">
+                    Launches the launchable actions in this shortcut and applies the layout, so you can see how the arrangement looks before saving.
+                  </p>
+                  <p className="font-semibold mt-3 mb-1">Use it when</p>
+                  <p className="opacity-90">
+                    You've assigned apps to positions and want to confirm the result — especially before saving.
+                  </p>
+                  <p className="font-semibold mt-3 mb-1">If an app looks wrong</p>
+                  <p className="opacity-90">
+                    Some apps (Calculator, Settings, Photos) don't fill zones nicely. Remove their <strong>Position</strong> assignment — they'll still launch, just not force-arranged.
+                  </p>
+                </div>,
+                document.body
+              )}
+            </div>
+          )}
         </>
       )}
     </section>
