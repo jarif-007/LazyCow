@@ -17,7 +17,7 @@ CHANGED=$(git diff-tree --no-commit-id --name-only -r HEAD)
 
 # If EVERY changed file lives under doc/, skip the stub.
 # (grep -v filters out doc/ lines; if nothing remains, the commit was docs-only.)
-NON_DOC=$(printf '%s\n' "$CHANGED" | grep -v '^LazyCow-Desktop-step1/doc/' | grep -v '^doc/' || true)
+NON_DOC=$(printf '%s\n' "$CHANGED" | grep -v '^LazyCow-Desktop-step1/doc/' | grep -v '^doc/' | grep -v '^LazyCow-Desktop-step1/lazycoww/\.githooks/' || true)
 
 if [ -z "$NON_DOC" ] && [ -f "$DOC" ]; then
   echo "📓 Skipping journal stub — commit only touched doc/ (bookkeeping)."
