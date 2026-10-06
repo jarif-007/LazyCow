@@ -40,6 +40,7 @@ The application is structured to support:
   - Preload script uses `contextBridge.exposeInMainWorld('electronAPI', ...)` to expose only safe, named functions.
   - Multi-line PowerShell scripts execute via `-EncodedCommand` (Base64 UTF-16LE) to eliminate CLI parameter injection.
   - Dangerous actions (scripts, executables) triggered via global hotkeys prompt for confirmation before executing.
+  - The `index.html` CSP allows `script-src 'self' 'unsafe-inline'` — this is the intentional exception for the synchronous theme-bootstrap inline script (reads localStorage before the splash paints, preventing a flash of the wrong theme on cold start). Do not remove this exception without moving the bootstrap into a non-inline script first.
 * **Data Persistence:**
   - `lazycow-shortcuts` — Array of saved `SavedShortcut` objects.
   - `lazycow-blocked-triggers` — Blocked hotkey trigger strings.
@@ -128,7 +129,7 @@ LazyCow/
 - **System Theme & Accent Synchronization:** Reads the Windows accent via Electron's `systemPreferences.getAccentColor()`; streams updates to the renderer on window focus.
 - **Window Minimum Size:** BrowserWindow is clamped to `minWidth: 800`, `minHeight: 600` (Windows Fluent Design standard). Users cannot shrink the window below this.
 - **Execution Engine (`execute-shortcut`):**
-  - **`launch_app`**: Validates extension (`.exe` only — other executable types were removed for safety and clarity) and launches the executable via Electron's `shell.openPath`. Includes an 800ms settle delay so the progress UI matches the app actually appearing on screen.
+  - **`launch_app`**: Validates extension (`.exe` only — other executable types were removed for safety and clarity) and launches the executable via Electron's `shell.openPath`. No settle delay — the Window Layout engine polls for the newly-opened window directly (see the Window Layout bullet below), so waiting inside the action loop just adds latency.
   - **`open_url`**: Sanitizes HTTP/HTTPS URLs and opens via Electron's `shell.openExternal`.
   - **`open_folder` & `open_file`**: Verifies target path existence and opens with `shell.openPath`.
   - **`set_volume`**: Uses Windows CoreAudio (WASAPI) with exact COM vtable alignment:
@@ -147,12 +148,21 @@ LazyCow/
   - Cancellation is **always graceful** — the currently running action finishes normally, then remaining actions are skipped. This prevents killing unrelated windows of the same app.
   - IPC handler sets a flag in `cancelRequests: Set<string>`. The execution loop checks between actions and stops if the shortcut's ID is present.
   - No mode parameter (previously had Graceful/Immediate; Immediate was removed).
-- **OS Notifications:** Emits native Windows desktop toast notifications (`new Notification(...)`) upon shortcut success or failure with elapsed execution duration (e.g. `Completed in 1.4s`).
+- **OS Notifications:** Emits native Windows desktop toast notifications (`new Notification(...)`) on completion with:
+  - Elapsed execution duration (e.g. `Completed in 1.4s`).
+  - A **layout summary** appended when the shortcut has a Window Layout enabled — `Window layout: 3 of 4 apps placed. Couldn't arrange: VS Code.` This is the only feedback the user sees when the placed windows cover the LazyCow window itself.
+  - On failure: a per-action failure list rather than a generic "some steps failed".
+- **Broken-path pre-flight (`findFirstBrokenPath`):** Before a hotkey-triggered run, verifies every path-based action (`launch_app`, `open_file`, `open_folder`). If any path is missing, a native Windows toast names the first broken action and the shortcut refuses to run. The renderer never sees the trigger.
 - **Path Dialogs (`select-path`):** Invokes `dialog.showOpenDialog` for native application (`.exe`), directory, or file selection.
 - **Path Checking (`check-path-exists`):** Verifies file/directory existence using `fs.existsSync`.
 - **URL Test (`test-url`):** Opens a URL in the default browser for a quick preview without executing a shortcut. Used by the **Test** button on `open_url` action cards. Format-checks the URL (scheme must be http/https, host must be present) before opening.
 - **Global Hotkey Registration:** Listens for registered shortcut keys, checks for dangerous actions, emits `hotkey-needs-confirm` or runs shortcut, and notifies on registration failures via `onHotkeyRegisterFailed`.
-- **Window Layout (planned):** A new runtime engine will position shortcut-launched windows into one of 7 predefined layouts (6 matching Windows Snap Layouts + quad grid). Runs after all `launch_app` / `open_folder` / `open_file` / `open_url` actions have fired. Uses the same `EnumWindows`-based polling approach as the removed `arrange_windows` action, but driven by shortcut-level config rather than an inline action. Conflict rules: free zone → place; occupied zone → center-small fallback (60%); last app may scavenge leftover free zones from earlier placements. **Not yet implemented — this is Batch 2.**
+- **Window Layout runtime:** Positions shortcut-launched windows into one of 7 predefined layouts (6 matching Windows Snap Layouts + quad grid). Shortcut-level config (`windowLayout` on `SavedShortcut`) drives it; the engine never runs as a standalone action.
+  - **Fires in parallel with the action loop.** `runShortcutActions` creates the `arrangeWindows` promise *before* iterating actions, so arrangement happens concurrently with the remaining launches. `estimateShortcutBudgetMs()` sizes the poll window per-shortcut (5s base + per-action estimates, capped at 60s) so shortcuts with long `delay` actions don't time out.
+  - **Per-placement polling.** Each assigned app is polled independently — 15ms warmup for 800ms, then taper to a 200ms maximum. A window is snapped the moment it appears.
+  - **Claim-the-zone.** Every placement is `placed` or `not_found`. No fallback, no shifting, no occupancy check (see decisions.md 2026-10-06).
+  - **User-judge via unassignment.** An action assigned to no zone still launches with the shortcut, but the layout engine skips it. This is the primary control for "this app shouldn't be auto-arranged" — implemented via the Position dropdown's "Not arranged" option.
+  - **UWP fallback.** UWP windows detected via `IsImmersiveProcess` are centered at native size instead of stretched. This handles the "user assigned Calculator by mistake" case gracefully — the window stays usable instead of being visually stretched.
 
 #### 2. `electron/preload.ts` & `electron/electron-env.d.ts`
 - Securely exposes `window.electronAPI`:
@@ -199,17 +209,27 @@ LazyCow/
 - **`ActionSequence/ActionFlowPreview.tsx`:** Compact wrap-aware icon strip summarising the sequence. Icons are draggable via `@dnd-kit`'s `rectSortingStrategy` for a fast reorder that doesn't require touching the cards. Clicking an icon scrolls to and flashes its card. Hovering shows a tooltip with the action's title + value (arrange-style values are humanized). Wrap layout means all actions stay visible — no horizontal scroll.
 - **`ActionSequence/ConfirmDeleteModal.tsx`:** Rendered via `createPortal(..., document.body)` so parent `transform`s don't trap it. Summarises the actions being removed by title + count, has a ✗ close button (works without Esc), supports Esc to cancel and Enter to confirm, and includes a "don't show these hints again" checkbox persisted to `lazycow-hide-modal-hints`.
 - **`WindowLayout/WindowLayoutPanel.tsx`:** Shortcut-level panel above the action sequence. Toggle enables arrangement; 7 layout thumbnails (Windows' 6 + quad) are filtered by the eligible action count. Live preview updates as users assign positions from the cards. Shows amber warnings when a layout becomes invalid (too few eligible apps) or when extra apps won't be arranged.
+  - **Test Layout** button runs only the launch-type actions in the sequence + applies the layout, so the user can preview the arrangement before saving. Fully arrangeable-action-scoped; the `onTestLayout` handler lives in `Builder.tsx`.
+  - **Info (i) button** with a portal-rendered hover/click popover. Contains three sections: (1) what Test Layout does, (2) *"Use it when"* — the user has assigned positions and wants to confirm before saving, (3) *"If an app looks wrong"* — *"Some apps (Calculator, Settings, Photos) don't fill zones nicely. Remove their Position assignment — they'll still launch, just not force-arranged."* Section 3 is the user-facing statement of the user-judge mechanism.
+  - Popover uses a 140ms delayed-close timer so the cursor can travel from the button to the popover without flicker, repositions on scroll/resize, and hides itself if the anchor scrolls out of view.
 - **`WindowLayout/LayoutThumbnail.tsx`:** Pure visual mockup of a layout with each zone drawn by percentage. Displays assigned action icons (colored), empty-zone labels, and an optional ✗ clear button. Supports drag-to-swap between zones.
-- **`WindowLayout/PositionDropdown.tsx`:** Custom dropdown rendered via `createPortal` for escaping card overflow. Positioned with fixed coordinates computed from the trigger button. Auto-flips above/below based on viewport space and closes on scroll, outside click, or Escape. Disabled zones show "(taken by <Action Title>)"
+- **`WindowLayout/PositionDropdown.tsx`:** Custom dropdown rendered via `createPortal` for escaping card overflow. Positioned with fixed coordinates computed from the trigger button. Auto-flips above/below based on viewport space and closes on scroll, outside click, or Escape. Disabled zones show "(taken by <Action Title>)". Top option is **"Not arranged"** — selecting it removes the action from its current zone (`onChange('')`), which is the user-judge mechanism for "this app shouldn't be auto-arranged."
 - **`Builder.tsx`:** Shortcut builder with real-time name uniqueness checking, hotkey conflict detection, modifier-first validation, unsaved changes safety modal, and full responsive layout (see Section 2's Responsive Layout subsection). Uses the shared `useActionValidation` hook to **disable Save** when any action is invalid or unsupported, showing *"Fix N invalid action(s) before saving."* Restores the shortcut's hotkey when opening for edit.
-- **`ShortcutCard.tsx`:** Dashboard shortcut card with 3-dot dropdown menu (Edit Flow, Duplicate, Rename, Delete), hotkey conflict warning badge, **Window Layout badge** (shows layout label + assigned zone count via tooltip when `windowLayout.enabled`), elapsed duration analytics (`Sequence Complete • 1.4s`), live step execution log, amber **"Cancelling..."** button state with spinner when cancel is requested, and **"Cancelled after: <action title>"** state display. Menu is disabled while the shortcut is running. Uses solid `bg-background/95` and `bg-background/70` for the shade picker and action-icon pills — **no `backdrop-blur`** (removed for performance).
+  - **Test Flow** button in the footer next to Save. Runs the same validation gate as Save, then executes the entire sequence end-to-end (scripts, delays, system actions, layout) via the real `runShortcut` IPC with a synthetic `test-flow-<ts>` id. Purpose: verify the whole shortcut without saving it first.
+  - **Test Layout** handler passed down to `WindowLayoutPanel` (see below). Filters the sequence to arrangeable actions only and runs them via `runShortcut` — no scripts, no delays, no side effects beyond launching apps.
+- **`ShortcutCard.tsx`:** Dashboard shortcut card with 3-dot dropdown menu (Edit Flow, Duplicate, Rename, Delete), hotkey conflict warning badge, **Window Layout badge** (shows layout label + assigned zone count via tooltip when `windowLayout.enabled`), **Broken Path badge** (amber; shows when the shortcut references a missing file/folder), elapsed duration analytics (`Sequence Complete • 1.4s`), live step execution log, amber **"Cancelling..."** button state with spinner when cancel is requested, and **"Cancelled after: <action title>"** state display.
+  - When `hasBrokenPath` is true, the Run button becomes a **"Fix Paths"** button that routes the user to the Builder (`onEditFlow(shortcut)`) instead of running.
+  - Success log appends a **"Window layout: N of M apps placed"** line when the shortcut has a layout enabled.
+  - Menu is disabled while the shortcut is running. Uses solid `bg-background/95` and `bg-background/70` for the shade picker and action-icon pills — **no `backdrop-blur`** (removed for performance).
 - **`Library.tsx`:** Shortcut card dashboard with live step progress ring, execution log, search filter, duplicate workflow generator (`(Copy)` naming & hotkey decoupling), inline rename modal, dropdown management, and cancel handler that forwards to `cancelShortcut`.
+  - **Broken-path pre-flight:** On mount and whenever `shortcuts` changes, a debounced (250ms) loop calls `checkPathExists` for every path-based action. Any shortcut with at least one missing file/folder or an empty path value goes into `brokenShortcuts`, which greys the Run button and shows the amber badge on the card.
+  - **Re-runs on window focus:** Returning from Explorer after fixing a path refreshes the badge without a page reload.
 - **`Settings.tsx` & Subcomponents:** Manages appearance, theme switching, startup launch, system tray minimization, execution notifications, blocked triggers, and factory reset.
 
 ### D. Hooks (`src/hooks/`)
 
 - **`useHotkeyRecorder.ts`:** Captures global key combinations for the trigger field. Uses capture-phase `keydown` so all keystrokes are swallowed during recording. Returns `{ recording, recordedCombo, startRecording, stopRecording, clearCombo, setRecordedCombo }`.
-- **`useActionValidation.ts`:** Single source of truth for action-sequence validation. Runs synchronous checks (empty values, format, numeric range) immediately and debounced path-existence checks (~600ms) via `checkPathExists`. Flags actions whose `type` is not in the current `actionCatalog` as **unsupported**. Returns `{ errors, warnings, unsupportedIds, isValid }` (`warnings` is reserved for future offline/soft-failure states but currently always empty). Consumed by both `ActionSequence.tsx` (inline errors) and `Builder.tsx` (Save gating). **URL validation rules (format-only, no TLD whitelist, no DNS):** empty → error; schemeless with dot + chars after → pending (blur will auto-prefix); IPv4-shaped → strict 4-segment range check; IPv6 requires brackets; malformed → generic error.
+- **`useActionValidation.ts`:** Single source of truth for action-sequence validation. Runs synchronous checks (empty values, format, numeric range) immediately and debounced path-existence checks (~600ms) via `checkPathExists`. Flags actions whose `type` is not in the current `actionCatalog` as **unsupported**. Returns `{ errors, warnings, unsupportedIds, isValid }` (`warnings` is reserved for future offline/soft-failure states but currently always empty). Consumed by both `ActionSequence.tsx` (inline errors) and `Builder.tsx` (Save gating). **Re-runs on window focus** so an inline error refreshes after the user fixes a path in Explorer. **URL validation rules (format-only, no TLD whitelist, no DNS):** empty → error; schemeless with dot + chars after → pending (blur will auto-prefix); IPv4-shaped → strict 4-segment range check; IPv6 requires brackets; malformed → generic error.
 - **`lazycow_settings.autoScrollSpeed`** — New number field (2–20) controlling auto-scroll pacing during card drag and drag-select. Managed by a slider + Slow/Medium/Fast presets in Settings → General.
 - **`lazycow-hide-modal-hints`** — Boolean. When true, the confirm-delete modal hides the small `Esc` / `Enter` keyboard badges on its buttons. Reset automatically by the Danger Zone's factory reset (which calls `localStorage.clear()`).
 - **`lazycow-custom-tlds`** — **Removed.** The custom TLD manager was deleted; TLD validation is no longer used. Any stale value is silently ignored.
@@ -269,6 +289,8 @@ npm run build
 18. **Window Layout Is Shortcut-Level, Not an Action:** Arrangement is a property of the shortcut (`windowLayout` field), applied after all eligible actions fire. Do not reintroduce a standalone `arrange_windows` action — it created ordering ambiguity (user must remember to place it last) and complicated the UI (assignments needed to see the full sequence, which an action card cannot do).
 19. **Selection-Mode Auto-Scroll Uses a Single RAF Loop:** Drag-select toggling, auto-scroll pacing, and edge-zone detection all run in one requestAnimationFrame loop inside `ActionSequence.tsx`, keyed off the physical pointer button state (`e.buttons & 1`). Do not split these into separate listeners — the earlier split implementation raced with `pointermove` handlers and caused ghost selections after button release.
 20. **Floating Dropdowns Use Portals:** Any custom dropdown or popover that must escape an overflow-clipped parent (like the Position dropdown inside a card) renders via `createPortal(..., document.body)` with fixed coordinates from `getBoundingClientRect()`. Same reasoning as rule 9 — a parent `transform` or `overflow: hidden` traps absolutely-positioned children.
+21. **User-Judge via Unassignment:** An action not assigned to any zone still launches with the shortcut, but the layout engine skips it. This is the primary mechanism for "this app shouldn't be auto-arranged" — do not add a separate per-action `skipLayout` flag, and do not reintroduce a separate opt-out UI. `buildPlacementsFromShortcut` already filters on `assignments`; that's the whole control surface.
+22. **UWP Heuristic is a Fallback Only:** `Place-Window` centers UWP windows (`IsImmersiveProcess`) at native size instead of stretching them. This runs *after* user assignment — if the user didn't assign a UWP app to a zone, the heuristic never fires (the app is skipped entirely). Do not remove the heuristic — it's the graceful default for users who assign UWP apps by mistake. But do not treat it as the primary arrangement strategy either; user-judge (rule 21) is.
 
 ---
 
@@ -276,7 +298,11 @@ npm run build
 
 ### A. Fully Implemented & Verified Features
 * **10 Action Types:** Launch App (`.exe` only), Open URL, Open Folder, Open File, Set Volume (WASAPI COM), Toggle DND (Focus Assist), Toggle Night Light, Set Brightness (WMI/CIM/DDC-CI), Wait / Delay (0.25s–10s slider), Run Terminal Script.
-* **Shortcut-Level Window Layout (UI complete, runtime planned):** A toggle in the Builder enables arrangement. Users pick from 7 layouts (Windows' 6 + quad), assign eligible actions to zones via per-card Position dropdowns, and see a live preview in the layout thumbnail. The runtime engine that actually positions windows at execution time is Batch 2 — currently only the config + badge are wired.
+* **Shortcut-Level Window Layout (complete):** A toggle in the Builder enables arrangement. Users pick from 7 layouts (Windows' 6 + quad), assign eligible actions to zones via per-card Position dropdowns, and see a live preview in the layout thumbnail. The engine fires in parallel with the action loop, uses a per-shortcut time budget, polls each placement independently, claims the assigned zone unconditionally, and reports layout results in the completion toast and on the card's success log. Unassigned actions still launch — they're just not arranged (user-judge mechanism). UWP apps assigned by mistake are centered at native size rather than stretched.
+* **Broken Path Pre-flight:** `Library.tsx` scans all path-based actions on mount, on `shortcuts` change, and on window focus. Any shortcut with a missing file/folder gets a "Broken Path" badge and its Run button becomes "Fix Paths" (routes to Builder). Hotkey-triggered runs are refused with a native toast naming the first broken action.
+* **Test Layout Button:** In the Window Layout panel. Runs only the launch-type actions (no scripts, no delays) and applies the layout — fast preview without side effects.
+* **Test Flow Button:** In the Builder footer. Runs the entire sequence end-to-end with the same validation gate as Save.
+* **Richer Completion Toasts:** OS notifications now append a layout summary (`3 of 4 apps placed`) and a per-action failure list when steps fail.
 * **Selection Mode + Multi-Delete:** Toggle via header `Select` button, or long-press (~400ms) on any card. Continuous drag-select toggles cards under the cursor. `Select All` / `Clear` / `Done` in the header; a red `Delete` opens a count-summarising confirmation modal (Esc / Enter / ✗ / Cancel all supported). `lazycow-hide-modal-hints` can suppress the small keyboard-hint badges.
 * **Flow Preview Reorder:** Wrap-aware icon strip above the cards. Icons are draggable (dnd-kit `rectSortingStrategy`), click-to-jump to the corresponding card, colored, with rich hover tooltips. Reordering works without touching the cards.
 * **Auto-Scroll During Drag:** Card drag and drag-select auto-scroll at the container edges with a speed curve the user controls via Settings → General → "Auto-scroll speed" (Slow 3 / Medium 6 / Fast 12 presets + slider 2–20). Warmup ramps the speed over ~900ms so the first moment of scroll isn't jarring.
@@ -299,6 +325,20 @@ npm run build
 5. **Scheduled / Automatic Triggers:** Time-based shortcut execution (e.g., Run "Work Setup" every weekday at 9:00 AM) using node-cron or Windows Task Scheduler.
 
 ### C. Recently Completed
+
+**Session 6 (Window Layout runtime, broken-path pre-flight, Test Layout/Flow, richer toasts):**
+- Wired the Window Layout engine into `runShortcutActions` — fires **in parallel** with the action loop, not after.
+- `estimateShortcutBudgetMs()` sizes the poll window per-shortcut (5s base + per-action estimates, capped at 60s).
+- Per-placement polling: 15ms warmup for 800ms → taper to max 200ms. Windows snap the moment they appear.
+- `SETTLE_TIME` retired — `launch_app`'s 800ms settle delay removed; the polling engine made it redundant.
+- **User-judge via unassignment.** Position dropdown's "Not arranged" option removes the action from its current zone; the layout engine skips it. UWP heuristic kept as a graceful fallback for assigned UWP windows.
+- Broken-path pre-flight in `Library.tsx` — debounced (250ms), re-runs on focus. Feeds the amber badge and the "Fix Paths" button on `ShortcutCard`.
+- Hotkey-triggered runs pre-flight via `findFirstBrokenPath` in `main.ts` — a native toast refuses the run and names the missing path.
+- Test Layout button in `WindowLayoutPanel` — launch-type actions only, applies the layout, no scripts/delays.
+- Test Flow button in Builder footer — full end-to-end via the same validation gate as Save.
+- Info (i) popover next to Test Layout — three-section explanation, including the user-judge advice ("Remove their Position assignment — they'll still launch, just not force-arranged.").
+- Richer completion toasts — layout summary appended, per-action failure list on errors.
+- `useActionValidation` re-runs on window focus so inline errors refresh after the user fixes a path in Explorer.
 
 **Session 5 (Window Layout + selection mode + dnd-kit, uncommitted at time of writing):**
 - Replaced HTML5 native drag in `ActionSequence.tsx` with `@dnd-kit` — internal reorder is now smooth. Split the file into `ActionSequence/` sub-components: `SortableActionCard`, `ActionValueInput`, `UrlInput`, `ActionFlowPreview`, `ConfirmDeleteModal`.
@@ -371,12 +411,18 @@ npm run build
 
 **Phase 3 — Drag-and-Drop Rebuild (`@dnd-kit`):** ✅ **Done** (Session 5). Internal card reorder uses dnd-kit; sidebar → sequence drop still uses HTML5 native drag as a temporary measure.
 
-**Window Layout Runtime Engine (Batch 2, next):**
-- New IPC: `arrange-windows-shortcut` — takes the shortcut's `windowLayout` config + the list of actions it references.
-- Poll for the newly-opened windows (extends the current 2.4s loop to 6s with decaying interval).
-- Detect zone occupancy by enumerating existing windows and checking rectangle overlap >30%.
-- Apply the rules: free zone → place; occupied zone → center-small (60% × 60%, centered); last app may scavenge leftover free zones from earlier placements.
-- Toast on any partial failure.
+**Broken Path Fix UX (Q2b, next):**
+- "Fix Paths" button on `ShortcutCard` currently routes to Builder without scrolling. Enhance: auto-scroll to and highlight the first broken action.
+- Add a `focusActionId` prop to `Builder`, plumbed from Library's `onEditShortcut` call.
+- Flash the target action card (ring-primary + ring-offset for ~900ms, matching the Flow Preview's click-to-jump flash).
+
+**Not-Arranged App Visibility (bug):**
+- Symptom: unassigned launch-type windows land wherever Windows puts them — often behind the placed apps instead of on top.
+- Example: Notepad (assigned Left) + Calculator (Not Arranged) → Calculator appears *behind* Notepad instead of on top.
+- Cause: the engine only calls `ForceForeground` on windows it *places*. Unassigned windows are never touched.
+- Fix (proposed): after the placement pass, walk every launch-type action and bring-to-front any window that wasn't placed. No resize. Optional safety: center at native size if fully off-screen.
+- Touches: `buildPlacementsFromShortcut` (main.ts), Zod schema, PowerShell loop (`windowLayout.ts`), new `Bring-Unassigned-Window` helper.
+- Open question: should `open_folder` actions also be brought to front? A user might open a folder "just to have it available" without wanting their layout disturbed.
 
 **Window Layout Overlay Animation (Batch 3):**
 - Transparent frameless BrowserWindow overlay appears for ~600ms during arrangement. Fades in zone outlines, animates each app's icon flying to its zone, then fades out as the real windows are placed. Uses the user's chosen theme color.
@@ -397,6 +443,9 @@ npm run build
 
 ### E. Known Issues / Pending Polish
 
+- **Security Warning modal `open_file` filter bug:** `Library.tsx`'s `runShortcut()` correctly flags `open_file` with a dangerous extension as dangerous and shows the confirmation modal, but the modal's `<span>` list only filters `run_script` and `launch_app`. Result: a shortcut whose only dangerous action is an `open_file` shows the modal with an empty list. Fix: hoist `DANGEROUS_EXTENSIONS` to module scope and extend the filter to include `open_file` with a dangerous extension, showing *"Open: <path>"*.
+- **README.md is stale:** markets an `open_vscode` action that doesn't exist, lists `.lnk/.bat/.cmd` as valid `launch_app` formats (only `.exe` is), describes an "Arrange Windows" action (moved to shortcut-level), and states `sandbox: false` (it's `true`). Needs a rewrite before public sharing.
+- **Unused dependencies:** `electron-store`, `react-router-dom`, `lucide-react`, and `uuid` are listed in `package.json` but never imported. Safe to remove in a dedicated cleanup commit.
 - Library and Settings pages have not been fully tested at narrow window widths (800–900px) — potential responsive layout issues.
 - ESLint emits a harmless TypeScript-version warning (`@typescript-eslint` supports `>=4.7.4 <5.6.0`; project runs `5.9.3`). Not blocking.
 - Running `npx tsc` or `npm run dev` from the repo root (instead of `lazycoww/`) triggers a phantom `tsc@2.0.4` install prompt — always `cd` into `lazycoww/` first.

@@ -66,3 +66,30 @@ Format:
 - **Files:** doc/journal.md
 - **Verified:** yes (routine documentation)
 - **Commit:** 79289b0
+
+## 2026-10-06 — docs: sync handoff to post-DPI/Batch-2d state; fill journal stub
+- **Issue:** handoff.md was stale (header said 89e4626, §2 didn't record DPI + Batch 2d as verified). Also needed to fill the previous commit's journal stub.
+- **Solution:** Full replacement of handoff.md with current state (verified DPI fix + claim-the-zone behavior + quad grid test). Filled the 79289b0 journal stub.
+- **Files:** doc/handoff.md (full rewrite); doc/journal.md
+- **Verified:** yes (routine documentation)
+- **Commit:** babb9cc
+  
+## 2026-10-06 — docs: sync boot files with Session 6 (parallel engine, broken-path, Test Layout)
+- **Issue:** The boot files had drifted from the code after Session 6's Window Layout work — the engine was wired up and verified, but the docs still described it as "planned" and listed the center-small fallback (superseded by claim-the-zone).
+- **Solution:** Full reconciliation across the five boot files. context.md updated for the parallel engine, per-shortcut budget, per-placement polling, user-judge mechanism, broken-path pre-flight, Test Layout/Flow, info (i) button, and richer toasts. decisions.md appended six new entries. handoff.md rewritten. missions.md ticked Batch 2 to COMPLETE and added Q2b, Batch 3, README accuracy, and dependency cleanup missions.
+- **Files:** doc/context.md, doc/handoff.md, doc/missions.md, doc/decisions.md, doc/journal.md
+- **Verified:** routine documentation
+- **Commit:** <pending — filled at next checkpoint>
+## 2026-10-06 — feat(window-layout): parallel engine, per-shortcut budget, per-placement polling
+- **Issue:** (fill in)
+- **Solution:** (fill in)
+- **Files:** (fill in)
+- **Verified:** (fill in)
+- **Commit:** 8d10cc4
+
+## 2026-10-06 — feat: broken-path pre-flight, Test Layout/Flow, richer completion toasts
+- **Issue:** (fill in)
+- **Solution:** (fill in)
+- **Files:** (fill in)
+- **Verified:** (fill in)
+- **Commit:** 490588b

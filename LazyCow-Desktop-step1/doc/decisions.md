@@ -69,3 +69,91 @@ Append-only. Never delete. Each entry: date, decision, alternatives, why, conseq
   - `Place-Centered` removed.
   - Each app is un-minimized (`SW_RESTORE`) and brought to front via `ForceForeground`.
 - **Status:** active
+## 2026-10-06 — No per-app "stretch" toggle; use a UWP heuristic instead
+- **Decision:** When placing a window, auto-detect UWP apps (`ApplicationFrameHost` or a known Windows shell process, or exe path under `WindowsApps`). UWP apps are centered at their native size. All other apps are stretched to fill the zone, matching Windows Snap. No user-facing toggle exists.
+- **Alternatives considered:**
+  - Ask the user, per app, whether to stretch (`layoutBehavior: auto|stretch|native` on the action).
+  - Always stretch (matches Windows Snap, breaks Calculator's appearance).
+  - Always native (unusable for Chrome / VS Code / Slack).
+- **Why auto-heuristic:** UWP apps are exactly the ones that misbehave when stretched — their content doesn't scale. Win32 apps are exactly the ones that want to fill a zone. This split matches how users actually use these apps: focus apps (editor, browser, chat) want space; utility apps (Calculator, Settings, Photos) don't.
+- **Why no toggle:**
+  - The user's mental model is "I want Calculator on the left," not "should Calculator stretch?" Asking them to configure a technical behavior they haven't thought about is asking them to do the app's job.
+  - The heuristic covers 90%+ of real apps. Building UI for the remaining 10% adds density, state, migration concerns, and testing overhead for a scenario we haven't actually seen.
+  - Wait for real user complaints before building. If three users say "I want Calculator stretched," we add it. If nobody does, we saved the work.
+- **Consequence:** Users who disagree with the heuristic move the window manually after placement, or remove it from the assigned zones. Acceptable trade-off for a prototype.
+- **Status:** active
+  
+## 2026-10-06 — Layout engine fires in parallel with the action loop
+- **Decision:** `runShortcutActions` creates the `arrangeWindows` promise *before* the action loop starts, so window placement happens concurrently with the remaining actions. The loop still emits progress events; the layout engine polls for windows independently and snaps each as soon as it appears.
+- **Supersedes:** Implicit "runs after all actions fire" — earlier designs called the layout engine once the loop finished.
+- **Alternatives:**
+  - Run layout after the loop (original plan) — rejected because `delay` actions and slow launches pushed total runtime well past when the first window actually appeared.
+  - Run layout synchronously between every action — rejected as too chatty; would re-poll for every placement on every tick.
+- **Why:** Waiting for the loop to finish meant the user stared at a small, unarranged window for seconds. Firing in parallel snaps each window the moment it opens, cutting the "small window then snap" gap to near-zero.
+- **Consequence:**
+  - `layoutPromise = arrangeWindows(placements, budgetMs)` is created right after `runningShortcuts.add(...)`.
+  - Cancelled shortcuts don't block on layout — the promise resolves in the background.
+  - `lastLayoutResults` carries the result through to the `shortcut-complete` event.
+- **Status:** active
+
+## 2026-10-06 — Layout engine polls each placement individually
+- **Decision:** Instead of one global poll loop that scans all windows and places them in a batch, each placement is polled independently and placed the moment its window appears. Warmup interval is 15ms for the first 800ms, then tapers to a maximum of 200ms.
+- **Supersedes:** The "6s decaying interval" plan documented in the Batch 2 outline.
+- **Alternatives:**
+  - Single batch placement after all windows found — rejected; one slow launch delayed every placement.
+  - Uniform 100ms poll for the full window — rejected; misses fast launches (Notepad appears in ~50ms).
+- **Why:** Fast warmup catches freshly-shown windows before the user's eye registers the delay. Tapering after 800ms avoids burning CPU on shortcuts with long `delay` actions. A slow or failed launch never blocks the others — its placement just falls through to `not_found` at the deadline.
+- **Consequence:**
+  - `Find-Window` uses a `$usedHandles` set so two placements can't grab the same handle.
+  - `estimateShortcutBudgetMs` sizes the poll window per-shortcut (5s base + per-action estimates, capped at 60s).
+- **Status:** active
+
+## 2026-10-06 — Retire launch_app's 800ms settle delay
+- **Decision:** `SETTLE_TIME` is now an empty object — `launch_app` no longer pauses after `shell.openPath`. The 800ms wait that used to run between launching an app and moving to the next action is gone.
+- **Alternatives:**
+  - Keep the 800ms wait — rejected; the progress UI would show "waiting" long after the app was on-screen.
+  - Reduce to 200ms — rejected; still too slow, and still arbitrary.
+- **Why:** The 800ms existed to make the progress ring match the app appearing. With per-placement polling, the engine snaps the window the moment it exists — the settle wait became pure latency.
+- **Consequence:** Shortcut total runtime drops by ~800ms per `launch_app`. Progress UI now advances as soon as `openPath` returns.
+- **Status:** active
+
+## 2026-10-06 — User-judge replaces UWP heuristic as the primary mechanism
+- **Decision:** The user-facing control for "this app shouldn't be auto-arranged" is the **"Not arranged"** option in the Position dropdown on each card. An action assigned to no zone still launches with the shortcut, but the layout engine skips it entirely.
+- **Supersedes:** The 2026-10-06 "No per-app stretch toggle; use a UWP heuristic instead" entry (which treated the UWP heuristic as the only mechanism).
+- **Alternatives:**
+  - Add a separate per-action `skipLayout` flag — rejected; the empty assignment already conveys the same thing and requires no schema change.
+  - Only the UWP heuristic, no user control — rejected; the heuristic misses some edge cases (Electron apps, custom Win32 tools) and users have no way to correct it.
+  - Only user control, remove UWP heuristic — rejected; see #4's consequences below.
+- **Why:** Users know their own apps. If Calculator looks wrong stretched, they shouldn't have to wait for us to expand a process-name allowlist — they unassign it and move on. The tooltip on the info button spells this out: *"Remove their Position assignment — they'll still launch, just not force-arranged."*
+- **Consequence:**
+  - `buildPlacementsFromShortcut` skips actions with no zone assignment.
+  - `PositionDropdown` renders "Not arranged" as the top option (calls `onChange('')`).
+  - `ActionSequence.assignZone` removes the action from any zone it currently owns when the new zone is `''`.
+  - The UWP heuristic in `windowLayout.ts` **stays** as a graceful fallback for users who *do* assign UWP apps: those windows are centered at native size instead of stretched, so a mis-assignment is less visually jarring.
+- **Status:** active
+
+## 2026-10-06 — Broken-path pre-flight runs at Library load and on window focus
+- **Decision:** `Library.tsx` runs a debounced (250ms) broken-path check across every shortcut's path-based actions whenever `shortcuts` changes, and again whenever the window regains focus. Any shortcut with at least one missing file or folder goes into `brokenShortcuts`, which greys the Run button and shows the "Broken Path" badge.
+- **Alternatives:**
+  - Check only on mount — rejected; a file deleted while LazyCow is running would be missed.
+  - Check on every render — rejected; hammers IPC on rapid state changes.
+  - Don't check at all, rely on the OS error at runtime — rejected; the user gets no warning, the shortcut fails mid-sequence, and the log message is generic.
+- **Why:** Returning from Explorer after fixing a file should refresh the badge without a page reload. The window-focus hook covers exactly that case, and the debounce keeps the check cheap.
+- **Consequence:**
+  - Hotkey-triggered runs also pre-flight via `findFirstBrokenPath` in `main.ts` — a native toast shows the first missing path and refuses to run.
+  - `ShortcutCard`'s "Fix Paths" button routes the user to the Builder instead of running the shortcut.
+- **Status:** active
+
+## 2026-10-06 — Test Layout and Test Flow are distinct previews with different scopes
+- **Decision:** Two separate preview buttons in the Builder. **Test Layout** filters the sequence to arrangeable actions only (`launch_app`, `open_url`, `open_folder`, `open_file`), runs them through the real `runShortcut` IPC, and applies the configured layout. **Test Flow** runs the entire sequence end-to-end with the same validation gate as Save.
+- **Alternatives:**
+  - One button with a mode toggle — rejected; the toggle added friction and hid the intent.
+  - Only Test Flow — rejected; layout previews would fire scripts and side-effecting actions on every iteration.
+  - Only Test Layout — rejected; no way to verify the whole flow without saving it first.
+- **Why:** The two use cases are genuinely different. "Will my windows land right?" should be fast and side-effect-free. "Does this whole thing work?" should exercise every action like a real run. Merging them makes layout iteration painful.
+- **Consequence:**
+  - Test Layout lives inside `WindowLayoutPanel` (context-scoped).
+  - Test Flow lives in the Builder footer next to Save (shortcut-scoped).
+  - Both generate synthetic shortcut IDs (`test-layout-<ts>` / `test-flow-<ts>`) so they never collide with saved shortcuts.
+  - The info (i) button next to Test Layout documents the three-part story (what it does / when to use it / what to do if an app looks wrong).
+- **Status:** active
