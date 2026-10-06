@@ -9,6 +9,9 @@ import { useActionValidation } from '../hooks/useActionValidation';
 
 interface BuilderProps {
   editData?: SavedShortcut | null;
+  /** When set, scroll to + flash the action with this id after mounting.
+   *  Used by Library's "Fix Paths" button to land the user on the broken action. */
+  focusActionId?: string;
   isActionSidebarAutoCollapsed?: boolean;
   onUnsavedChanges?: (hasChanges: boolean) => void;
   onSaveSuccess?: () => void;
@@ -16,7 +19,7 @@ interface BuilderProps {
 
 const MODIFIERS = ['Ctrl', 'Alt', 'Shift', 'Win'];
 
-export const Builder: React.FC<BuilderProps> = ({ editData, isActionSidebarAutoCollapsed, onUnsavedChanges, onSaveSuccess }) => {
+export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isActionSidebarAutoCollapsed, onUnsavedChanges, onSaveSuccess }) => {
      const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
 
@@ -81,6 +84,37 @@ export const Builder: React.FC<BuilderProps> = ({ editData, isActionSidebarAutoC
       );
     }
   }, [editData, setRecordedCombo]);
+
+  // Auto-scroll to + flash the action that Library's "Fix Paths" pointed us at.
+  // Retries up to 30 times (50ms apart) because React may not have committed
+  // the sequence's action cards to the DOM at the moment this effect runs.
+  useEffect(() => {
+    if (!focusActionId) return;
+
+    let cancelled = false;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 30;
+
+    const tryScroll = () => {
+      if (cancelled) return;
+      const el = document.getElementById(`action-card-${focusActionId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('ring-2', 'ring-primary', 'ring-offset-2', 'ring-offset-background');
+        setTimeout(() => {
+          el.classList.remove('ring-2', 'ring-primary', 'ring-offset-2', 'ring-offset-background');
+        }, 900);
+        return;
+      }
+      attempts += 1;
+      if (attempts < MAX_ATTEMPTS) {
+        setTimeout(tryScroll, 50);
+      }
+    };
+
+    tryScroll();
+    return () => { cancelled = true; };
+  }, [focusActionId]);
 
   const hasUnsavedChanges = shortcutName.trim() !== '' || shortcutDesc.trim() !== '' || sequence.length > 0;
   useEffect(() => { onUnsavedChanges?.(hasUnsavedChanges); }, [hasUnsavedChanges, onUnsavedChanges]);

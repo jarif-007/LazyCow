@@ -5,7 +5,7 @@ interface ShortcutCardProps {
   shortcut: SavedShortcut;
   shade: 'light' | 'medium' | 'dark';
   onShadeChange: (shade: 'light' | 'medium' | 'dark') => void;
-  onEditFlow: (s: SavedShortcut) => void;
+  onEditFlow: (s: SavedShortcut, focusActionId?: string) => void;
   onRename: (id: string) => void;
   onDelete: (id: string) => void;
   onRun: (id: string) => void;
@@ -13,6 +13,8 @@ interface ShortcutCardProps {
   onDuplicate: (s: SavedShortcut) => void;
   hasHotkeyConflict?: boolean;
   hasBrokenPath?: boolean;
+  /** First broken path action id (when hasBrokenPath is true). Passed to onEditFlow. */
+  brokenActionId?: string;
   isCancelling?: boolean;
   execution?: {
     status: 'idle' | 'running' | 'success' | 'error' | 'cancelled';
@@ -32,7 +34,7 @@ interface ShortcutCardProps {
 
 export const ShortcutCard: React.FC<ShortcutCardProps> = ({
   shortcut, shade, onShadeChange, onEditFlow, onRename, onDelete, onRun, onCancel, onDuplicate,
-   hasHotkeyConflict, hasBrokenPath, isCancelling, execution, customColorMode,
+   hasHotkeyConflict, hasBrokenPath, brokenActionId, isCancelling, execution, customColorMode,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const execState = execution || { status: 'idle' as const, currentStepIndex: -1, errors: [] as string[] };
@@ -245,7 +247,9 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
             if (hasBrokenPath) {
               // Clicking the broken-path button takes the user straight
               // into the Builder to fix it, instead of being a dead end.
-              onEditFlow(shortcut);
+              // The brokenActionId hints Builder to auto-scroll + flash
+              // the first broken action.
+              onEditFlow(shortcut, brokenActionId);
               return;
             }
             onRun(shortcut.id);

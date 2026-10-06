@@ -5,7 +5,7 @@ import { DeleteModal } from '../components/DeleteModal';
 
 interface LibraryProps {
   setActiveTab: (tab: string) => void;
-  onEditShortcut: (shortcut: SavedShortcut) => void;
+  onEditShortcut: (shortcut: SavedShortcut, focusActionId?: string) => void;
   customColorMode: boolean;
 }
 
@@ -18,10 +18,11 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
   );
 
   const [failedHotkeys, setFailedHotkeys] = useState<Set<string>>(new Set());
-  // Set of shortcut IDs that have at least one broken path.
+  // Map of shortcut ID → first broken action's ID.
   // Populated after Library mounts and on refresh; used to gate the Run
-  // button and show the amber "Broken Path" badge on the card.
-  const [brokenShortcuts, setBrokenShortcuts] = useState<Set<string>>(new Set());
+  // button, show the amber "Broken Path" badge, and (via onEditShortcut)
+  // auto-scroll the Builder to the broken action when "Fix Paths" is clicked.
+  const [brokenShortcuts, setBrokenShortcuts] = useState<Map<string, string>>(new Map());
 
   const refreshShortcuts = useCallback(() => {
     const loaded: SavedShortcut[] = JSON.parse(localStorage.getItem('lazycow-shortcuts') || '[]');
@@ -44,7 +45,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
     const run = async () => {
       if (!window.electronAPI?.checkPathExists) return;
 
-      const broken = new Set<string>();
+      const broken = new Map<string, string>(); // shortcutId → first broken actionId
 
       for (const sc of shortcuts) {
         for (const a of sc.actions) {
@@ -58,14 +59,14 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
           const val = (a.value || '').trim();
           if (!val) {
             // Empty value = broken (it was never set)
-            broken.add(sc.id);
+            broken.set(sc.id, a.id);
             break;
           }
 
           try {
             const exists = await window.electronAPI.checkPathExists(val);
             if (!exists) {
-              broken.add(sc.id);
+              broken.set(sc.id, a.id);
               break; // one broken path is enough to flag the whole shortcut
             }
           } catch {
@@ -323,6 +324,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
             onDuplicate={handleDuplicate}
             hasHotkeyConflict={failedHotkeys.has(card.id)}
             hasBrokenPath={brokenShortcuts.has(card.id)}
+            brokenActionId={brokenShortcuts.get(card.id)}
             isCancelling={cancellingIds.has(card.id)}
             execution={executions[card.id]}
             customColorMode={customColorMode}

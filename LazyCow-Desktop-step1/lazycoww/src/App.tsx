@@ -49,6 +49,9 @@ function App() {
   const [pendingTab, setPendingTab] = useState<string | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
    const [editShortcut, setEditShortcut] = useState<SavedShortcut | null>(null);
+  // When set, Builder auto-scrolls to + flashes this action after mounting.
+  // Set by Library's "Fix Paths" button so the user lands on the broken action.
+  const [focusActionId, setFocusActionId] = useState<string | undefined>(undefined);
 
   // Gate: prevents the theme-persistence effects from overwriting localStorage
   // with defaults before the load effect has finished hydrating state.
@@ -261,10 +264,15 @@ function App() {
   };
 
   const handleCancelLeave = () => { setShowConfirmModal(false); setPendingTab(null); };
-  const handleEditShortcut = (shortcut: SavedShortcut) => { setEditShortcut(shortcut); setActiveTab('builder'); };
+  const handleEditShortcut = (shortcut: SavedShortcut, focusActionIdArg?: string) => {
+    setEditShortcut(shortcut);
+    setFocusActionId(focusActionIdArg);
+    setActiveTab('builder');
+  };
   const handleSaveSuccess = () => {
     setHasUnsavedChanges(false);
     setEditShortcut(null);
+    setFocusActionId(undefined);
     setLibraryRefreshKey((k) => k + 1);
     setBuilderKey((k) => k + 1);
   };
@@ -316,6 +324,7 @@ function App() {
             <Builder
               key={builderKey}
               editData={editShortcut}
+              focusActionId={focusActionId}
               isActionSidebarAutoCollapsed={isActionSidebarAutoCollapsed}
               onUnsavedChanges={setHasUnsavedChanges}
               onSaveSuccess={handleSaveSuccess}
