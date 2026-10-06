@@ -1,12 +1,28 @@
 #!/bin/sh
 # Auto-append a stub entry to doc/journal.md on every commit.
 # The AI fills in Issue/Solution/Files/Verified during the next checkpoint.
+#
+# Skip the stub when the commit only touches doc/ — those commits are
+# journal/bookkeeping work and would otherwise create an infinite loop
+# (fill stub -> commit -> new stub -> fill -> commit -> ...).
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 DOC="$REPO_ROOT/LazyCow-Desktop-step1/doc/journal.md"
 SUBJ=$(git log -1 --pretty=%s)
 HASH=$(git log -1 --pretty=%h)
 DATE=$(date +%Y-%m-%d)
+
+# List the files changed by this commit.
+CHANGED=$(git diff-tree --no-commit-id --name-only -r HEAD)
+
+# If EVERY changed file lives under doc/, skip the stub.
+# (grep -v filters out doc/ lines; if nothing remains, the commit was docs-only.)
+NON_DOC=$(printf '%s\n' "$CHANGED" | grep -v '^LazyCow-Desktop-step1/doc/' | grep -v '^doc/' || true)
+
+if [ -z "$NON_DOC" ] && [ -f "$DOC" ]; then
+  echo "📓 Skipping journal stub — commit only touched doc/ (bookkeeping)."
+  exit 0
+fi
 
 if [ -f "$DOC" ]; then
   printf "\n## %s — %s\n- **Issue:** (fill in)\n- **Solution:** (fill in)\n- **Files:** (fill in)\n- **Verified:** (fill in)\n- **Commit:** %s\n" \
