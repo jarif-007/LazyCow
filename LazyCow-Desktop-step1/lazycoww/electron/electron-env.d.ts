@@ -14,11 +14,18 @@ interface ShortcutActionForIPC {
   value: string
 }
 
+interface WindowLayoutConfigForIPC {
+  enabled: boolean
+  layoutId: string | null
+  assignments: Record<string, string>
+}
+
 interface ShortcutForIPC {
   id: string
   name: string
   hotkey: string
   actions: ShortcutActionForIPC[]
+  windowLayout?: WindowLayoutConfigForIPC
 }
 
 interface ActionResult {
@@ -61,6 +68,12 @@ interface Window {
       durationMs?: number;
       cancelled?: 'graceful' | null;
       lastActionTitle?: string | null;
+      layoutResults?: Array<{
+        zoneId: string;
+        actionTitle: string;
+        status: 'placed' | 'fallback_centered' | 'not_found' | 'skipped';
+        reason?: string;
+      }> | null;
     }) => void) => () => void
     onHotkeyTriggered: (callback: (shortcutId: string) => void) => () => void
     onHotkeyNeedsConfirm: (callback: (shortcutId: string) => void) => () => void

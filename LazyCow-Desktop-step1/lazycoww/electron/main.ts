@@ -10,7 +10,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { z } from 'zod'
 import contextMenu from 'electron-context-menu'
-import { arrangeWindows, type Placement } from './windowLayout'
+import { arrangeWindows, type Placement, type PlacementResult } from './windowLayout'
 
 // ── Native right-click context menu (copy / paste / cut / select all) ──
 // Without this, Electron shows nothing on right-click — which breaks a
@@ -314,11 +314,29 @@ const ActionSchema = z.object({
   value: z.string().max(8192)
 }).passthrough()
 
+// Shortcut-level Window Layout config (see src/types/actions.ts).
+// Enabled shortcuts pass this through the runShortcut payload; the runtime
+// engine fires arrangeWindows after the action loop completes.
+const WindowLayoutConfigSchema = z.object({
+  enabled: z.boolean(),
+  layoutId: z.enum([
+    'split_50',
+    'split_67_33',
+    'split_33_67',
+    'thirds',
+    'main_left',
+    'main_right',
+    'quad',
+  ]).nullable(),
+  assignments: z.record(z.string(), z.string()),
+}).optional()
+
 const ShortcutSchema = z.object({
   id: z.string().min(1).max(100),
   name: z.string().min(1).max(200),
   hotkey: z.string().max(100).optional(),
-  actions: z.array(ActionSchema).max(50)
+  actions: z.array(ActionSchema).max(50),
+  windowLayout: WindowLayoutConfigSchema,
 }).passthrough()
 
 type ShortcutActionData = z.infer<typeof ActionSchema>
@@ -330,15 +348,130 @@ interface ActionResult {
   error?: string
 }
 
+// Layout zone definitions — mirrors src/types/actions.ts LAYOUTS.
+// Kept in sync manually because the renderer and main process are
+// separate bundles with no shared runtime import.
+type LayoutId =
+  | 'split_50' | 'split_67_33' | 'split_33_67'
+  | 'thirds' | 'main_left' | 'main_right' | 'quad'
+
+interface LayoutZone { id: string; label: string; x: number; y: number; w: number; h: number }
+
+const LAYOUT_ZONES: Record<LayoutId, LayoutZone[]> = {
+  split_50: [
+    { id: 'left',  label: 'Left',  x: 0,    y: 0, w: 0.5, h: 1 },
+    { id: 'right', label: 'Right', x: 0.5,  y: 0, w: 0.5, h: 1 },
+  ],
+  split_67_33: [
+    { id: 'main_left', label: 'Main Left', x: 0,    y: 0, w: 0.67, h: 1 },
+    { id: 'right',     label: 'Right',     x: 0.67, y: 0, w: 0.33, h: 1 },
+  ],
+  split_33_67: [
+    { id: 'left',       label: 'Left',       x: 0,    y: 0, w: 0.33, h: 1 },
+    { id: 'main_right', label: 'Main Right', x: 0.33, y: 0, w: 0.67, h: 1 },
+  ],
+  thirds: [
+    { id: 'left',   label: 'Left',   x: 0,     y: 0, w: 0.333, h: 1 },
+    { id: 'center', label: 'Center', x: 0.333, y: 0, w: 0.334, h: 1 },
+    { id: 'right',  label: 'Right',  x: 0.667, y: 0, w: 0.333, h: 1 },
+  ],
+  main_left: [
+    { id: 'main_left',    label: 'Main Left',    x: 0,   y: 0,   w: 0.5, h: 1 },
+    { id: 'top_right',    label: 'Top Right',    x: 0.5, y: 0,   w: 0.5, h: 0.5 },
+    { id: 'bottom_right', label: 'Bottom Right', x: 0.5, y: 0.5, w: 0.5, h: 0.5 },
+  ],
+  main_right: [
+    { id: 'top_left',    label: 'Top Left',    x: 0,   y: 0,   w: 0.5, h: 0.5 },
+    { id: 'bottom_left', label: 'Bottom Left', x: 0,   y: 0.5, w: 0.5, h: 0.5 },
+    { id: 'main_right',  label: 'Main Right',  x: 0.5, y: 0,   w: 0.5, h: 1 },
+  ],
+  quad: [
+    { id: 'tl', label: 'Top Left',     x: 0,   y: 0,   w: 0.5, h: 0.5 },
+    { id: 'tr', label: 'Top Right',    x: 0.5, y: 0,   w: 0.5, h: 0.5 },
+    { id: 'bl', label: 'Bottom Left',  x: 0,   y: 0.5, w: 0.5, h: 0.5 },
+    { id: 'br', label: 'Bottom Right', x: 0.5, y: 0.5, w: 0.5, h: 0.5 },
+  ],
+}
+
+// Actions that produce a visible window the layout engine can place.
+const ARRANGEABLE_TYPES = new Set([
+  'launch_app', 'open_folder', 'open_file', 'open_url',
+])
+
+/**
+ * Estimate how long a shortcut's actions will take to run, in ms.
+ * Used to size the layout engine's polling window so shortcuts with
+ * `delay` actions don't time out before their final app launches.
+ * Base 5s + per-action estimates, capped at 60s.
+ */
+function estimateShortcutBudgetMs(shortcut: ShortcutData): number {
+  let total = 5000
+  for (const action of shortcut.actions) {
+    switch (action.type) {
+      case 'delay':
+        total += Number(action.value) || 0
+        break
+      case 'launch_app':
+      case 'open_folder':
+      case 'open_file':
+      case 'open_url':
+        total += 1500
+        break
+      case 'run_script':
+        total += 3000
+        break
+      default:
+        total += 200
+    }
+  }
+  return Math.min(total, 60000)
+}
+
+/**
+ * Translate the shortcut's windowLayout config into a list of Placements
+ * for arrangeWindows(). Returns [] if the layout is disabled, has no
+ * layoutId, or has no eligible assignments.
+ */
+function buildPlacementsFromShortcut(shortcut: ShortcutData): Placement[] {
+  const wl = shortcut.windowLayout
+  if (!wl?.enabled || !wl.layoutId) return []
+
+  const zones = LAYOUT_ZONES[wl.layoutId as LayoutId]
+  if (!zones) return []
+
+  const placements: Placement[] = []
+  for (const [zoneId, actionId] of Object.entries(wl.assignments)) {
+    const zone = zones.find((z) => z.id === zoneId)
+    if (!zone) continue
+    const action = shortcut.actions.find((a) => a.id === actionId)
+    if (!action) continue
+    if (!ARRANGEABLE_TYPES.has(action.type)) continue
+    placements.push({
+      zoneId: zone.id,
+      zoneLabel: zone.label,
+      zone: { x: zone.x, y: zone.y, w: zone.w, h: zone.h },
+      actionType: action.type,
+      actionValue: action.value,
+      actionTitle: action.title || action.type,
+    })
+  }
+  return placements
+}
+
 const runningShortcuts = new Set<string>()
 // Simple cancellation request set — when a shortcut's id is present,
 // the execution loop will stop at the next step boundary (graceful cancel).
 const cancelRequests = new Set<string>()
+// Carries the window-layout results from the layout call to the
+// shortcut-complete event so the renderer can surface them on the card.
+let lastLayoutResults: PlacementResult[] | null = null
 
-// ── Settle times (ms) so the progress UI matches app launching ──
-const SETTLE_TIME: Record<string, number> = {
-  launch_app: 800,
-}
+// ── Settle times (ms) ──
+// Historically 800ms for launch_app so the progress UI matched the
+// window actually appearing. Batch 2c-polish: we no longer need it —
+// the window-layout engine polls for the actual window and snaps it
+// the moment it appears. Kept as an empty object for future settle needs.
+const SETTLE_TIME: Record<string, number> = {}
 
 function isShortcutRunning(shortcutId: string): boolean {
   return runningShortcuts.has(shortcutId)
@@ -359,8 +492,11 @@ async function runAction(action: ShortcutActionData): Promise<void> {
       
       const err = await shell.openPath(action.value)
       if (err) throw new Error(err)
-      // Settle time so the app has time to appear before the next step
-      await new Promise((r) => setTimeout(r, SETTLE_TIME.launch_app))
+      // No settle wait — the window-layout engine polls for the actual
+      // window and snaps it the moment it appears. Waiting here just
+      // delayed the arrangement.
+      const settle = SETTLE_TIME.launch_app
+      if (settle) await new Promise((r) => setTimeout(r, settle))
       return
     }
     case 'open_folder':
@@ -615,7 +751,24 @@ async function runShortcutActions(shortcut: ShortcutData): Promise<ActionResult[
   }
   runningShortcuts.add(shortcut.id)
   cancelRequests.delete(shortcut.id)
-  
+
+  // Fire the arrangement engine in parallel with the action loop.
+  // It polls for windows as they appear, snapping each the moment it's
+  // found — instead of waiting for the loop to finish and snapping in a batch.
+  // Errors are caught here so a layout failure never fails the shortcut.
+  let layoutPromise: Promise<PlacementResult[]> | null = null
+  if (shortcut.windowLayout?.enabled) {
+    const placements = buildPlacementsFromShortcut(shortcut)
+    if (placements.length > 0) {
+      const budgetMs = estimateShortcutBudgetMs(shortcut)
+      console.log(`[runShortcut] layout budget: ${budgetMs}ms for ${placements.length} placements`)
+      layoutPromise = arrangeWindows(placements, budgetMs).catch((err) => {
+        console.error('[runShortcut] window layout failed:', err)
+        return [] as PlacementResult[]
+      })
+    }
+  }
+
   try {
     for (let i = 0; i < shortcut.actions.length; i++) {
       // Between-action cancellation check — graceful path
@@ -632,7 +785,15 @@ async function runShortcutActions(shortcut: ShortcutData): Promise<ActionResult[
         await runAction(action)
         results.push({ actionId: action.id, success: true })
       } catch (e) {
-        results.push({ actionId: action.id, success: false, error: e instanceof Error ? e.message : String(e) })
+        const rawMsg = e instanceof Error ? e.message : String(e)
+        // Include the action's title and (for path-based actions) the
+        // target path so both the toast and the shortcut card can tell
+        // the user exactly what failed.
+        const label = action.title || action.type
+        const detail = (action.type === 'launch_app' || action.type === 'open_file' || action.type === 'open_folder')
+          ? `${label}: ${action.value}`
+          : label
+        results.push({ actionId: action.id, success: false, error: `${detail} — ${rawMsg}` })
       }
     }
   } finally {
@@ -640,6 +801,24 @@ async function runShortcutActions(shortcut: ShortcutData): Promise<ActionResult[
     cancelRequests.delete(shortcut.id)
   }
   
+  // Wait for the arrangement engine (already running in parallel).
+  // If cancelled, don't block the completion event — let it finish in the
+  // background so the card flips to "Cancelled" promptly.
+  lastLayoutResults = null
+  if (layoutPromise) {
+    if (cancelled) {
+      layoutPromise.then((r) =>
+        console.log('[runShortcut] layout (post-cancel):', JSON.stringify(r, null, 2))
+      )
+    } else {
+      lastLayoutResults = await layoutPromise
+      console.log(
+        '[runShortcut] window layout results:',
+        JSON.stringify(lastLayoutResults, null, 2)
+      )
+    }
+  }
+
   const durationMs = Date.now() - startTime
   win?.webContents.send('shortcut-complete', {
     shortcutId: shortcut.id,
@@ -647,6 +826,7 @@ async function runShortcutActions(shortcut: ShortcutData): Promise<ActionResult[
     durationMs,
     cancelled,
     lastActionTitle,
+    layoutResults: lastLayoutResults,
   })
 
   // Dispatch native Windows notification if enabled
@@ -660,8 +840,24 @@ async function runShortcutActions(shortcut: ShortcutData): Promise<ActionResult[
       } else if (allSucceeded) {
         body = `All ${shortcut.actions.length} action(s) completed in ${(durationMs / 1000).toFixed(1)}s.`
       } else {
-        body = `Failed on ${failed.length} action(s): ${failed.map((f) => f.error).filter(Boolean).join('; ')}`
+        const failedList = failed.map((f) => f.error).filter(Boolean).join('\n')
+        body = `${failed.length} of ${results.length} step${results.length !== 1 ? 's' : ''} failed:\n${failedList}`
       }
+
+      // Append the window layout result when applicable — this is the
+      // only feedback the user sees if the apps cover the LazyCow window.
+      if (lastLayoutResults && lastLayoutResults.length > 0) {
+        const placed = lastLayoutResults.filter((r) => r.status === 'placed').length
+        const total = lastLayoutResults.length
+        const notPlaced = lastLayoutResults.filter((r) => r.status !== 'placed')
+        let layoutLine = `Window layout: ${placed} of ${total} app${total !== 1 ? 's' : ''} placed.`
+        if (notPlaced.length > 0) {
+          const names = notPlaced.map((r) => r.actionTitle).filter(Boolean).join(', ')
+          layoutLine += ` Couldn't arrange: ${names}.`
+        }
+        body += `\n${layoutLine}`
+      }
+
       const notif = new Notification({
         title: cancelled
           ? `LazyCow: ${shortcut.name} (Cancelled)`
@@ -783,6 +979,25 @@ function comboToAccelerator(combo: string): string | null {
   return accelParts.join('+')
 }
 
+/**
+ * Check every path-based action in the shortcut for existence. Returns
+ * the first broken action's title + value, or null if all paths are valid.
+ * Used at hotkey-fire time to refuse launching a broken shortcut.
+ */
+function findFirstBrokenPath(shortcut: ShortcutData): { title: string; value: string } | null {
+  for (const a of shortcut.actions) {
+    if (a.type !== 'launch_app' && a.type !== 'open_file' && a.type !== 'open_folder') continue
+    const val = (a.value || '').trim()
+    if (!val) return { title: a.title || a.type, value: '(empty)' }
+    try {
+      fs.statSync(val)
+    } catch {
+      return { title: a.title || a.type, value: val }
+    }
+  }
+  return null
+}
+
 function registerHotkeys(shortcuts: ShortcutData[]) {
   globalShortcut.unregisterAll()
   hotkeyToShortcutId.clear()
@@ -797,6 +1012,27 @@ function registerHotkeys(shortcuts: ShortcutData[]) {
 
     try {
       const ok = globalShortcut.register(accelerator, () => {
+        // Pre-flight: refuse the hotkey if any path action is broken.
+        // Show a native Windows toast so the user sees it even when
+        // they're focused on another app.
+        const broken = findFirstBrokenPath(shortcut)
+        if (broken) {
+          if (executionNotifications && Notification.isSupported()) {
+            try {
+              const notif = new Notification({
+                title: `LazyCow: "${shortcut.name}" can't run`,
+                body: `${broken.title} points to a missing file:\n${broken.value}\n\nOpen LazyCow → Edit Flow to fix it.`,
+                icon: getAppIconPath(),
+                silent: false,
+              })
+              notif.show()
+            } catch (err) {
+              console.warn('Failed to show broken-path toast:', err)
+            }
+          }
+          return
+        }
+
         if (shortcutHasScript(shortcut)) {
           win?.webContents.send('hotkey-needs-confirm', shortcut.id)
         } else {

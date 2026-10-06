@@ -75,6 +75,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('hotkey-needs-confirm', listener)
   },
 
+
+
   onHotkeyRegisterFailed: (callback: (info: { shortcutId: string; hotkey: string }) => void) => {
     const listener = (_event: unknown, info: { shortcutId: string; hotkey: string }) => callback(info)
     ipcRenderer.on('hotkey-register-failed', listener)

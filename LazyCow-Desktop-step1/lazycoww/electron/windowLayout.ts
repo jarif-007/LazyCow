@@ -133,18 +133,24 @@ function getExpectedProcessName(placement: Placement): string | null {
 /**
  * Position a batch of windows into their target zones.
  *
- * Rules (in order):
- *  1. Zone free → place window there.
- *  2. Zone occupied, app is NOT the last placement → fallback centered 60%.
- *  3. Zone occupied, app IS the last placement → move to nearest free zone.
- *  4. Zone occupied, no free zone at all → fallback centered 60%.
- *  5. Window not found after polling → not_found.
+ * Behavior (Batch 2d + 2c-polish):
+ *  1. For each placement, poll for its window (50ms warmup → 250ms taper,
+ *     capped at 3s per placement).
+ *  2. As soon as a window is found, claim its assigned zone unconditionally
+ *     (matches Windows Snap — anything in the way goes behind).
+ *  3. Bring the window to the front via ForceForeground (AttachThreadInput
+ *     + BringWindowToTop + SetForegroundWindow).
+ *  4. Window not found within its poll window → not_found.
+ *
+ * No occupancy fallback, no shifting, no scavenging — the earlier
+ * center-small behavior was superseded by user feedback.
  */
 export async function arrangeWindows(
   placements: Placement[],
   timeoutMs = 6000
 ): Promise<PlacementResult[]> {
   if (placements.length === 0) return []
+  const engineTimeoutMs = Math.min(timeoutMs, 90000)
 
   // Pre-resolve expected process names where possible, otherwise 'auto'.
   const placementsForScript = placements.map((p) => ({
@@ -160,14 +166,13 @@ export async function arrangeWindows(
     title: p.actionTitle,
   }))
 
-  const script = buildScript(placementsForScript, timeoutMs)
+  const script = buildScript(placementsForScript, engineTimeoutMs)
 
   let stdout = ''
   try {
-    // Piped via stdin to avoid the Windows command-line length limit that
-    // -EncodedCommand hits on large scripts. User data is JSON-escaped
-    // inside the script body — same security posture as EncodedCommand.
-    stdout = await runPowerShellScript(script, timeoutMs + 5000)
+    // Subprocess timeout = engine poll budget + 5s headroom.
+    const subprocessTimeout = engineTimeoutMs + 5000
+    stdout = await runPowerShellScript(script, subprocessTimeout)
   } catch (err) {
     const e = err as { stdout?: string; message?: string }
     stdout = e.stdout ?? ''
@@ -221,7 +226,7 @@ interface ScriptPlacement {
   title: string
 }
 
-function buildScript(placements: ScriptPlacement[], timeoutMs: number): string {
+function buildScript(placements: ScriptPlacement[], engineTimeoutMs: number): string {
   const json = JSON.stringify(placements)
   const escapedJson = json.replace(/'/g, "''") // single-quote escape for PS
 
@@ -269,6 +274,7 @@ public class WinArranger {
     [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
@@ -276,6 +282,7 @@ public class WinArranger {
     [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool IsImmersiveProcess(IntPtr hProcess);
 
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
@@ -284,10 +291,28 @@ public class WinArranger {
         public IntPtr Handle;
         public string Title;
         public string ProcessName;
+        public DateTime ProcessStartTime;   // used to prefer newest windows
+        public bool IsUwp;                  // hosted by ApplicationFrameHost — position-only
         public int X;
         public int Y;
         public int W;
         public int H;
+    }
+
+    // True if the given process is a UWP/modern-shell app.
+    // Uses Windows' own IsImmersiveProcess — authoritative and stable across
+    // Windows updates (unlike process-name allow-lists, which break every
+    // time a package is renamed, e.g. calc → calc1).
+    public static bool IsUwpWindow(uint pid) {
+        try {
+            using (var p = System.Diagnostics.Process.GetProcessById((int)pid)) {
+                return IsImmersiveProcess(p.Handle);
+            }
+        } catch {
+            // If we can't open the process (access denied, exited), assume
+            // it's not UWP. Stretching is the safer default.
+            return false;
+        }
     }
 
     public static List<WinItem> GetWindows() {
@@ -304,9 +329,11 @@ public class WinArranger {
             uint pid = 0;
             GetWindowThreadProcessId(hWnd, out pid);
             string procName = "";
+            DateTime procStart = DateTime.MinValue;
             try {
                 var p = System.Diagnostics.Process.GetProcessById((int)pid);
                 procName = p.ProcessName;
+                try { procStart = p.StartTime; } catch { /* access denied on some system procs */ }
             } catch {}
 
             // Skip the shell desktop
@@ -348,10 +375,17 @@ public class WinArranger {
             int wh = r.Bottom - r.Top;
             if (ww <= 0 || wh <= 0) return true;
 
+            // UWP detection via Windows' own IsImmersiveProcess — authoritative,
+            // requires no elevation, and survives Windows updates that rename
+            // process images (calc → calc1, etc.).
+            bool isUwp = IsUwpWindow(pid);
+
             list.Add(new WinItem {
                 Handle = hWnd,
                 Title = title,
                 ProcessName = procName,
+                ProcessStartTime = procStart,
+                IsUwp = isUwp,
                 X = r.Left,
                 Y = r.Top,
                 W = r.Right - r.Left,
@@ -428,19 +462,11 @@ $areaH = $area.Height
 # Diagnostic: log what PowerShell sees
 [Console]::Error.WriteLine("SCREEN_DEBUG: area=" + $areaX + "," + $areaY + " " + $areaW + "x" + $areaH + "  BoundsW=" + [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width + "x" + [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height)
 
-# ── Poll for windows up to timeout ──
-$deadline = [DateTime]::UtcNow.AddMilliseconds(${timeoutMs})
-$allWindows = @()
-$expectedProcs = $placements | ForEach-Object { $_.process } | Where-Object { $_ -ne 'auto' } | Select-Object -Unique
-
-while ([DateTime]::UtcNow -lt $deadline) {
-    $allWindows = [WinArranger]::GetWindows()
-    if ($expectedProcs.Count -eq 0) { break }
-    $foundProcs = $allWindows | ForEach-Object { $_.ProcessName } | Select-Object -Unique
-    $missing = @($expectedProcs | Where-Object { $_ -notin $foundProcs })
-    if ($missing.Count -eq 0) { break }
-    Start-Sleep -Milliseconds 250
-}
+# ── Poll + place each window as soon as it appears (Batch 2c-polish) ──
+# Instead of waiting for ALL windows then placing them together, we now
+# poll each placement individually with a fast interval, and place it
+# the moment it's found. This cuts the "small window then snap" gap.
+# We no longer use a single global poll loop.
 
 # ── Track which handles we've already placed ──
 $usedHandles = [System.Collections.Generic.HashSet[IntPtr]]::new()
@@ -456,22 +482,33 @@ function Find-Window($placement) {
             $proc = [WinArranger]::ResolveAssociationProcess($ext)
         }
     }
+
+    # Collect ALL unused candidate windows matching the process, then
+    # pick the one whose process started most recently. This prefers
+    # the window the shortcut JUST launched over a stale leftover.
+    $candidates = @()
     if (-not $proc -or $proc -eq 'auto') {
-        # Last resort — any unused window with a title
         foreach ($w in $allWindows) {
-            if (-not $usedHandles.Contains($w.Handle)) { return $w }
+            if (-not $usedHandles.Contains($w.Handle)) { $candidates += $w }
         }
-        return $null
+    } else {
+        foreach ($w in $allWindows) {
+            if ($usedHandles.Contains($w.Handle)) { continue }
+            if ($w.ProcessName -eq $proc) { $candidates += $w }
+        }
+        if ($candidates.Count -eq 0) {
+            foreach ($w in $allWindows) {
+                if ($usedHandles.Contains($w.Handle)) { continue }
+                if ($w.ProcessName -like "*$proc*") { $candidates += $w }
+            }
+        }
     }
-    foreach ($w in $allWindows) {
-        if ($usedHandles.Contains($w.Handle)) { continue }
-        if ($w.ProcessName -eq $proc) { return $w }
-    }
-    foreach ($w in $allWindows) {
-        if ($usedHandles.Contains($w.Handle)) { continue }
-        if ($w.ProcessName -like "*$proc*") { return $w }
-    }
-    return $null
+
+    if ($candidates.Count -eq 0) { return $null }
+
+    # Prefer the newest process. Sort by ProcessStartTime descending.
+    $sorted = $candidates | Sort-Object -Property ProcessStartTime -Descending
+    return $sorted[0]
 }
 
 # Diagnostic-only: logs who was in the way, but does NOT affect placement.
@@ -497,46 +534,126 @@ function Log-Zone-Occupancy($zoneX, $zoneY, $zoneW, $zoneH, $ourHandle) {
     }
 }
 
-function Place-Window($hwnd, $zoneX, $zoneY, $zoneW, $zoneH) {
+function Place-Window($hwnd, $zoneX, $zoneY, $zoneW, $zoneH, $isUwp) {
     $targetX = [int]($areaX + $zoneX * $areaW)
     $targetY = [int]($areaY + $zoneY * $areaH)
     $targetW = [int]($zoneW * $areaW)
     $targetH = [int]($zoneH * $areaH)
-    [Console]::Error.WriteLine("PLACE_DEBUG: hwnd=" + $hwnd + " target=" + $targetX + "," + $targetY + " " + $targetW + "x" + $targetH)
-    [WinArranger]::ShowWindow($hwnd, 9) | Out-Null   # SW_RESTORE — un-minimize
-    Start-Sleep -Milliseconds 50
-    $ok = [WinArranger]::MoveWindow($hwnd, $targetX, $targetY, $targetW, $targetH, $true)
+    $strategy = if ($isUwp) { 'native-centered' } else { 'stretched' }
+    [Console]::Error.WriteLine("PLACE_DEBUG: hwnd=" + $hwnd + " target=" + $targetX + "," + $targetY + " " + $targetW + "x" + $targetH + " strategy=" + $strategy)
+
+    # If the window is already at the target rect (within a small tolerance),
+    # skip the whole hide→move→show cycle — the visible hide/re-show was
+    # what the user perceived as a "flicker" when re-running a shortcut
+    # whose apps were already correctly placed.
+    $current = $null
+    foreach ($wi in $allWindows) {
+        if ($wi.Handle -eq $hwnd) { $current = $wi; break }
+    }
+    if ($current) {
+        $dx = [Math]::Abs($current.X - $targetX)
+        $dy = [Math]::Abs($current.Y - $targetY)
+        $dw = [Math]::Abs($current.W - $targetW)
+        $dh = [Math]::Abs($current.H - $targetH)
+        if ($dx -le 8 -and $dy -le 8 -and $dw -le 8 -and $dh -le 8) {
+            [Console]::Error.WriteLine("PLACE_SKIP: already at target rect (±8px)")
+            [WinArranger]::ForceForeground($hwnd)
+            return
+        }
+    }
+
+    [WinArranger]::ShowWindow($hwnd, 0) | Out-Null   # SW_HIDE
+    Start-Sleep -Milliseconds 20
+
+    if ($isUwp) {
+        # UWP apps (Calculator, Settings, Photos) declare a MaxWidth /
+        # MaxHeight in their manifest. Windows refuses to grow them beyond
+        # that. Move position-only via SetWindowPos with SWP_NOSIZE, but
+        # CENTER the window within the zone so it doesn't sit pinned to
+        # the top-left corner with dead space around it.
+        #
+        # We don't know the app's actual size here, so we use the current
+        # rect (passed in by the caller as $w in the outer scope via
+        # $allWindows). We look it up again here to stay self-contained.
+        $cur = $null
+        foreach ($wi in $allWindows) {
+            if ($wi.Handle -eq $hwnd) { $cur = $wi; break }
+        }
+        $winW = if ($cur) { $cur.W } else { 0 }
+        $winH = if ($cur) { $cur.H } else { 0 }
+        $centerX = $targetX + [int](($targetW - $winW) / 2)
+        $centerY = $targetY + [int](($targetH - $winH) / 2)
+        # Clamp so we don't go above/left of the zone
+        if ($centerX -lt $targetX) { $centerX = $targetX }
+        if ($centerY -lt $targetY) { $centerY = $targetY }
+
+        # SWP_NOZORDER = 0x0004, SWP_NOSIZE = 0x0001, SWP_NOACTIVATE = 0x0010
+        $flags = 0x0004 -bor 0x0001 -bor 0x0010
+        $ok = [WinArranger]::SetWindowPos($hwnd, [IntPtr]::Zero, $centerX, $centerY, 0, 0, $flags)
+    } else {
+        $ok = [WinArranger]::MoveWindow($hwnd, $targetX, $targetY, $targetW, $targetH, $true)
+    }
+
+    Start-Sleep -Milliseconds 20
+    [WinArranger]::ShowWindow($hwnd, 4) | Out-Null   # SW_SHOWNOACTIVATE
     [Console]::Error.WriteLine("PLACE_RESULT: MoveWindow returned " + $ok)
-    # Batch 2d — claim the space. Bring to front, matching Windows Snap.
+
     [WinArranger]::ForceForeground($hwnd)
 }
 
 # Place-Centered removed in Batch 2d — we claim the assigned zone instead.
 
-# ── Process each placement ──
-# Batch 2d — claim the assigned zone unconditionally (Windows Snap behavior).
-# No occupancy fallback, no shifting, no scavenging.
-for ($i = 0; $i -lt $placements.Count; $i++) {
-    $p = $placements[$i]
-    $w = Find-Window $p
+# ── Place each window as soon as it appears (Batch 2c-polish v2) ──
+# One global polling loop. Each iteration re-scans ALL not-yet-placed
+# placements. A slow or failed launch never blocks the others — apps that
+# are already on screen snap immediately, and a window that never appears
+# just falls through to not_found at the deadline.
+$placed = @{}                        # zoneId → $true
+$deadline = [DateTime]::UtcNow.AddMilliseconds(${engineTimeoutMs})
+# Fast warmup: poll every 15ms for the first 800ms (catches freshly-shown
+# windows before the user's eye registers them), then taper to 100ms.
+$warmupUntil = [DateTime]::UtcNow.AddMilliseconds(800)
+$pollInterval = 15
+$allWindows = @()
 
-    if (-not $w) {
+while ([DateTime]::UtcNow -lt $deadline -and $placed.Count -lt $placements.Count) {
+    $allWindows = [WinArranger]::GetWindows()
+
+    foreach ($p in $placements) {
+        if ($placed.ContainsKey($p.zoneId)) { continue }
+        $w = Find-Window $p
+        if (-not $w) { continue }
+
+        $usedHandles.Add($w.Handle) | Out-Null
+        $placed[$p.zoneId] = $true
+        Log-Zone-Occupancy $p.x $p.y $p.w $p.h $w.Handle  # diagnostic only
+        Place-Window $w.Handle $p.x $p.y $p.w $p.h $w.IsUwp
+        $results += [PSCustomObject]@{
+            zoneId = $p.zoneId
+            actionTitle = $p.title
+            status = 'placed'
+        }
+    }
+
+    if ($placed.Count -eq $placements.Count) { break }
+    Start-Sleep -Milliseconds $pollInterval
+    # Stay fast during warmup, then taper.
+    if ([DateTime]::UtcNow -lt $warmupUntil) {
+        $pollInterval = 15
+    } else {
+        $pollInterval = [Math]::Min(200, $pollInterval + 25)
+    }
+}
+
+# Anything never found becomes not_found
+foreach ($p in $placements) {
+    if (-not $placed.ContainsKey($p.zoneId)) {
         $results += [PSCustomObject]@{
             zoneId = $p.zoneId
             actionTitle = $p.title
             status = 'not_found'
-            reason = "Window for process '$($p.process)' not found"
+            reason = "Window for process '$($p.process)' not found within the polling window"
         }
-        continue
-    }
-
-    $usedHandles.Add($w.Handle) | Out-Null
-    Log-Zone-Occupancy $p.x $p.y $p.w $p.h $w.Handle  # diagnostic only
-    Place-Window $w.Handle $p.x $p.y $p.w $p.h
-    $results += [PSCustomObject]@{
-        zoneId = $p.zoneId
-        actionTitle = $p.title
-        status = 'placed'
     }
 }
 
