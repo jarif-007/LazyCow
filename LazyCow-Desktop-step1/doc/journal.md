@@ -94,3 +94,9 @@ Format:
 - **Files:** doc/context.md, doc/handoff.md, doc/missions.md, doc/decisions.md, doc/journal.md
 - **Verified:** routine documentation. tsc clean on the code tree at commit time.
 - **Commit:** 03e4d4f
+## 2026-10-06 — fix(window-layout): center unassigned windows at native size
+- **Issue:** Shortcut launches Notepad (assigned to Left) + Calculator (Not Arranged). Notepad snapped to Left and came to front; Calculator launched but appeared *behind* Notepad instead of on top. The engine only called `ForceForeground` on windows it *placed* — unassigned windows were never touched, so Windows decided their z-order, and it usually left them behind.
+- **Solution:** `buildPlacementsFromShortcut` now emits a placement for every arrangeable action, with `isUnassigned: true` for ones with no zone (previously it only emitted assigned ones). The Zod schema in `main.ts` accepts the flag. New PowerShell helper `Bring-Unassigned-Window` in `windowLayout.ts` computes the primary monitor's center and calls `MoveWindow` at the window's current size, then `ForceForeground`. The polling loop branches on `isUnassigned`: assigned placements call `Place-Window` (claim the zone), unassigned ones call `Bring-Unassigned-Window` (center + bring to front, no resize).
+- **Files:** electron/main.ts (WindowLayoutRequestSchema, arrange-windows-shortcut mapping, buildPlacementsFromShortcut); electron/windowLayout.ts (Placement.isUnassigned, ScriptPlacement.isUnassigned, arrangeWindows mapping, Bring-Unassigned-Window PowerShell helper, placement polling loop)
+- **Verified:** yes — manual test: Notepad (assigned Left) + Calculator (Not Arranged). Calculator now appears centered on the primary monitor at its native size, on top of Notepad. No resize applied. Terminal logs `UNASSIGNED_CENTER` when the helper fires.
+- **Commit:** 9a813e2
