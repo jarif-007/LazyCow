@@ -20,16 +20,11 @@ Status: COMPLETE (Session 6)
 **Blocker:** (none)
 
 ## Mission: Broken Path Fix UX (Q2b)
-Status: NOT STARTED
-- [ ] "Fix Paths" button in ShortcutCard should route to Builder AND auto-scroll to + highlight the first broken action
-- [ ] Add a `focusActionId` prop to Builder, plumbed from Library's `onEditShortcut` call
-- [ ] Flash the action card after scrolling (ring-primary + ring-offset for ~900ms, matches the Flow Preview's click-to-jump flash)
-
-## Mission: Window Layout Overlay Animation (Batch 3)
-Status: NOT STARTED (deferred)
-- [ ] Transparent frameless BrowserWindow overlay appears for ~600ms during arrangement
-- [ ] Fades in zone outlines, animates each app's icon flying to its zone, fades out as real windows are placed
-- [ ] Uses the user's chosen theme color
+Status: COMPLETE
+- [x] "Fix Paths" button in ShortcutCard routes to Builder AND auto-scrolls to + flashes the first broken action
+- [x] `brokenShortcuts` in Library is now a `Map<shortcutId, actionId>` — the first broken action's id threads through `ShortcutCard.onEditFlow` → `App.handleEditShortcut` → `Builder.focusActionId`
+- [x] Builder's effect retries up to 30× at 50ms intervals (handles the pre-commit render gap), then `scrollIntoView` + flashes the card for ~900ms
+- [x] **Verified:** manual test — clicking Fix Paths lands the user on the broken action with the primary ring
 
 ## Mission: Not-Arranged App Visibility (bug)
 Status: COMPLETE
@@ -56,6 +51,11 @@ Status: NOT STARTED
 - [ ] README describes an "Arrange Windows" action (moved to shortcut-level)
 - [ ] README states `sandbox: false` in the security section (it's `true`)
 - [ ] Needs a rewrite before any public sharing
+
+## Mission: Security Warning modal `open_file` filter bug
+Status: NOT STARTED
+- [ ] `Library.tsx`'s `runShortcut()` correctly flags `open_file` with a dangerous extension as dangerous and shows the confirmation modal, but the modal's `<span>` list only filters `run_script` and `launch_app`. Result: a shortcut whose only dangerous action is an `open_file` shows the modal with an empty list.
+- [ ] Fix: hoist `DANGEROUS_EXTENSIONS` to module scope and extend the filter to include `open_file` with a dangerous extension, showing *"Open: `<path>`"*.
 
 ## Mission: Dependency cleanup (deferred)
 Status: NOT STARTED
