@@ -1,18 +1,23 @@
 # LazyCow — Handoff
 
 Last updated: 2026-10-06
-Last commit: babb9cc
-Working tree: DIRTY — 5 files modified (see §5)
+Last commit: adb09a3
+Working tree: CLEAN
 
 ## §1 Current Focus
-Session 6 follow-up — Not-Arranged App Visibility fix, ready to commit.
-Unassigned launch-type actions now come to front and center on the primary
-monitor at native size (no resize). `Bring-Unassigned-Window` in
-`windowLayout.ts` handles the centering; `buildPlacementsFromShortcut` emits
-`isUnassigned: true` placements for every arrangeable action the user didn't
-zone. Verified manually with Notepad (assigned Left) + Calculator (Not Arranged).
-Next: commit the fix (code + docs), then move to Q2b — auto-scroll + highlight
-the broken action in Builder when "Fix Paths" is clicked.
+Session 6 fully wrapped: Window Layout engine, broken-path pre-flight,
+Test Layout/Flow, richer toasts, Not-Arranged App Visibility, and Q2b
+(broken-action auto-scroll) are all shipped + verified + committed.
+
+No sub-task is currently in flight. Next pick from `missions.md`. Candidates
+in rough priority order:
+1. `2e` — remove SCREEN_DEBUG / PLACE_DEBUG / PLACE_RESULT diagnostics
+2. Security Warning modal `open_file` filter bug (§2 Bugs)
+3. README accuracy pass (currently markets non-existent features)
+4. Batch 3 — Window Layout overlay animation
+5. Library & Settings responsive audit at 800–900px
+6. Dependency cleanup (4 unused deps)
+7. NFR Phases 4–6 (keyboard shortcuts, motion polish, perceived performance)
 
 ## §2 Sub-task State
 
@@ -51,17 +56,17 @@ the broken action in Builder when "Fix Paths" is clicked.
 - **Broken Path Fix UX (Q2b).** Clicking "Fix Paths" on a Library card now opens the Builder and auto-scrolls to + flashes the first broken action. `Library.tsx`'s `brokenShortcuts` is now a `Map<shortcutId, actionId>` (was `Set<shortcutId>`); the action id threads through `ShortcutCard.onEditFlow` → `App.handleEditShortcut` → `Builder.focusActionId`. Builder's effect retries up to 30× at 50ms intervals to handle the pre-commit render gap. Verified manually — Fix Paths lands the user on the broken action with a primary-colored ring for ~900ms.
 
 ### Done in code, NOT verified by user
-- Broken-path pre-flight (badge + Fix Paths + hotkey refusal)
+- Broken-path hotkey refusal toast (the badge + Fix Paths chain is verified via Q2b)
 - Test Layout button
 - Test Flow button
 - Info (i) popover content and positioning
 
 ### Not started
-- Q2b — auto-scroll + highlight the broken action in Builder
 - Batch 3 — overlay animation (deferred)
 - Cleanup — remove SCREEN_DEBUG / PLACE_DEBUG / PLACE_RESULT diagnostics from windowLayout.ts (keep OCCUPIED_BY)
 - Dependency cleanup (4 unused deps)
 - README accuracy pass
+- Security Warning modal `open_file` filter bug (see Bugs below)
 
 ### Bugs / blockers
 - (none blocking)
@@ -88,16 +93,15 @@ End-to-end parallel-path verification from a saved shortcut is still pending.
 
 ## §5 Uncommitted (mirrors git status)
 
-5 files modified — code + docs together.
+Working tree: CLEAN. All Session 6 follow-up work committed and pushed.
 
-**Code (2 files):**
-- `electron/main.ts` — `buildPlacementsFromShortcut` emits `isUnassigned: true` placements, Zod schema accepts the flag
-- `electron/windowLayout.ts` — `Placement.isUnassigned`, `ScriptPlacement.isUnassigned`, new `Bring-Unassigned-Window` PowerShell helper, loop branches on the flag
-
-**Docs (3 files):**
-- `doc/decisions.md` — new entry: "Unassigned windows are centered at native size, never resized"
-- `doc/handoff.md` — this fix recorded in §2
-- `doc/missions.md` — Not-Arranged App Visibility marked COMPLETE
+Recent commits (most recent first):
+- `adb09a3` docs: fill journal entry for Q2b (Fix Paths auto-scroll)
+- `eb7ea9e` docs: record Q2b completion in handoff
+- `f795b32` feat: auto-scroll Builder to the broken action when Fix Paths is clicked
+- `c785388` docs: fill journal entry for unassigned-window centering
+- `270afb1` docs: sync boot files for unassigned-window centering
+- `9a813e2` fix(window-layout): center unassigned windows at native size
 
 ### §5-PENDING (in flight — cleared on confirmation)
 - (nothing pending)
