@@ -48,6 +48,7 @@ the broken action in Builder when "Fix Paths" is clicked.
 - **Richer completion toasts** — layout summary appended.
 - **`useActionValidation` re-runs on window focus** so inline errors refresh after the user fixes a path in Explorer.
 - **Not-Arranged App Visibility.** Unassigned launch-type actions are brought to front and centered on the primary monitor at their native size — no resize. `buildPlacementsFromShortcut` emits a placement for every arrangeable action, with `isUnassigned: true` for ones with no zone. New `Bring-Unassigned-Window` PowerShell helper does the centering + `ForceForeground`. Verified manually — Calculator (Not Arranged) now appears centered on top of Notepad (assigned Left).
+- **Broken Path Fix UX (Q2b).** Clicking "Fix Paths" on a Library card now opens the Builder and auto-scrolls to + flashes the first broken action. `Library.tsx`'s `brokenShortcuts` is now a `Map<shortcutId, actionId>` (was `Set<shortcutId>`); the action id threads through `ShortcutCard.onEditFlow` → `App.handleEditShortcut` → `Builder.focusActionId`. Builder's effect retries up to 30× at 50ms intervals to handle the pre-commit render gap. Verified manually — Fix Paths lands the user on the broken action with a primary-colored ring for ~900ms.
 
 ### Done in code, NOT verified by user
 - Broken-path pre-flight (badge + Fix Paths + hotkey refusal)
@@ -99,7 +100,7 @@ End-to-end parallel-path verification from a saved shortcut is still pending.
 - `doc/missions.md` — Not-Arranged App Visibility marked COMPLETE
 
 ### §5-PENDING (in flight — cleared on confirmation)
-- (nothing pending — the Not-Arranged fix is verified and ready to commit)
+- (nothing pending)
 
 ## §6 Bootstrap order
 1. electron/main.ts, electron/preload.ts, electron/electron-env.d.ts, electron/windowLayout.ts
