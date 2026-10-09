@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { ActionItem, CatalogItem, actionCatalog, SavedShortcut, WindowLayoutConfig } from '../types/actions';
 import { ActionSidebar } from '../components/ActionSidebar';
 import { ActionSequence } from '../components/ActionSequence';
@@ -101,15 +101,31 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
     setHotkeyError('');
   }, [hotkey, recordedCombo, hotkeyRecording, editData]);
 
+  // Baseline snapshot of the loaded shortcut. When editing an existing
+  // shortcut, we compare against this to detect *real* changes — otherwise
+  // simply loading the form would flag it as "unsaved" the moment the user
+  // navigates away.
+  const baselineRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (editData) {
       setShortcutName(editData.name);
       setShortcutDesc(editData.description);
       setSequence(editData.actions);
       if (editData.hotkey) setRecordedCombo(editData.hotkey);
-      setWindowLayout(
-        editData.windowLayout ?? { enabled: false, layoutId: null, assignments: {} }
-      );
+      const wl = editData.windowLayout ?? { enabled: false, layoutId: null, assignments: {} };
+      setWindowLayout(wl);
+      // Snapshot for change detection. Uses the same defaults the form
+      // computes with so the baseline matches the post-render state.
+      baselineRef.current = JSON.stringify({
+        name: editData.name,
+        description: editData.description,
+        hotkey: editData.hotkey || 'Win + Alt + D',
+        actions: editData.actions,
+        windowLayout: wl,
+      });
+    } else {
+      baselineRef.current = null;
     }
   }, [editData, setRecordedCombo]);
 
@@ -144,7 +160,23 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
     return () => { cancelled = true; };
   }, [focusActionId]);
 
-  const hasUnsavedChanges = shortcutName.trim() !== '' || shortcutDesc.trim() !== '' || sequence.length > 0;
+  // New shortcuts: any content counts as unsaved. Existing shortcuts: only
+  // flag as unsaved when the current form differs from the loaded baseline.
+  // Reverting an edit brings the flag back to false.
+  const hasUnsavedChanges = (() => {
+    if (!editData) {
+      return shortcutName.trim() !== '' || shortcutDesc.trim() !== '' || sequence.length > 0;
+    }
+    if (!baselineRef.current) return false;
+    const current = JSON.stringify({
+      name: shortcutName,
+      description: shortcutDesc,
+      hotkey: recordedCombo || 'Win + Alt + D',
+      actions: sequence,
+      windowLayout,
+    });
+    return current !== baselineRef.current;
+  })();
   useEffect(() => { onUnsavedChanges?.(hasUnsavedChanges); }, [hasUnsavedChanges, onUnsavedChanges]);
 
   const addAction = useCallback((item: CatalogItem) => {
@@ -331,15 +363,26 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
   };
 
   const handleDiscard = () => {
+    const blankLayout = { enabled: false, layoutId: null, assignments: {} };
     setShortcutName('');
     setShortcutDesc('');
     setSequence([]);
-    setWindowLayout({ enabled: false, layoutId: null, assignments: {} });
+    setWindowLayout(blankLayout);
     clearCombo();
     setNameError(false);
     setDescError(false);
     setHotkeyError('');
     setNameErrorMessage('');
+    // Discard resets the form to a blank new-shortcut state. Snapshot that
+    // blank state as the baseline so leaving doesn't fire a spurious
+    // "unsaved changes" prompt right after the user chose to abandon edits.
+    baselineRef.current = JSON.stringify({
+      name: '',
+      description: '',
+      hotkey: 'Win + Alt + D',
+      actions: [],
+      windowLayout: blankLayout,
+    });
   };
 
   return (
