@@ -15,12 +15,19 @@ export function useHotkeyRecorder(initialCombo: string = ''): UseHotkeyRecorderR
   const keysRef = useRef<Set<string>>(new Set());
   const cleanupRef = useRef<(() => void) | null>(null);
 
-  useEffect(() => () => { if (cleanupRef.current) cleanupRef.current(); }, []);
+  // On unmount, make sure the main process stops suppressing hotkeys —
+  // otherwise a mid-recording unmount would leave hotkeys muted forever.
+  useEffect(() => () => {
+    window.electronAPI?.setHotkeyRecording(false);
+    if (cleanupRef.current) cleanupRef.current();
+  }, []);
 
   const stopRecording = useCallback(() => {
     if (cleanupRef.current) cleanupRef.current();
     cleanupRef.current = null;
     setRecording(false);
+    // Tell the main process hotkeys can fire again.
+    window.electronAPI?.setHotkeyRecording(false);
   }, []);
 
   const startRecording = useCallback(() => {
@@ -29,6 +36,9 @@ export function useHotkeyRecorder(initialCombo: string = ''): UseHotkeyRecorderR
     setRecording(true);
     setRecordedCombo('Listening...');
     keysRef.current = new Set();
+
+    // Tell the main process to suppress hotkey fires while we record.
+    window.electronAPI?.setHotkeyRecording(true);
 
     const handleKeyDown = (e: KeyboardEvent) => {
       e.preventDefault();

@@ -30,6 +30,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── Global hotkeys ──
   syncHotkeys: (shortcuts: unknown) => ipcRenderer.send('sync-hotkeys', shortcuts),
 
+  // ── Hotkey recording suppress flag ──
+  // True while the renderer is capturing a new hotkey. Main process
+  // suppresses hotkey callbacks so pressing an already-assigned combo
+  // doesn't fire that shortcut while the user records a new one.
+  setHotkeyRecording: (value: boolean) => ipcRenderer.send('set-hotkey-recording', value),
+
   // ── General settings ──
   updateGeneralSettings: (settings: { startAtLogin?: boolean; keepInTray?: boolean }) => {
     ipcRenderer.send('update-general-settings', settings)

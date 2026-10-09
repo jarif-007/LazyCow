@@ -1014,6 +1014,13 @@ function comboToAccelerator(combo: string): string | null {
 let cachedShowDangerWarnings = true
 
 /**
+ * True while the renderer is actively recording a new hotkey. Suppresses
+ * all global hotkey callbacks so that pressing an already-assigned
+ * combination while trying to record it doesn't fire that shortcut.
+ */
+let isRecordingHotkey = false
+
+/**
  * Check every path-based action in the shortcut for existence. Returns
  * the first broken action's title + value, or null if all paths are valid.
  * Used at hotkey-fire time to refuse launching a broken shortcut.
@@ -1032,6 +1039,10 @@ function findFirstBrokenPath(shortcut: ShortcutData): { title: string; value: st
   return null
 }
 
+ipcMain.on('set-hotkey-recording', (_event, value: unknown) => {
+  isRecordingHotkey = value === true
+})
+
 function registerHotkeys(shortcuts: ShortcutData[]) {
   globalShortcut.unregisterAll()
   hotkeyToShortcutId.clear()
@@ -1046,6 +1057,12 @@ function registerHotkeys(shortcuts: ShortcutData[]) {
 
     try {
       const ok = globalShortcut.register(accelerator, () => {
+        // While the user is recording a new hotkey, ignore hotkey fires —
+        // otherwise pressing an already-assigned combination while trying
+        // to record it would trigger that shortcut instead of being
+        // captured by the recorder.
+        if (isRecordingHotkey) return
+
         // Pre-flight: refuse the hotkey if any path action is broken.
         // Show a native Windows toast so the user sees it even when
         // they're focused on another app.

@@ -61,6 +61,8 @@ interface Window {
     >
     cancelShortcut: (shortcutId: string) => Promise<{ ok: boolean; error?: string }>
     syncHotkeys: (payload: ShortcutForIPC[] | { shortcuts: ShortcutForIPC[]; showDangerWarnings: boolean }) => void
+    /** Toggle whether the main process should suppress hotkey firing. */
+    setHotkeyRecording: (value: boolean) => void
     onShortcutProgress: (callback: (e: ShortcutProgressEvent) => void) => () => void
     onShortcutComplete: (callback: (e: { 
       shortcutId: string; 
