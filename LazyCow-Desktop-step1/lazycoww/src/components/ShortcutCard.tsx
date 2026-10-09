@@ -30,11 +30,13 @@ interface ShortcutCardProps {
     }>;
   };
   customColorMode: boolean;
+  onToggleSecured: (id: string) => void;
 }
 
 export const ShortcutCard: React.FC<ShortcutCardProps> = ({
   shortcut, shade, onShadeChange, onEditFlow, onRename, onDelete, onRun, onCancel, onDuplicate,
    hasHotkeyConflict, hasBrokenPath, brokenActionId, isCancelling, execution, customColorMode,
+  onToggleSecured,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const execState = execution || { status: 'idle' as const, currentStepIndex: -1, errors: [] as string[] };
@@ -87,6 +89,14 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
               <button onClick={() => { setMenuOpen(false); onDuplicate(shortcut); }} className="w-full text-left px-4 py-2.5 text-body-sm text-foreground hover:bg-muted/50 flex items-center gap-2">
                 <span className="material-symbols-outlined text-[18px]">content_copy</span> Duplicate
               </button>
+              <button onClick={() => { onToggleSecured(shortcut.id); }} className="w-full text-left px-4 py-2.5 text-body-sm text-foreground hover:bg-muted/50 flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[18px]">lock</span> Secured
+                </span>
+                <span className={`material-symbols-outlined text-[18px] ${shortcut.secured ? 'text-primary' : 'text-muted-foreground/40'}`}>
+                  {shortcut.secured ? 'toggle_on' : 'toggle_off'}
+                </span>
+              </button>
               <button onClick={() => { setMenuOpen(false); onRename(shortcut.id); }} className="w-full text-left px-4 py-2.5 text-body-sm text-foreground hover:bg-muted/50 flex items-center gap-2">
                 <span className="material-symbols-outlined text-[18px]">drive_file_rename_outline</span> Rename
               </button>
@@ -124,6 +134,11 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
         {hasBrokenPath && (
           <span className="inline-flex items-center gap-1 bg-amber-500/15 text-amber-500 border border-amber-500/30 text-[11px] font-medium px-2 py-0.5 rounded-md" title="This shortcut references a file or folder that no longer exists. Open Edit Flow to fix.">
             <span className="material-symbols-outlined text-[13px]">warning</span> Broken Path
+          </span>
+        )}
+        {shortcut.secured && (
+          <span className="inline-flex items-center gap-1 bg-primary/10 text-primary border border-primary/30 text-[11px] font-medium px-2 py-0.5 rounded-md" title="Secured shortcut — confirmation required before running.">
+            <span className="material-symbols-outlined text-[13px]">lock</span> Secured
           </span>
         )}
         {(() => {

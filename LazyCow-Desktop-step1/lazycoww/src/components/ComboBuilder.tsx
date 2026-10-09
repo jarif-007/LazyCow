@@ -1,72 +1,200 @@
-import React, { useState } from 'react';
+import React, { useMemo } from 'react';
 
+// Modifier order matters — combo string is always built in this order.
 const MODIFIERS = ['Ctrl', 'Alt', 'Shift', 'Win'];
-const KEYS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').concat(
-  'F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12'.split(' '),
-  '0 1 2 3 4 5 6 7 8 9'.split(' '),
-  'Space Enter Backspace Delete Escape Tab'.split(' ')
-);
 
-interface ComboBuilderProps {
-  onApply: (combo: string) => void;
-  onError: (msg: string) => void;
+interface KeyOption {
+  value: string;   // the physical key we save (e.g. "5", "B", "F12", "Left")
+  label: string;   // what the user sees in the dropdown
 }
 
-export const ComboBuilder: React.FC<ComboBuilderProps> = ({ onApply, onError }) => {
-  const [modifiers, setModifiers] = useState<string[]>(['']);
-  const [key, setKey] = useState<string>('');
+interface KeyGroup {
+  label: string;
+  keys: KeyOption[];
+}
 
-  const addModifier = () => setModifiers((p) => [...p, '']);
-  const removeModifier = (i: number) => { if (modifiers.length > 1) setModifiers((p) => p.filter((_, j) => j !== i)); };
+// Physical keys only. Shifted characters (%, !, ?, etc.) are not separate
+// entries — the user ticks Shift and picks the base key. This matches how
+// the OS thinks about keys and how the recorder saves them, so a combo
+// built here always round-trips through the recorder correctly.
+const KEY_GROUPS: KeyGroup[] = [
+  {
+    label: 'Letters',
+    keys: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map((c) => ({ value: c, label: c })),
+  },
+  {
+    label: 'Number keys',
+    keys: [
+      { value: '1', label: '1 / !' },
+      { value: '2', label: '2 / @' },
+      { value: '3', label: '3 / #' },
+      { value: '4', label: '4 / $' },
+      { value: '5', label: '5 / %' },
+      { value: '6', label: '6 / ^' },
+      { value: '7', label: '7 / &' },
+      { value: '8', label: '8 / *' },
+      { value: '9', label: '9 / (' },
+      { value: '0', label: '0 / )' },
+    ],
+  },
+  {
+    label: 'Function keys',
+    keys: Array.from({ length: 24 }, (_, i) => ({
+      value: `F${i + 1}`,
+      label: `F${i + 1}`,
+    })),
+  },
+  {
+    label: 'Symbols',
+    keys: [
+      { value: '`', label: '` / ~' },
+      { value: '-', label: '- / _' },
+      { value: '=', label: '= / +' },
+      { value: '[', label: '[ / {' },
+      { value: ']', label: '] / }' },
+      { value: '\\', label: '\\ / |' },
+      { value: ';', label: '; / :' },
+      { value: '\'', label: "' / \"" },
+      { value: ',', label: ', / <' },
+      { value: '.', label: '. / >' },
+      { value: '/', label: '/ / ?' },
+    ],
+  },
+  {
+    label: 'Navigation',
+    keys: [
+      { value: 'Up', label: 'Up' },
+      { value: 'Down', label: 'Down' },
+      { value: 'Left', label: 'Left' },
+      { value: 'Right', label: 'Right' },
+      { value: 'Home', label: 'Home' },
+      { value: 'End', label: 'End' },
+      { value: 'PageUp', label: 'Page Up' },
+      { value: 'PageDown', label: 'Page Down' },
+      { value: 'Insert', label: 'Insert' },
+    ],
+  },
+  {
+    label: 'Special',
+    keys: [
+      { value: 'Space', label: 'Space' },
+      { value: 'Return', label: 'Enter' },
+      { value: 'Esc', label: 'Escape' },
+      { value: 'Backspace', label: 'Backspace' },
+      { value: 'Delete', label: 'Delete' },
+      { value: 'Tab', label: 'Tab' },
+    ],
+  },
+];
 
-  const handleApply = () => {
-    const activeMods = Array.from(new Set(modifiers.filter((m) => m !== '')));
-    
-    if (activeMods.length === 0) { onError('At least one modifier (Ctrl, Alt, Shift, or Win) is required.'); return; }
-    if (!key) { onError('A key is required.'); return; }
-    
-    // Modifiers always come first, followed by the single trigger key
-    const combo = [...activeMods, key].join(' + ');
-    onApply(combo);
-    setModifiers(['']); setKey('');
+const ALL_KEY_VALUES = new Set(KEY_GROUPS.flatMap((g) => g.keys.map((k) => k.value)));
+
+/** Split "Ctrl + Shift + B" into { mods: ['Ctrl','Shift'], key: 'B' }. */
+function parseCombo(combo: string): { mods: string[]; key: string | null } {
+  if (!combo || combo === 'Listening...') return { mods: [], key: null };
+  const parts = combo.split(' + ').map((p) => p.trim()).filter(Boolean);
+  const mods: string[] = [];
+  let key: string | null = null;
+  for (const p of parts) {
+    if (MODIFIERS.includes(p)) mods.push(p);
+    else key = p;
+  }
+  if (key && key.length === 1) key = key.toUpperCase();
+  return { mods, key };
+}
+
+/** Build "Ctrl + Shift + B" from mods + key, ordered consistently. */
+function buildCombo(mods: string[], key: string | null): string {
+  if (!key) return '';
+  const ordered = MODIFIERS.filter((m) => mods.includes(m));
+  return [...ordered, key].join(' + ');
+}
+
+interface ComboBuilderProps {
+  /** The current combo string. Source of truth lives in the parent. */
+  value: string;
+  /** Called on every change. Parent is expected to persist and re-render. */
+  onChange: (combo: string) => void;
+}
+
+export const ComboBuilder: React.FC<ComboBuilderProps> = ({ value, onChange }) => {
+  const { mods, key } = useMemo(() => parseCombo(value), [value]);
+  const keyIsKnown = key ? ALL_KEY_VALUES.has(key) : false;
+  const preview = buildCombo(mods, key);
+
+  const toggleMod = (mod: string) => {
+    const next = mods.includes(mod) ? mods.filter((m) => m !== mod) : [...mods, mod];
+    onChange(buildCombo(next, key));
+  };
+
+  const setKey = (newKey: string) => {
+    onChange(buildCombo(mods, newKey || null));
   };
 
   return (
-    <div className="pt-3 border-t border-border/30">
-      <p className="text-[11px] text-muted-foreground/50 font-label-caps uppercase mb-2">Or build manually (for OS shortcuts):</p>
-      <div className="flex items-center gap-2 flex-wrap">
-        {/* Modifier slots */}
-        {modifiers.map((m, i) => (
-          <React.Fragment key={`m-${i}`}>
-            <div className="flex items-center gap-1">
-              <select value={m} onChange={(e) => setModifiers((p) => p.map((v, j) => (j === i ? e.target.value : v)))}
-                className="bg-background/50 border border-border rounded-lg px-3 py-2 font-body-sm text-foreground focus:ring-1 focus:ring-primary focus:outline-none">
-                <option value="">- Mod -</option>
-                {MODIFIERS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-              </select>
-              {modifiers.length > 1 && (
-                <button onClick={() => removeModifier(i)} className="text-red-400 hover:text-red-500 p-0.5">
-                  <span className="material-symbols-outlined text-[14px]">close</span>
-                </button>
-              )}
-            </div>
-            <span className="text-muted-foreground font-semibold text-sm">+</span>
-          </React.Fragment>
-        ))}
-        <button onClick={addModifier} className="p-1.5 rounded-lg border border-dashed border-border text-muted-foreground hover:text-primary hover:border-primary transition-colors" title="Add modifier">
-          <span className="material-symbols-outlined text-[16px]">add</span>
-        </button>
+    <div className="pt-4 mt-4 border-t border-border/30">
+      <p className="text-[11px] text-muted-foreground/60 font-label-caps uppercase mb-3">
+        Or build manually
+      </p>
 
-        {/* Single Key slot */}
-        <div className="flex items-center gap-1">
-          <select value={key} onChange={(e) => setKey(e.target.value)}
-            className="bg-background/50 border border-border rounded-lg px-3 py-2 font-body-sm text-foreground focus:ring-1 focus:ring-primary focus:outline-none">
-            <option value="">- Key -</option>
-            {KEYS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-          </select>
+      {/* Modifiers — toggle chips, no duplicates possible */}
+      <div className="flex items-center gap-3 mb-3">
+        <span className="text-[11px] uppercase text-muted-foreground font-label-caps w-20 shrink-0">
+          Modifiers
+        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          {MODIFIERS.map((mod) => {
+            const on = mods.includes(mod);
+            return (
+              <button
+                key={mod}
+                type="button"
+                onClick={() => toggleMod(mod)}
+                className={`px-3 py-1.5 rounded-lg text-body-sm font-medium border transition-colors ${on
+                    ? 'bg-primary/15 text-primary border-primary/40'
+                    : 'bg-background/50 text-foreground border-border hover:border-primary/40'
+                  }`}
+              >
+                {mod}
+              </button>
+            );
+          })}
         </div>
+      </div>
 
-        <button onClick={handleApply} className="px-4 py-2 rounded-lg font-label-caps text-label-caps bg-primary text-primary-foreground hover:opacity-90 transition-all">Set</button>
+      {/* Key — grouped dropdown, physical keys only */}
+      <div className="flex items-center gap-3 mb-3">
+        <span className="text-[11px] uppercase text-muted-foreground font-label-caps w-20 shrink-0">
+          Key
+        </span>
+        <select
+          value={keyIsKnown ? key! : ''}
+          onChange={(e) => setKey(e.target.value)}
+          className="flex-1 bg-background/50 border border-border rounded-lg px-3 py-2 font-body-sm text-foreground focus:ring-1 focus:ring-primary focus:outline-none"
+        >
+          <option value="">
+            {key && !keyIsKnown ? `Unknown key: ${key}` : '— Pick a key —'}
+          </option>
+          {KEY_GROUPS.map((group) => (
+            <optgroup key={group.label} label={group.label}>
+              {group.keys.map((k) => (
+                <option key={k.value} value={k.value}>
+                  {k.label}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      </div>
+
+      {/* Live preview */}
+      <div className="flex items-center gap-3">
+        <span className="text-[11px] uppercase text-muted-foreground font-label-caps w-20 shrink-0">
+          Preview
+        </span>
+        <span className="font-code-sm text-foreground bg-background/60 border border-border rounded-md px-3 py-1.5 min-w-[120px]">
+          {preview || <span className="text-muted-foreground/60 italic">— no combo —</span>}
+        </span>
       </div>
     </div>
   );

@@ -9,6 +9,16 @@ export interface ActionItem {
   icon: string;
   colorClass: string;
   value: string;
+  /**
+   * Per-action override for the Dangerous/Safe classification. When absent,
+   * the label is computed from the action type + value (see
+   * `getActionLabel` in utils/danger.ts). When present, it's locked to the
+   * user's choice regardless of value changes.
+   *
+   * There is intentionally no "reset to auto" UI — once the user sets an
+   * override, picking the other label is the only way to change it.
+   */
+  safetyOverride?: 'dangerous' | 'safe';
 }
 
 export interface CatalogItem {
@@ -31,6 +41,12 @@ export interface SavedShortcut {
   createdAt: string;
   /** Shortcut-level window arrangement config. Optional for backward compat. */
   windowLayout?: WindowLayoutConfig;
+  /**
+   * When true, running this shortcut (button or hotkey) requires confirmation
+   * first — a modal when the app is focused, a toast when it's minimized.
+   * Absent = default based on `securedShortcutsEnabled` at creation time.
+   */
+  secured?: boolean;
 }
 
 // ──────────────────────────────────────────────

@@ -13,8 +13,10 @@ interface LocalSettings {
   startAtLogin: boolean;
   keepInTray: boolean;
   executionNotifications: boolean;
-  /** When false, hide the "Dangerous" badge and skip the pre-run confirmation modal. */
-  showDangerWarnings: boolean;
+  /** When true, newly created shortcuts with dangerous actions start secured. */
+  securedShortcutsEnabled: boolean;
+  /** How long the double-press window lasts, in seconds. Min 5, max 30. */
+  securedDoublePressSeconds: number;
   generalShade: Shade;
   dataShade: Shade;
   /** Auto-scroll acceleration during card drag and drag-select. 2 (slow) – 20 (fast). */
@@ -25,7 +27,8 @@ const DEFAULT_SETTINGS: LocalSettings = {
   startAtLogin: true,
   keepInTray: true,
   executionNotifications: true,
-  showDangerWarnings: true,
+  securedShortcutsEnabled: true,
+  securedDoublePressSeconds: 5,
   generalShade: 'light',
   dataShade: 'light',
   autoScrollSpeed: 6,
@@ -47,7 +50,21 @@ export default function Settings({ themeMode, onThemeModeChange, customColorMode
     const stored = localStorage.getItem('lazycow_settings');
     let initialSettings = DEFAULT_SETTINGS;
     if (stored) {
-      try { initialSettings = { ...DEFAULT_SETTINGS, ...JSON.parse(stored) }; } catch { /* ignore */ }
+      try {
+        const parsed = JSON.parse(stored);
+        initialSettings = { ...DEFAULT_SETTINGS, ...parsed };
+        // Silent migration: the old `showDangerWarnings` key becomes
+        // `securedShortcutsEnabled`. Preserve the user's intent — if they
+        // had turned warnings off, they still want the runtime muted.
+        if (typeof parsed.showDangerWarnings === 'boolean'
+            && typeof parsed.securedShortcutsEnabled !== 'boolean') {
+          initialSettings.securedShortcutsEnabled = parsed.showDangerWarnings;
+          // Persist the migrated shape immediately so the next read is clean.
+          const next: Record<string, unknown> = { ...parsed, securedShortcutsEnabled: initialSettings.securedShortcutsEnabled };
+          delete next.showDangerWarnings;
+          localStorage.setItem('lazycow_settings', JSON.stringify(next));
+        }
+      } catch { /* ignore */ }
     }
     setSettings(initialSettings);
     if (window.electronAPI?.updateGeneralSettings) {

@@ -186,7 +186,7 @@ export const SettingsBlockedTriggers: React.FC<SettingsBlockedTriggersProps> = (
             </label>
           )}
 
-          <ComboBuilder onApply={(combo) => setRecordedCombo(combo)} onError={setError} />
+          <ComboBuilder value={recordedCombo} onChange={setRecordedCombo} />
         </div>
       </div>
 

@@ -6,6 +6,7 @@ import { ComboBuilder } from '../components/ComboBuilder';
 import { WindowLayoutPanel } from '../components/WindowLayout/WindowLayoutPanel';
 import { useHotkeyRecorder } from '../hooks/useHotkeyRecorder';
 import { useActionValidation } from '../hooks/useActionValidation';
+import { readSecuredShortcutsDefault } from '../utils/security';
 
 interface BuilderProps {
   editData?: SavedShortcut | null;
@@ -76,6 +77,114 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
 
   const { recording: hotkeyRecording, recordedCombo, startRecording, stopRecording, clearCombo, setRecordedCombo } = useHotkeyRecorder('Win + Alt + D');
   const hotkey = recordedCombo || 'Win + Alt + D';
+
+  // Tracks the combo that has been successfully Test-fired this session.
+  // Save is gated on `hotkey === verifiedHotkey`. When editing an existing
+  // shortcut, the loaded hotkey counts as verified (it was working before)
+  // so the user doesn't have to re-test an unchanged value.
+  const [verifiedHotkey, setVerifiedHotkey] = useState<string | null>(null);
+  const [testingHotkey, setTestingHotkey] = useState(false);
+  const [testHotkeyError, setTestHotkeyError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (editData && editData.hotkey) {
+      setVerifiedHotkey(editData.hotkey);
+    } else {
+      setVerifiedHotkey(null);
+    }
+    setTestHotkeyError(null);
+  }, [editData]);
+
+  // Any change to the recorded combo invalidates the previous test result
+  // and clears the previous error message. The Save gate
+  // (`hotkey === verifiedHotkey`) already handles the *disable* part —
+  // this effect is purely so the UI doesn't display stale feedback.
+  useEffect(() => {
+    setTestHotkeyError(null);
+  }, [hotkey]);
+
+  const hotkeyIsVerified = !!hotkey && hotkey !== 'Listening...' && hotkey === verifiedHotkey;
+
+  const handleTestHotkey = async () => {
+    if (!hotkey || hotkey === 'Listening...' || testingHotkey) return;
+    setTestingHotkey(true);
+    setTestHotkeyError(null);
+
+    // While the test runs, listen for whatever the user actually presses.
+    // LazyCow has focus during the test (the button was just clicked), so
+    // the renderer sees every keydown. This lets us distinguish:
+    //   - user pressed a *different* combo → we know exactly which
+    //   - user pressed the *correct* combo but Windows swallowed it
+    //     (UK Shift+digit, etc.) → keydown fired, globalShortcut didn't
+    //   - user pressed nothing → we fall through to a generic timeout
+    let wrongCombo: string | null = null;
+    let matchingKeydown = false;
+
+    const comboFromEvent = (e: KeyboardEvent): string => {
+      const parts: string[] = [];
+      if (e.ctrlKey) parts.push('Ctrl');
+      if (e.altKey) parts.push('Alt');
+      if (e.shiftKey) parts.push('Shift');
+      if (e.metaKey) parts.push('Win');
+      // Normalize the key the same way the recorder does, so the strings
+      // compare equal regardless of what e.key happens to be on this layout.
+      let key = e.key;
+      if (/^Key[A-Z]$/.test(e.code)) key = e.code.slice(3);
+      else if (/^Digit[0-9]$/.test(e.code)) key = e.code.slice(5);
+      else if (/^Numpad[0-9]$/.test(e.code)) key = e.code.slice(6);
+      else if (/^F[0-9]{1,2}$/.test(e.code)) key = e.code;
+      else if (e.code === 'Space') key = 'Space';
+      else if (e.code === 'Enter' || e.code === 'NumpadEnter') key = 'Return';
+      else if (e.code === 'Escape') key = 'Esc';
+      else if (e.code === 'Backspace') key = 'Backspace';
+      else if (e.code === 'Delete') key = 'Delete';
+      else if (e.code === 'Tab') key = 'Tab';
+      else if (e.code.startsWith('Arrow')) key = e.code.slice(5);
+      parts.push(key.length === 1 ? key.toUpperCase() : key);
+      return parts.join(' + ');
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (['Control', 'Alt', 'Shift', 'Meta', 'OS'].includes(e.key)) return;
+      const pressed = comboFromEvent(e);
+      if (pressed === hotkey) matchingKeydown = true;
+      else wrongCombo = pressed;
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+
+    const startedAt = Date.now();
+    try {
+      const res = await window.electronAPI?.testHotkey(hotkey);
+      // Keep the "Listening..." state visible for at least 400ms so the
+      // UI doesn't flicker on instant results.
+      const elapsed = Date.now() - startedAt;
+      if (elapsed < 400) await new Promise((r) => setTimeout(r, 400 - elapsed));
+
+      if (res?.fired) {
+        setVerifiedHotkey(hotkey);
+      } else if (wrongCombo) {
+        setVerifiedHotkey(null);
+        setTestHotkeyError(`Wrong key combo — press "${hotkey}" again.\n(You pressed "${wrongCombo}".)`);
+      } else if (matchingKeydown) {
+        setVerifiedHotkey(null);
+        setTestHotkeyError(
+          `This combo won't work as a hotkey on your keyboard. Try a letter like "Ctrl+Shift+B" or an F-key.`
+        );
+      } else if (res?.reason === 'registration-rejected') {
+        setVerifiedHotkey(null);
+        setTestHotkeyError('Windows won\'t allow this combo. Try a different one.');
+      } else {
+        setVerifiedHotkey(null);
+        setTestHotkeyError(`No key detected. Try "${hotkey}" again.`);
+      }
+    } catch {
+      setVerifiedHotkey(null);
+      setTestHotkeyError('Test failed. Try again.');
+    } finally {
+      window.removeEventListener('keydown', onKeyDown, true);
+      setTestingHotkey(false);
+    }
+  };
 
   const { errors: actionErrors, unsupportedIds } = useActionValidation(sequence);
   const hasUnsupported = unsupportedIds.size > 0;
@@ -191,6 +300,9 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
 
   const deleteAction = useCallback((id: string) => setSequence((p) => p.filter((a) => a.id !== id)), []);
   const updateValue = useCallback((id: string, value: string) => setSequence((p) => p.map((a) => a.id === id ? { ...a, value } : a)), []);
+  const updateSafetyOverride = useCallback((id: string, override: 'dangerous' | 'safe') => {
+    setSequence((p) => p.map((a) => a.id === id ? { ...a, safetyOverride: override } : a));
+  }, []);
   const moveUp = useCallback((i: number) => { if (i > 0) setSequence((p) => { const n = [...p]; [n[i-1], n[i]] = [n[i], n[i-1]]; return n; }); }, []);
   const moveDown = useCallback((i: number) => setSequence((p) => { if (i >= p.length - 1) return p; const n = [...p]; [n[i], n[i+1]] = [n[i+1], n[i]]; return n; }), []);
   const reorder = useCallback((from: number, to: number) => setSequence((p) => { const n = [...p]; const [m] = n.splice(from, 1); n.splice(to, 0, m); return n; }), []);
@@ -210,7 +322,7 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
     if (item) addAction(item);
   }, [addAction]);
 
-  const isFormValid = shortcutName.trim() !== '' && shortcutDesc.trim() !== '' && !hotkeyError && !nameError && actionsValid;
+  const isFormValid = shortcutName.trim() !== '' && shortcutDesc.trim() !== '' && !hotkeyError && !nameError && actionsValid && hotkeyIsVerified;
 
   const handleNameChange = (v: string) => {
     setShortcutName(v);
@@ -343,11 +455,19 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
       }
     }
 
+    // New shortcuts inherit `secured` from the global default + the
+    // shortcut's own dangerous content. Existing shortcuts keep whatever
+    // the user has already chosen (editData.secured).
+    const secured = editData
+      ? (editData.secured ?? sequence.some((a) => a.safetyOverride === 'dangerous' || (!a.safetyOverride && (a.type === 'run_script' || a.type === 'launch_app'))))
+      : (readSecuredShortcutsDefault() && sequence.some((a) => a.safetyOverride === 'dangerous' || (!a.safetyOverride && (a.type === 'run_script' || a.type === 'launch_app'))));
+
     const shortcut: SavedShortcut = {
       id: editData?.id || `sc-${Date.now()}`,
       name: shortcutName, description: shortcutDesc, hotkey, actions: sequence,
       createdAt: editData?.createdAt || new Date().toISOString(),
       windowLayout,
+      secured,
     };
 
     if (editData) {
@@ -446,7 +566,59 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
               </span>
             </button>
             {hotkeyError && <p className="text-red-500 font-body-sm mt-2 text-center">{hotkeyError}</p>}
-            <ComboBuilder onApply={(combo) => { setRecordedCombo(combo); setHotkeyError(''); }} onError={setHotkeyError} />
+            <ComboBuilder
+              value={recordedCombo}
+              onChange={(combo) => { setRecordedCombo(combo); setHotkeyError(''); }}
+            />
+
+            {/* Test Hotkey — mandatory before Save. Verifies that the
+                OS actually fires this combination on this system. */}
+            <div className="mt-4 pt-4 border-t border-border flex items-center gap-3 flex-wrap">
+              <button
+                type="button"
+                onClick={handleTestHotkey}
+                disabled={testingHotkey || !hotkey || hotkey === 'Listening...'}
+                className={`px-4 py-2 rounded-full font-title-sm text-body-sm flex items-center gap-2 transition-colors ${
+                  testingHotkey || !hotkey || hotkey === 'Listening...'
+                    ? 'bg-muted text-muted-foreground cursor-not-allowed'
+                    : hotkeyIsVerified
+                    ? 'bg-primary/10 text-primary border border-primary/40 hover:bg-primary/15'
+                    : 'bg-primary text-primary-foreground hover:opacity-90'
+                }`}
+              >
+                <span className={`material-symbols-outlined text-[18px] ${testingHotkey ? 'animate-pulse' : ''}`}>
+                  {testingHotkey ? 'radio_button_checked' : hotkeyIsVerified ? 'check_circle' : 'bolt'}
+                </span>
+                {testingHotkey ? 'Listening...' : hotkeyIsVerified ? 'Verified' : 'Test Hotkey'}
+              </button>
+
+              {testingHotkey && (
+                <span className="text-body-sm text-primary flex items-center gap-1">
+                  Press <span className="font-code-sm font-semibold">{hotkey}</span> now…
+                </span>
+              )}
+
+              {!testingHotkey && hotkeyIsVerified && (
+                <span className="text-body-sm text-green-500 flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                  Works
+                </span>
+              )}
+
+              {!testingHotkey && testHotkeyError && (
+                <span className="text-body-sm text-amber-500 flex items-start gap-1">
+                  <span className="material-symbols-outlined text-[16px] shrink-0">warning</span>
+                  <span className="whitespace-pre-line leading-tight">
+                    {testHotkeyError.split('\n')[0]}
+                    {testHotkeyError.includes('\n') && (
+                      <span className="block text-[11px] opacity-70 mt-0.5">
+                        {testHotkeyError.split('\n').slice(1).join(' ')}
+                      </span>
+                    )}
+                  </span>
+                </span>
+              )}
+            </div>
           </section>
           <WindowLayoutPanel
             value={windowLayout}
@@ -467,6 +639,7 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
             windowLayout={windowLayout}
             onWindowLayoutChange={setWindowLayout}
             showDangerWarnings={showDangerWarnings}
+            onUpdateSafetyOverride={updateSafetyOverride}
           />
           <footer className="mt-12 py-6 border-t border-border flex items-center justify-between gap-4 w-full">
             <button onClick={handleDiscard} className="px-6 py-2 border border-border rounded-full font-title-sm hover:bg-muted transition-colors flex items-center gap-2 text-muted-foreground">
@@ -503,6 +676,11 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
               {hasUnsupported
                 ? 'Remove unsupported actions before saving.'
                 : `Fix ${invalidActionCount} invalid action${invalidActionCount === 1 ? '' : 's'} before saving.`}
+            </p>
+          )}
+          {actionsValid && !hotkeyIsVerified && shortcutName.trim() !== '' && (
+            <p className="text-red-500 font-body-sm text-right mt-2">
+              Test the hotkey before saving.
             </p>
           )}
         </div>

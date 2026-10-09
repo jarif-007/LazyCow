@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { SavedShortcut } from '../types/actions';
 import { ShortcutCard } from '../components/ShortcutCard';
 import { DeleteModal } from '../components/DeleteModal';
-import { isDangerousAction } from '../utils/danger';
+import { ConfirmSecuredModal } from '../components/ConfirmSecuredModal';
+import { migrateShortcutsSecured, readSecuredDoublePressSeconds } from '../utils/security';
 
 interface LibraryProps {
   setActiveTab: (tab: string) => void;
@@ -26,19 +27,18 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
   const [brokenShortcuts, setBrokenShortcuts] = useState<Map<string, string>>(new Map());
 
   const refreshShortcuts = useCallback(() => {
-    const loaded: SavedShortcut[] = JSON.parse(localStorage.getItem('lazycow-shortcuts') || '[]');
+    const raw: SavedShortcut[] = JSON.parse(localStorage.getItem('lazycow-shortcuts') || '[]');
+    // One-time migration: compute `secured` for any shortcut that doesn't
+    // have it yet. Idempotent — running again is a no-op.
+    const { shortcuts: loaded, changed } = migrateShortcutsSecured(raw);
+    if (changed) {
+      localStorage.setItem('lazycow-shortcuts', JSON.stringify(loaded));
+    }
     setShortcuts(loaded);
     setFailedHotkeys(new Set());
-    const showDangerWarnings = (() => {
-      try {
-        const raw = localStorage.getItem('lazycow_settings');
-        if (!raw) return true;
-        return JSON.parse(raw)?.showDangerWarnings !== false;
-      } catch { return true; }
-    })();
     window.electronAPI?.syncHotkeys({
-      shortcuts: loaded.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions })),
-      showDangerWarnings,
+      shortcuts: loaded.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured })),
+      securedDoublePressSeconds: readSecuredDoublePressSeconds(),
     });
   }, []);
 
@@ -142,22 +142,11 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
     const card = shortcuts.find((s) => s.id === id);
     if (!card) return;
 
-    // Show the safety modal only if the user hasn't disabled warnings.
-    const showDangerWarnings = (() => {
-      try {
-        const raw = localStorage.getItem('lazycow_settings');
-        if (!raw) return true;
-        const parsed = JSON.parse(raw);
-        return parsed?.showDangerWarnings !== false;
-      } catch { return true; }
-    })();
-
-    if (showDangerWarnings) {
-      const hasScript = card.actions.some(isDangerousAction);
-      if (hasScript) {
-        setConfirmRun(card);
-        return;
-      }
+    // Show the secured modal only if this specific shortcut is secured.
+    // (The global toggle affects new-shortcut defaults, not existing ones.)
+    if (card.secured) {
+      setConfirmRun(card);
+      return;
     }
     executeShortcut(card);
   };
@@ -180,7 +169,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
       setExecutions((p) => ({ ...p, [shortcutId]: { ...(p[shortcutId] || { status: 'running' }), status: 'running', currentStepIndex: stepIndex } }));
     });
 
-      const offComplete = window.electronAPI?.onShortcutComplete(({ shortcutId, results, durationMs, cancelled, lastActionTitle, layoutResults }) => {
+    const offComplete = window.electronAPI?.onShortcutComplete(({ shortcutId, results, durationMs, cancelled, lastActionTitle, layoutResults }) => {
       const failed = results.filter((r) => !r.success);
       const status: 'success' | 'error' | 'cancelled' = cancelled
         ? 'cancelled'
@@ -198,6 +187,11 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
           layoutResults: layoutResults || undefined,
         },
       }));
+      // The shortcut finished running — if we had a confirmation modal
+      // open for it, close it. The user already ran the shortcut through
+      // some other path (hotkey, double-press, etc.), so the modal's job
+      // is done.
+      setConfirmRun((current) => (current?.id === shortcutId ? null : current));
       // Drop the "cancelling" flag now that execution has stopped
       setCancellingIds((p) => { const n = new Set(p); n.delete(shortcutId); return n; });
       resetTimers.current[shortcutId] = setTimeout(() => {
@@ -211,6 +205,11 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
 
     const offHotkey = window.electronAPI?.onHotkeyTriggered((shortcutId) => {
       setExecutions((p) => ({ ...p, [shortcutId]: { status: 'running', currentStepIndex: 0 } }));
+      // The shortcut is starting now — if we happen to have a
+      // confirmation modal for it open, close it. This defends against
+      // the race where a stale `hotkey-needs-confirm` arrives after
+      // `shortcut-complete` already fired.
+      setConfirmRun((current) => (current?.id === shortcutId ? null : current));
     });
 
     const offHotkeyNeedsConfirm = window.electronAPI?.onHotkeyNeedsConfirm((shortcutId) => {
@@ -221,7 +220,33 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
       });
     });
 
-    return () => { offProgress?.(); offComplete?.(); offFailed?.(); offHotkey?.(); offHotkeyNeedsConfirm?.(); };
+    // The main process tells us a shortcut started (via any path — hotkey,
+    // double-press, Library Run, etc.). Close any pending confirmation
+    // modal for that shortcut so we don't leave a stale dialog on screen.
+    const offStarted = window.electronAPI?.onShortcutStarted(({ shortcutId }) => {
+      setConfirmRun((current) => (current?.id === shortcutId ? null : current));
+    });
+
+    // If the window is minimized or hidden while a modal is open, close
+    // the modal. The user deferred the decision — when they come back
+    // and re-trigger, they get a fresh confirmation cycle instead of a
+    // stale dialog from a previous attempt.
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        setConfirmRun(null);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      offProgress?.();
+      offComplete?.();
+      offFailed?.();
+      offHotkey?.();
+      offHotkeyNeedsConfirm?.();
+      offStarted?.();
+    };
   }, []);
 
   const [cardShades, setCardShades] = useState<Record<string, 'light' | 'medium' | 'dark'>>({});
@@ -257,16 +282,9 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
       const updated = shortcuts.filter((s) => s.id !== deleteId);
       setShortcuts(updated);
       localStorage.setItem('lazycow-shortcuts', JSON.stringify(updated));
-      const showDangerWarnings = (() => {
-        try {
-          const raw = localStorage.getItem('lazycow_settings');
-          if (!raw) return true;
-          return JSON.parse(raw)?.showDangerWarnings !== false;
-        } catch { return true; }
-      })();
       window.electronAPI?.syncHotkeys({
-        shortcuts: updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions })),
-        showDangerWarnings,
+        shortcuts: updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured })),
+        securedDoublePressSeconds: readSecuredDoublePressSeconds(),
       });
     }
     setDeleteId(null);
@@ -290,16 +308,24 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
     const updated = [duplicated, ...shortcuts];
     setShortcuts(updated);
     localStorage.setItem('lazycow-shortcuts', JSON.stringify(updated));
-    const showDangerWarnings = (() => {
-      try {
-        const raw = localStorage.getItem('lazycow_settings');
-        if (!raw) return true;
-        return JSON.parse(raw)?.showDangerWarnings !== false;
-      } catch { return true; }
-    })();
     window.electronAPI?.syncHotkeys({
-      shortcuts: updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions })),
-      showDangerWarnings,
+      shortcuts: updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured })),
+      securedDoublePressSeconds: readSecuredDoublePressSeconds(),
+    });
+  };
+
+  // Toggle the per-shortcut "Secured" flag. Persists to localStorage and
+  // re-syncs the main process so the runtime reads the new value on the
+  // next hotkey fire. Available in the ShortcutCard's 3-dot menu.
+  const handleToggleSecured = (id: string) => {
+    const updated = shortcuts.map((s) =>
+      s.id === id ? { ...s, secured: !s.secured } : s
+    );
+    setShortcuts(updated);
+    localStorage.setItem('lazycow-shortcuts', JSON.stringify(updated));
+    window.electronAPI?.syncHotkeys({
+      shortcuts: updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured })),
+      securedDoublePressSeconds: readSecuredDoublePressSeconds(),
     });
   };
 
@@ -342,11 +368,10 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
         </div>
       )}
 
-      <div className={`grid grid-cols-1 gap-gutter transition-all duration-300 ${
-        gridCols === 2 ? 'md:grid-cols-2' : gridCols === 3 ? 'md:grid-cols-2 lg:grid-cols-3' : 'md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
-      }`}>
+      <div className={`grid grid-cols-1 gap-gutter transition-all duration-300 ${gridCols === 2 ? 'md:grid-cols-2' : gridCols === 3 ? 'md:grid-cols-2 lg:grid-cols-3' : 'md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
+        }`}>
         {filtered.map((card) => (
-           <ShortcutCard
+          <ShortcutCard
             key={card.id}
             shortcut={card}
             shade={cardShades[card.id] || 'medium'}
@@ -363,6 +388,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
             isCancelling={cancellingIds.has(card.id)}
             execution={executions[card.id]}
             customColorMode={customColorMode}
+            onToggleSecured={handleToggleSecured}
           />
         ))}
       </div>
@@ -388,38 +414,23 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
       {deleteId && <DeleteModal onConfirm={confirmDelete} onCancel={() => setDeleteId(null)} />}
 
       {confirmRun && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-background/90" onClick={() => setConfirmRun(null)} />
-          <div className="relative bg-card border border-border rounded-2xl p-6 shadow-2xl max-w-md w-full mx-4">
-            <h2 className="font-title-sm text-foreground mb-2 flex items-center gap-2">
-              <span className="material-symbols-outlined text-red-500">warning</span>
-              Security Warning
-            </h2>
-            <p className="text-body-sm text-muted-foreground mb-4">
-              "{confirmRun.name}" contains potentially dangerous actions (scripts or executables) that will run on your system:
-            </p>
-            <div className="bg-card-dark text-card-dark-fg font-code-sm p-3 rounded-lg flex flex-col gap-1 mb-4 max-h-40 overflow-y-auto">
-              {confirmRun.actions
-                .filter(isDangerousAction)
-                .map((a) => (
-                  <span key={a.id}>
-                    {a.type === 'launch_app' ? 'Launch: ' :
-                     a.type === 'open_file' ? 'Open: ' : ''}
-                    {a.value}
-                  </span>
-                ))}
-            </div>
-            <div className="flex gap-3">
-              <button onClick={() => setConfirmRun(null)} className="flex-1 px-4 py-2 border border-border rounded-full font-body-sm hover:bg-muted transition-colors text-foreground">Cancel</button>
-              <button
-                onClick={() => { const card = confirmRun; setConfirmRun(null); if (card) executeShortcut(card); }}
-                className="flex-1 px-4 py-2 bg-red-500 text-white rounded-full font-body-sm hover:opacity-90 transition-opacity"
-              >
-                Run Anyway
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmSecuredModal
+          shortcut={confirmRun}
+          onCancel={() => setConfirmRun(null)}
+          onConfirm={(updated: SavedShortcut) => {
+            // Persist any staged safety-override edits + (optionally) the
+            // secured=false flip from the all-safe prompt.
+            const persisted = shortcuts.map((s) => s.id === updated.id ? updated : s);
+            setShortcuts(persisted);
+            localStorage.setItem('lazycow-shortcuts', JSON.stringify(persisted));
+            window.electronAPI?.syncHotkeys({
+              shortcuts: persisted.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured })),
+              securedDoublePressSeconds: readSecuredDoublePressSeconds(),
+            });
+            setConfirmRun(null);
+            executeShortcut(updated);
+          }}
+        />
       )}
     </main>
   );

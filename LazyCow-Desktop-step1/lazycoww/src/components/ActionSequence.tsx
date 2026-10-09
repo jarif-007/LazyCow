@@ -26,8 +26,10 @@ interface ActionSequenceProps {
   /** Optional — when provided and enabled, each eligible card shows a position dropdown. */
   windowLayout?: WindowLayoutConfig;
   onWindowLayoutChange?: (next: WindowLayoutConfig) => void;
-  /** When false, hide the "Dangerous" badge on action cards. Threaded from Settings. */
+  /** When false, hide the safety chip on action cards. Threaded from Settings. */
   showDangerWarnings: boolean;
+  /** Called when the user picks a new safety override for an action. */
+  onUpdateSafetyOverride: (id: string, override: 'dangerous' | 'safe') => void;
 }
 
 const LONG_PRESS_MS = 400;
@@ -74,6 +76,7 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
   windowLayout,
   onWindowLayoutChange,
   showDangerWarnings,
+  onUpdateSafetyOverride,
 }) => {
   const sectionRef = useRef<HTMLElement>(null);
 
@@ -566,6 +569,7 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
                     : undefined
                 }
                 showDangerWarnings={showDangerWarnings}
+                onUpdateSafetyOverride={onUpdateSafetyOverride}
               />
             ))}
           </div>

@@ -7,7 +7,10 @@ interface SettingsGeneralProps {
     startAtLogin: boolean;
     keepInTray: boolean;
     executionNotifications: boolean;
-    showDangerWarnings: boolean;
+    /** When true, newly created shortcuts with dangerous actions start secured. */
+    securedShortcutsEnabled: boolean;
+    /** How long the double-press window lasts, in seconds. Min 5, max 30. */
+    securedDoublePressSeconds: number;
     generalShade: Shade;
     autoScrollSpeed: number;
   };
@@ -64,13 +67,40 @@ export const SettingsGeneral: React.FC<SettingsGeneralProps> = ({ settings, onUp
 
         <div className="p-4 flex items-center justify-between">
           <div>
-            <h3 className="font-body-md font-medium">Show safety warnings for dangerous actions</h3>
-            <p className="text-body-sm opacity-80">When off, scripts and executables run without a confirmation dialog or the "Dangerous" badge.</p>
+            <h3 className="font-body-md font-medium">Secured Shortcuts</h3>
+            <p className="text-body-sm opacity-80">
+              {settings.securedShortcutsEnabled
+                ? 'On — new shortcuts with dangerous actions are secured. A confirmation appears before they run.'
+                : 'Off — new shortcuts are not secured by default. You can still secure any shortcut from its menu.'}
+            </p>
           </div>
           <label className="relative inline-flex items-center cursor-pointer">
-            <input type="checkbox" className="sr-only peer" checked={settings.showDangerWarnings} onChange={(e) => onUpdate('showDangerWarnings', e.target.checked)} />
+            <input type="checkbox" className="sr-only peer" checked={settings.securedShortcutsEnabled} onChange={(e) => onUpdate('securedShortcutsEnabled', e.target.checked)} />
             <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all" />
           </label>
+        </div>
+
+        <div className="p-4 flex items-center justify-between">
+          <div>
+            <h3 className="font-body-md font-medium">Double-press window</h3>
+            <p className="text-body-sm opacity-80">
+              Seconds allowed between two hotkey presses to confirm a secured shortcut while LazyCow is minimized. 5–30.
+            </p>
+          </div>
+          <input
+            type="number"
+            min={5}
+            max={30}
+            step={1}
+            value={settings.securedDoublePressSeconds}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              if (!Number.isFinite(n)) return;
+              const clamped = Math.max(5, Math.min(30, Math.round(n)));
+              onUpdate('securedDoublePressSeconds', clamped);
+            }}
+            className="w-20 bg-background/80 border border-border rounded-lg px-3 py-2 font-body-sm text-foreground text-right focus:ring-primary focus:border-primary focus:outline-none"
+          />
         </div>
 
         {/* ── Auto-scroll speed ── */}

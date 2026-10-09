@@ -56,7 +56,19 @@ export function useHotkeyRecorder(initialCombo: string = ''): UseHotkeyRecorderR
       }
 
       if (!['Control', 'Alt', 'Shift', 'Meta', 'OS'].includes(e.key)) {
-        keysRef.current.add(e.key.length === 1 ? e.key.toUpperCase() : e.key);
+        // Prefer e.code (physical key) over e.key (produced character).
+        // e.key gives the shifted character — Shift+5 becomes '%' on US
+        // layouts, or a locale character on non-US ones. Electron's
+        // globalShortcut.register() can't handle those, so the combo
+        // silently fails to register. e.code is always the physical key
+        // ('Digit5', 'KeyB', 'F1'), which is what we actually want.
+        let key = e.key;
+        if (/^Key[A-Z]$/.test(e.code)) {
+          key = e.code.slice(3); // 'KeyB' → 'B'
+        } else if (/^Digit\d$/.test(e.code)) {
+          key = e.code.slice(5); // 'Digit5' → '5'
+        }
+        keysRef.current.add(key.length === 1 ? key.toUpperCase() : key);
       }
 
       const combo = Array.from(keysRef.current).join(' + ');

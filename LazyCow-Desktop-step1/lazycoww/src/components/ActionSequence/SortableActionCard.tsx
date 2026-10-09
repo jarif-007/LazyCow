@@ -4,7 +4,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { ActionItem, getFieldLabel } from '../../types/actions';
 import { ActionValueInput } from './ActionValueInput';
 import { PositionDropdown } from '../WindowLayout/PositionDropdown';
-import { isDangerousAction } from '../../utils/danger';
+import { getActionLabel } from '../../utils/danger';
 
 interface SortableActionCardProps {
   card: ActionItem;
@@ -35,8 +35,10 @@ interface SortableActionCardProps {
     /** Look up a sibling action by id (for greyed-out "(taken by X)" hints). */
     findActionById: (id: string) => { title: string } | undefined;
   };
-  /** When false, hide the "Dangerous" badge. Threaded from Settings via Builder. */
+  /** When false, hide the safety chip entirely. Threaded from Settings via Builder. */
   showDangerWarnings: boolean;
+  /** Called when the user picks a new safety override for this action. */
+  onUpdateSafetyOverride: (id: string, override: 'dangerous' | 'safe') => void;
 }
 
 export const SortableActionCard: React.FC<SortableActionCardProps> = ({
@@ -56,6 +58,7 @@ export const SortableActionCard: React.FC<SortableActionCardProps> = ({
   isSelected,
   windowLayout,
   showDangerWarnings,
+  onUpdateSafetyOverride,
 }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: card.id,
@@ -128,10 +131,12 @@ export const SortableActionCard: React.FC<SortableActionCardProps> = ({
           {/* Title */}
           <span className="font-title-sm text-foreground">{card.title}</span>
 
-          {showDangerWarnings && isDangerousAction(card) && (
-            <span className="bg-red-500/10 text-red-500 text-[10px] font-bold px-2 py-0.5 rounded border border-red-500/20 uppercase tracking-wider ml-2">
-              Dangerous
-            </span>
+          {showDangerWarnings && (
+            <SafetyChip
+              card={card}
+              disabled={selectionMode}
+              onChange={(override) => onUpdateSafetyOverride(card.id, override)}
+            />
           )}
         </div>
 
@@ -233,6 +238,67 @@ export const SortableActionCard: React.FC<SortableActionCardProps> = ({
           />
         </div>
       </div>
+    </div>
+  );
+};
+
+/**
+ * Colored dropdown chip that shows the action's effective Dangerous/Safe
+ * label and lets the user override it. Overrides persist on the action's
+ * `safetyOverride` field — see utils/danger.ts for the classification logic.
+ * There is no "reset to auto" — picking the other label is the only change.
+ */
+const SafetyChip: React.FC<{
+  card: ActionItem;
+  disabled?: boolean;
+  onChange: (override: 'dangerous' | 'safe') => void;
+}> = ({ card, disabled, onChange }) => {
+  const [open, setOpen] = React.useState(false);
+  const label = getActionLabel(card);
+  const isDanger = label === 'dangerous';
+
+  return (
+    <div className="relative ml-2">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={(e) => { e.stopPropagation(); if (!disabled) setOpen((p) => !p); }}
+        className={`flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded border uppercase tracking-wider transition-colors ${
+          disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
+        } ${
+          isDanger
+            ? 'bg-red-500/10 text-red-500 border-red-500/20 hover:bg-red-500/15'
+            : 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20 hover:bg-green-500/15'
+        }`}
+        title="Click to change the safety label for this action"
+      >
+        {isDanger ? 'Dangerous' : 'Safe'}
+        <span className="material-symbols-outlined text-[12px] leading-none">expand_more</span>
+      </button>
+      {open && (
+        <>
+          <div
+            className="fixed inset-0 z-40"
+            onClick={(e) => { e.stopPropagation(); setOpen(false); }}
+          />
+          <div className="absolute left-0 top-full mt-1 z-50 bg-card border border-border rounded-md shadow-lg py-1 min-w-[110px]">
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onChange('dangerous'); setOpen(false); }}
+              className="w-full text-left px-3 py-1.5 text-[11px] font-semibold text-red-500 hover:bg-red-500/10"
+            >
+              Dangerous
+            </button>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onChange('safe'); setOpen(false); }}
+              className="w-full text-left px-3 py-1.5 text-[11px] font-semibold text-green-600 dark:text-green-400 hover:bg-green-500/10"
+            >
+              Safe
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 };
