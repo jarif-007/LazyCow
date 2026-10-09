@@ -60,7 +60,7 @@ interface Window {
       }>
     >
     cancelShortcut: (shortcutId: string) => Promise<{ ok: boolean; error?: string }>
-    syncHotkeys: (shortcuts: ShortcutForIPC[]) => void
+    syncHotkeys: (payload: ShortcutForIPC[] | { shortcuts: ShortcutForIPC[]; showDangerWarnings: boolean }) => void
     onShortcutProgress: (callback: (e: ShortcutProgressEvent) => void) => () => void
     onShortcutComplete: (callback: (e: { 
       shortcutId: string; 

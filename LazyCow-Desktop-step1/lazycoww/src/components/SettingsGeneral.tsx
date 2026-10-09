@@ -7,6 +7,7 @@ interface SettingsGeneralProps {
     startAtLogin: boolean;
     keepInTray: boolean;
     executionNotifications: boolean;
+    showDangerWarnings: boolean;
     generalShade: Shade;
     autoScrollSpeed: number;
   };
@@ -57,6 +58,17 @@ export const SettingsGeneral: React.FC<SettingsGeneralProps> = ({ settings, onUp
           </div>
           <label className="relative inline-flex items-center cursor-pointer">
             <input type="checkbox" className="sr-only peer" checked={settings.executionNotifications} onChange={(e) => onUpdate('executionNotifications', e.target.checked)} />
+            <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all" />
+          </label>
+        </div>
+
+        <div className="p-4 flex items-center justify-between">
+          <div>
+            <h3 className="font-body-md font-medium">Show safety warnings for dangerous actions</h3>
+            <p className="text-body-sm opacity-80">When off, scripts and executables run without a confirmation dialog or the "Dangerous" badge.</p>
+          </div>
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" className="sr-only peer" checked={settings.showDangerWarnings} onChange={(e) => onUpdate('showDangerWarnings', e.target.checked)} />
             <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all" />
           </label>
         </div>

@@ -9,6 +9,19 @@ interface LibraryProps {
   customColorMode: boolean;
 }
 
+// Extensions treated as "dangerous" when opening a file — the pre-run gate
+// and the confirmation modal's item list both use this. Hoisted to module
+// scope so both call sites stay in sync (previously the modal only checked
+// `run_script` / `launch_app`, missing `open_file` with a dangerous ext).
+const DANGEROUS_EXTENSIONS = ['.exe', '.cmd', '.bat', '.ps1', '.vbs', '.js', '.wsf', '.msi'];
+
+function hasDangerousExtension(value: string): boolean {
+  const val = (value || '').toLowerCase();
+  const dotIdx = val.lastIndexOf('.');
+  if (dotIdx === -1) return false;
+  return DANGEROUS_EXTENSIONS.includes(val.slice(dotIdx));
+}
+
 export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, customColorMode }) => {
   const [gridCols, setGridCols] = useState<2 | 3 | 4>(2);
   const [searchQuery, setSearchQuery] = useState('');
@@ -28,7 +41,17 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
     const loaded: SavedShortcut[] = JSON.parse(localStorage.getItem('lazycow-shortcuts') || '[]');
     setShortcuts(loaded);
     setFailedHotkeys(new Set());
-    window.electronAPI?.syncHotkeys(loaded.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions })));
+    const showDangerWarnings = (() => {
+      try {
+        const raw = localStorage.getItem('lazycow_settings');
+        if (!raw) return true;
+        return JSON.parse(raw)?.showDangerWarnings !== false;
+      } catch { return true; }
+    })();
+    window.electronAPI?.syncHotkeys({
+      shortcuts: loaded.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions })),
+      showDangerWarnings,
+    });
   }, []);
 
   useEffect(() => { refreshShortcuts(); }, [refreshShortcuts]);
@@ -130,19 +153,27 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
   const runShortcut = (id: string) => {
     const card = shortcuts.find((s) => s.id === id);
     if (!card) return;
-    const DANGEROUS_EXTENSIONS = ['.exe', '.cmd', '.bat', '.ps1', '.vbs', '.js', '.wsf', '.msi'];
-    const hasScript = card.actions.some((a) => {
-      if (a.type === 'run_script' || a.type === 'launch_app') return true;
-      if (a.type === 'open_file') {
-        const val = (a.value || '').toLowerCase();
-        const dotIdx = val.lastIndexOf('.');
-        if (dotIdx !== -1 && DANGEROUS_EXTENSIONS.includes(val.slice(dotIdx))) return true;
+
+    // Show the safety modal only if the user hasn't disabled warnings.
+    const showDangerWarnings = (() => {
+      try {
+        const raw = localStorage.getItem('lazycow_settings');
+        if (!raw) return true;
+        const parsed = JSON.parse(raw);
+        return parsed?.showDangerWarnings !== false;
+      } catch { return true; }
+    })();
+
+    if (showDangerWarnings) {
+      const hasScript = card.actions.some((a) => {
+        if (a.type === 'run_script' || a.type === 'launch_app') return true;
+        if (a.type === 'open_file' && hasDangerousExtension(a.value)) return true;
+        return false;
+      });
+      if (hasScript) {
+        setConfirmRun(card);
+        return;
       }
-      return false;
-    });
-    if (hasScript) {
-      setConfirmRun(card);
-      return;
     }
     executeShortcut(card);
   };
@@ -242,7 +273,17 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
       const updated = shortcuts.filter((s) => s.id !== deleteId);
       setShortcuts(updated);
       localStorage.setItem('lazycow-shortcuts', JSON.stringify(updated));
-      window.electronAPI?.syncHotkeys(updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions })));
+      const showDangerWarnings = (() => {
+        try {
+          const raw = localStorage.getItem('lazycow_settings');
+          if (!raw) return true;
+          return JSON.parse(raw)?.showDangerWarnings !== false;
+        } catch { return true; }
+      })();
+      window.electronAPI?.syncHotkeys({
+        shortcuts: updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions })),
+        showDangerWarnings,
+      });
     }
     setDeleteId(null);
   };
@@ -265,7 +306,17 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
     const updated = [duplicated, ...shortcuts];
     setShortcuts(updated);
     localStorage.setItem('lazycow-shortcuts', JSON.stringify(updated));
-    window.electronAPI?.syncHotkeys(updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions })));
+    const showDangerWarnings = (() => {
+      try {
+        const raw = localStorage.getItem('lazycow_settings');
+        if (!raw) return true;
+        return JSON.parse(raw)?.showDangerWarnings !== false;
+      } catch { return true; }
+    })();
+    window.electronAPI?.syncHotkeys({
+      shortcuts: updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions })),
+      showDangerWarnings,
+    });
   };
 
   const filtered = shortcuts.filter((s) =>
@@ -364,9 +415,19 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
               "{confirmRun.name}" contains potentially dangerous actions (scripts or executables) that will run on your system:
             </p>
             <div className="bg-card-dark text-card-dark-fg font-code-sm p-3 rounded-lg flex flex-col gap-1 mb-4 max-h-40 overflow-y-auto">
-              {confirmRun.actions.filter((a) => a.type === 'run_script' || a.type === 'launch_app').map((a) => (
-                <span key={a.id}>{a.type === 'launch_app' ? 'Launch: ' : ''}{a.value}</span>
-              ))}
+              {confirmRun.actions
+                .filter((a) =>
+                  a.type === 'run_script' ||
+                  a.type === 'launch_app' ||
+                  (a.type === 'open_file' && hasDangerousExtension(a.value))
+                )
+                .map((a) => (
+                  <span key={a.id}>
+                    {a.type === 'launch_app' ? 'Launch: ' :
+                     a.type === 'open_file' ? 'Open: ' : ''}
+                    {a.value}
+                  </span>
+                ))}
             </div>
             <div className="flex gap-3">
               <button onClick={() => setConfirmRun(null)} className="flex-1 px-4 py-2 border border-border rounded-full font-body-sm hover:bg-muted transition-colors text-foreground">Cancel</button>

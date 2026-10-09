@@ -1006,6 +1006,14 @@ function comboToAccelerator(combo: string): string | null {
 }
 
 /**
+ * Cached value of the user's "show safety warnings" preference. The
+ * renderer sends this on every `sync-hotkeys` call so the main process
+ * knows whether to gate dangerous shortcuts behind a confirm round-trip.
+ * Defaults to `true` when the setting is missing (older installs).
+ */
+let cachedShowDangerWarnings = true
+
+/**
  * Check every path-based action in the shortcut for existence. Returns
  * the first broken action's title + value, or null if all paths are valid.
  * Used at hotkey-fire time to refuse launching a broken shortcut.
@@ -1059,7 +1067,9 @@ function registerHotkeys(shortcuts: ShortcutData[]) {
           return
         }
 
-        if (shortcutHasScript(shortcut)) {
+        // When the user has disabled safety warnings, dangerous shortcuts
+        // fire directly without the confirm round-trip.
+        if (cachedShowDangerWarnings && shortcutHasScript(shortcut)) {
           win?.webContents.send('hotkey-needs-confirm', shortcut.id)
         } else {
           win?.webContents.send('hotkey-triggered', shortcut.id)
@@ -1077,9 +1087,24 @@ function registerHotkeys(shortcuts: ShortcutData[]) {
   }
 }
 
-ipcMain.on('sync-hotkeys', (_event, rawShortcuts: unknown) => {
+ipcMain.on('sync-hotkeys', (_event, payload: unknown) => {
   try {
-    const shortcuts = z.array(ShortcutSchema).max(500).parse(rawShortcuts)
+    // The renderer now sends `{ shortcuts, showDangerWarnings }`. We also
+    // accept the legacy bare-array shape so a stale renderer build can't
+    // silently break hotkey registration.
+    let shortcutsInput: unknown
+    if (Array.isArray(payload)) {
+      shortcutsInput = payload
+    } else if (payload && typeof payload === 'object' && 'shortcuts' in payload) {
+      const p = payload as { shortcuts: unknown; showDangerWarnings?: boolean }
+      shortcutsInput = p.shortcuts
+      if (typeof p.showDangerWarnings === 'boolean') {
+        cachedShowDangerWarnings = p.showDangerWarnings
+      }
+    } else {
+      return
+    }
+    const shortcuts = z.array(ShortcutSchema).max(500).parse(shortcutsInput)
     registerHotkeys(shortcuts)
   } catch (err: unknown) {
     console.error('Failed to sync hotkeys due to invalid payload:', err)

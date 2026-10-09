@@ -26,6 +26,8 @@ interface ActionSequenceProps {
   /** Optional — when provided and enabled, each eligible card shows a position dropdown. */
   windowLayout?: WindowLayoutConfig;
   onWindowLayoutChange?: (next: WindowLayoutConfig) => void;
+  /** When false, hide the "Dangerous" badge on action cards. Threaded from Settings. */
+  showDangerWarnings: boolean;
 }
 
 const LONG_PRESS_MS = 400;
@@ -71,6 +73,7 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
   onDropAtEnd,
   windowLayout,
   onWindowLayoutChange,
+  showDangerWarnings,
 }) => {
   const sectionRef = useRef<HTMLElement>(null);
 
@@ -533,7 +536,7 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
       >
         <SortableContext items={sequence.map((a) => a.id)} strategy={verticalListSortingStrategy}>
           <div className="flex flex-col gap-4">
-            {sequence.map((card, index) => (
+               {sequence.map((card, index) => (
               <SortableActionCard
                 key={card.id}
                 card={card}
@@ -562,6 +565,7 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
                       }
                     : undefined
                 }
+                showDangerWarnings={showDangerWarnings}
               />
             ))}
           </div>

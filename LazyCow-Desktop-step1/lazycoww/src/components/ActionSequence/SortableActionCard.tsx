@@ -34,6 +34,8 @@ interface SortableActionCardProps {
     /** Look up a sibling action by id (for greyed-out "(taken by X)" hints). */
     findActionById: (id: string) => { title: string } | undefined;
   };
+  /** When false, hide the "Dangerous" badge. Threaded from Settings via Builder. */
+  showDangerWarnings: boolean;
 }
 
 export const SortableActionCard: React.FC<SortableActionCardProps> = ({
@@ -52,6 +54,7 @@ export const SortableActionCard: React.FC<SortableActionCardProps> = ({
   selectionMode,
   isSelected,
   windowLayout,
+  showDangerWarnings,
 }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: card.id,
@@ -127,7 +130,7 @@ export const SortableActionCard: React.FC<SortableActionCardProps> = ({
           {/* Title */}
           <span className="font-title-sm text-foreground">{card.title}</span>
 
-          {(card.type === 'run_script' || card.type === 'launch_app') && (
+          {showDangerWarnings && (card.type === 'run_script' || card.type === 'launch_app') && (
             <span className="bg-red-500/10 text-red-500 text-[10px] font-bold px-2 py-0.5 rounded border border-red-500/20 uppercase tracking-wider ml-2">
               Dangerous
             </span>

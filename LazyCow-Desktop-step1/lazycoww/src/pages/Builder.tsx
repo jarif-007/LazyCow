@@ -43,6 +43,34 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
     layoutId: null,
     assignments: {},
   });
+  // Read the "show danger warnings" setting. Re-reads on window focus and on
+  // cross-tab storage events so toggling it in Settings takes effect without
+  // a page reload. Same pattern as autoScrollSpeed in ActionSequence.tsx.
+  const readShowDangerWarnings = () => {
+    try {
+      const raw = localStorage.getItem('lazycow_settings');
+      if (!raw) return true;
+      return JSON.parse(raw)?.showDangerWarnings !== false;
+    } catch { return true; }
+  };
+  const [showDangerWarnings, setShowDangerWarnings] = useState<boolean>(readShowDangerWarnings);
+  useEffect(() => {
+    const onRefresh = () => setShowDangerWarnings(readShowDangerWarnings());
+    // `lazycow-settings-changed` — fires from Settings.tsx when any general
+    // setting is toggled. This is the one that actually matters: user goes
+    // Settings → toggle → Builder, all within the same Electron window, so
+    // no `storage` or `focus` event would fire.
+    window.addEventListener('lazycow-settings-changed', onRefresh);
+    // `storage` — cross-window fallback (dev with multiple windows open).
+    window.addEventListener('storage', onRefresh);
+    // `focus` — if the user alt-tabs away and comes back.
+    window.addEventListener('focus', onRefresh);
+    return () => {
+      window.removeEventListener('lazycow-settings-changed', onRefresh);
+      window.removeEventListener('storage', onRefresh);
+      window.removeEventListener('focus', onRefresh);
+    };
+  }, []);
   const [hotkeyError, setHotkeyError] = useState('');
   const [testRunning, setTestRunning] = useState(false);
 
@@ -395,6 +423,7 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
             onDropAtEnd={handleDropAtEnd}
             windowLayout={windowLayout}
             onWindowLayoutChange={setWindowLayout}
+            showDangerWarnings={showDangerWarnings}
           />
           <footer className="mt-12 py-6 border-t border-border flex items-center justify-between gap-4 w-full">
             <button onClick={handleDiscard} className="px-6 py-2 border border-border rounded-full font-title-sm hover:bg-muted transition-colors flex items-center gap-2 text-muted-foreground">

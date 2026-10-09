@@ -13,6 +13,8 @@ interface LocalSettings {
   startAtLogin: boolean;
   keepInTray: boolean;
   executionNotifications: boolean;
+  /** When false, hide the "Dangerous" badge and skip the pre-run confirmation modal. */
+  showDangerWarnings: boolean;
   generalShade: Shade;
   dataShade: Shade;
   /** Auto-scroll acceleration during card drag and drag-select. 2 (slow) – 20 (fast). */
@@ -23,6 +25,7 @@ const DEFAULT_SETTINGS: LocalSettings = {
   startAtLogin: true,
   keepInTray: true,
   executionNotifications: true,
+  showDangerWarnings: true,
   generalShade: 'light',
   dataShade: 'light',
   autoScrollSpeed: 6,
@@ -60,6 +63,10 @@ export default function Settings({ themeMode, onThemeModeChange, customColorMode
   const updated = { ...settings, [key]: value };
   setSettings(updated);
   localStorage.setItem('lazycow_settings', JSON.stringify(updated));
+  // Notify sibling components (Builder, Library) that a setting changed,
+  // so they can re-read localStorage without a page reload. Standard
+  // pattern for cross-component state without a store.
+  window.dispatchEvent(new CustomEvent('lazycow-settings-changed', { detail: { key, value } }));
   if (key === 'startAtLogin' || key === 'keepInTray' || key === 'executionNotifications') {
     if (window.electronAPI?.updateGeneralSettings) {
       window.electronAPI.updateGeneralSettings({ [key]: value as boolean });
