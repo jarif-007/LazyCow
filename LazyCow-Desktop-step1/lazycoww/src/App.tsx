@@ -243,22 +243,35 @@ function App() {
     if (themeHydrated) localStorage.setItem('lazycow-theme-mode', nextMode);
   };
 
+  // Clear any in-flight edit state when the user leaves Builder. Editing a
+  // shortcut is a single-session action — once the user navigates away, the
+  // Builder should come back as a fresh "new shortcut" form on next visit.
+  // Without this, `editShortcut` stays set and re-hydrates the form when
+  // the user returns, making it look like an old edit is still active.
+  const clearBuilderEditState = useCallback(() => {
+    setEditShortcut(null);
+    setFocusActionId(undefined);
+    setBuilderKey((k) => k + 1);
+  }, []);
+
   const handleTabClick = useCallback((tab: string) => {
     if (activeTab === 'builder' && hasUnsavedChanges && tab !== 'builder') {
       setPendingTab(tab);
       setShowConfirmModal(true);
       return;
     }
+    // Leaving Builder (with no unsaved changes) — reset the edit session.
+    if (activeTab === 'builder' && tab !== 'builder') {
+      clearBuilderEditState();
+    }
     setActiveTab(tab);
-    if (activeTab === 'builder') setEditShortcut(null);
     if (tab === 'library') setLibraryRefreshKey((k) => k + 1);
-  }, [activeTab, hasUnsavedChanges]);
+  }, [activeTab, hasUnsavedChanges, clearBuilderEditState]);
 
   const handleConfirmLeave = () => {
     setShowConfirmModal(false);
     setHasUnsavedChanges(false);
-    setEditShortcut(null);
-    setBuilderKey((k) => k + 1);
+    clearBuilderEditState();
     if (pendingTab) { setActiveTab(pendingTab); setPendingTab(null); }
     setLibraryRefreshKey((k) => k + 1);
   };
