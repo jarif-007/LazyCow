@@ -2,24 +2,12 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { SavedShortcut } from '../types/actions';
 import { ShortcutCard } from '../components/ShortcutCard';
 import { DeleteModal } from '../components/DeleteModal';
+import { isDangerousAction } from '../utils/danger';
 
 interface LibraryProps {
   setActiveTab: (tab: string) => void;
   onEditShortcut: (shortcut: SavedShortcut, focusActionId?: string) => void;
   customColorMode: boolean;
-}
-
-// Extensions treated as "dangerous" when opening a file — the pre-run gate
-// and the confirmation modal's item list both use this. Hoisted to module
-// scope so both call sites stay in sync (previously the modal only checked
-// `run_script` / `launch_app`, missing `open_file` with a dangerous ext).
-const DANGEROUS_EXTENSIONS = ['.exe', '.cmd', '.bat', '.ps1', '.vbs', '.js', '.wsf', '.msi'];
-
-function hasDangerousExtension(value: string): boolean {
-  const val = (value || '').toLowerCase();
-  const dotIdx = val.lastIndexOf('.');
-  if (dotIdx === -1) return false;
-  return DANGEROUS_EXTENSIONS.includes(val.slice(dotIdx));
 }
 
 export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, customColorMode }) => {
@@ -165,11 +153,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
     })();
 
     if (showDangerWarnings) {
-      const hasScript = card.actions.some((a) => {
-        if (a.type === 'run_script' || a.type === 'launch_app') return true;
-        if (a.type === 'open_file' && hasDangerousExtension(a.value)) return true;
-        return false;
-      });
+      const hasScript = card.actions.some(isDangerousAction);
       if (hasScript) {
         setConfirmRun(card);
         return;
@@ -416,11 +400,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
             </p>
             <div className="bg-card-dark text-card-dark-fg font-code-sm p-3 rounded-lg flex flex-col gap-1 mb-4 max-h-40 overflow-y-auto">
               {confirmRun.actions
-                .filter((a) =>
-                  a.type === 'run_script' ||
-                  a.type === 'launch_app' ||
-                  (a.type === 'open_file' && hasDangerousExtension(a.value))
-                )
+                .filter(isDangerousAction)
                 .map((a) => (
                   <span key={a.id}>
                     {a.type === 'launch_app' ? 'Launch: ' :

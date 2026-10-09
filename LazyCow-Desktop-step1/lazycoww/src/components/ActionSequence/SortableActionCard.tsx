@@ -4,6 +4,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { ActionItem, getFieldLabel } from '../../types/actions';
 import { ActionValueInput } from './ActionValueInput';
 import { PositionDropdown } from '../WindowLayout/PositionDropdown';
+import { isDangerousAction } from '../../utils/danger';
 
 interface SortableActionCardProps {
   card: ActionItem;
@@ -78,13 +79,12 @@ export const SortableActionCard: React.FC<SortableActionCardProps> = ({
       style={style}
       onDragOver={(e) => onSidebarDragOver(e, index)}
       onDrop={(e) => onSidebarDrop(e, index)}
-      className={`relative card-themeable bg-gradient-to-br from-card-medium to-card-dark border rounded-xl p-4 shadow-sm flex flex-col gap-4 transition-all ${
-        isSelected
+      className={`relative card-themeable bg-gradient-to-br from-card-medium to-card-dark border rounded-xl p-4 shadow-sm flex flex-col gap-4 transition-all ${isSelected
           ? 'border-primary border-2 ring-1 ring-primary/40 shadow-lg shadow-primary/10'
           : isSidebarDropTarget
             ? 'border-primary border-2 bg-primary/5 shadow-lg shadow-primary/10'
             : 'border-border/80'
-      }`}
+        }`}
     >
       {/* Selection overlay — captures all pointer events so inputs/buttons are inert */}
       {selectionMode && (
@@ -96,9 +96,8 @@ export const SortableActionCard: React.FC<SortableActionCardProps> = ({
           {/* Checkbox (selection mode only) */}
           {selectionMode && (
             <div
-              className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
-                isSelected ? 'bg-primary border-primary' : 'bg-transparent border-border'
-              }`}
+              className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${isSelected ? 'bg-primary border-primary' : 'bg-transparent border-border'
+                }`}
             >
               {isSelected && (
                 <span className="material-symbols-outlined text-[12px] text-primary-foreground font-bold">
@@ -112,11 +111,10 @@ export const SortableActionCard: React.FC<SortableActionCardProps> = ({
           <span
             {...dragHandleProps}
             data-drag-handle
-            className={`material-symbols-outlined p-1 select-none touch-none ${
-              selectionMode
+            className={`material-symbols-outlined p-1 select-none touch-none ${selectionMode
                 ? 'text-muted-foreground/30 cursor-not-allowed'
                 : 'text-muted-foreground cursor-grab hover:text-primary active:cursor-grabbing'
-            }`}
+              }`}
             title={selectionMode ? 'Reordering disabled while selecting' : 'Drag to reorder'}
           >
             drag_indicator
@@ -130,7 +128,7 @@ export const SortableActionCard: React.FC<SortableActionCardProps> = ({
           {/* Title */}
           <span className="font-title-sm text-foreground">{card.title}</span>
 
-          {showDangerWarnings && (card.type === 'run_script' || card.type === 'launch_app') && (
+          {showDangerWarnings && isDangerousAction(card) && (
             <span className="bg-red-500/10 text-red-500 text-[10px] font-bold px-2 py-0.5 rounded border border-red-500/20 uppercase tracking-wider ml-2">
               Dangerous
             </span>
