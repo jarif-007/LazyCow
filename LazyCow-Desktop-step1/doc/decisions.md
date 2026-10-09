@@ -171,3 +171,74 @@ Append-only. Never delete. Each entry: date, decision, alternatives, why, conseq
   - Windows' "remember last position" behavior is intentionally overridden for unassigned apps in layout-enabled shortcuts. Apps that *are* assigned a zone still honor that assignment; only unassigned ones get centered.
   - UWP apps that refuse `MoveWindow` may ignore this and Windows may snap them to its own default — usually still centered, so the user sees what they asked for anyway.
 - **Status:** active
+## 2026-10-09 — Secured shortcuts are per-shortcut, not a global toggle
+- **Decision:** Each shortcut carries its own `secured: boolean`. The runtime gate that decides whether to show a confirmation before running lives on the shortcut, not in a global setting. A global `securedShortcutsEnabled` still exists, but it only controls the *default* value for newly created shortcuts — it does not change existing ones.
+- **Supersedes:** The 2026-10-09 `showDangerWarnings` global toggle introduced in `7ed280c`. That key is silently migrated to `securedShortcutsEnabled` on first load and deleted.
+- **Alternatives:**
+  - One global toggle for all shortcuts — rejected; users wanted per-shortcut control ("this one is fine to auto-run, that one needs confirming").
+  - Per-shortcut toggle with no global default — rejected; new shortcuts would need manual enabling of `secured`, and users who want the safe default would have to set it every time.
+- **Why:** The mental model is "this shortcut runs without asking, that one asks first" — a property of the shortcut, not of the app. The global setting is a *defaulting* concern, not a *runtime* concern. Conflating the two was what made the old toggle confusing.
+- **Consequence:**
+  - `SavedShortcut.secured?: boolean` added.
+  - `syncHotkeys` payload carries `secured` per shortcut.
+  - `Library` runs `migrateShortcutsSecured()` on mount — computes `secured` for any shortcut that predates the field, using `hasDangerousActions()`.
+  - `ShortcutCard` menu gets a Secured toggle row + a "Secured" badge when on.
+  - `Settings → General` has a "Secured Shortcuts" toggle that only affects *new* shortcut defaults.
+- **Status:** active
+
+## 2026-10-09 — Test Hotkey is mandatory before Save
+- **Decision:** Save is gated on `hotkeyIsVerified`. The user must click Test Hotkey, press the combo, and see the "Verified" state before Save enables. The gate is per-combo — changing the combo invalidates the verification.
+- **Alternatives:**
+  - No gate — Save always allowed, trust the OS — rejected; Windows silently accepts `globalShortcut.register()` for combos it will never fire (see below).
+  - Warn on save but allow — rejected; users clicked through the warning and shipped dead hotkeys.
+  - Background-verify every combo — rejected; can't verify without the user physically pressing the keys.
+- **Why:** On UK and Bengali keyboard layouts, certain combinations register successfully but never fire. `Ctrl + Alt + <digit>` and `Ctrl + Shift + <digit>` are the known cases — those layouts treat the digit row as a character composition layer, so the OS delivers the keystroke to the IME, not to `RegisterHotKey`. `globalShortcut.register()` returns true because it installed the hook; the OS just never routes to it. There is no API to detect this. The only reliable test is "make the user try it."
+- **Consequence:**
+  - New `test-hotkey` IPC in main: snapshots all registered shortcuts, `unregisterAll()`, registers only the candidate, races a 4s fire-promise against a timeout, restores the snapshot, returns `{ fired, reason }`.
+  - Builder's Test Hotkey button also attaches a renderer `keydown` listener during the 4s window so it can distinguish four outcomes: correct combo fired / wrong combo pressed / correct combo but OS swallowed it / nothing pressed.
+  - Each outcome shows a distinct error message so the user knows what to fix.
+  - Editing an existing shortcut auto-verifies the loaded combo — the user doesn't have to re-test an unchanged value.
+- **Status:** active
+
+## 2026-10-09 — Per-action safety label is user-overridable
+- **Decision:** `ActionItem.safetyOverride?: 'dangerous' | 'safe'` lets the user lock an action's safety label. When present, `getActionLabel(action)` returns it verbatim. When absent, the label is computed from `isDangerousAction(action)` (type + value based).
+- **Alternatives:**
+  - Computed-only classification — rejected; users couldn't tell the app "this specific `open_file` is fine" or "I know this script is dangerous, stop nagging."
+  - Per-type override — rejected; too coarse. The whole point is per-*action*, not per-type.
+  - A "reset to auto" button — rejected; once the user overrides, they've made a decision. Picking the other label is the only change. Adding a third state (auto / forced-dangerous / forced-safe) would triple the UI without adding value.
+- **Why:** Classification of a specific action depends on context the app can't see — what the script does, who the user is, what they're comfortable with. "This `.exe` at this path is a tool I wrote" is a judgment call only the user can make. The override is the escape hatch for that judgment.
+- **Consequence:**
+  - `getActionLabel()` and `hasDangerousActions()` in `src/utils/danger.ts` are the only places that decide a label.
+  - `SafetyChip` on each `SortableActionCard` is an inline dropdown: Dangerous / Safe. No "auto" option.
+  - `ConfirmSecuredModal` shows the effective label per row and lets the user change it inline before confirming the run — staged edits persist on "Run Anyway."
+  - `Builder.handleSave` uses `hasDangerousActions(sequence)` to decide the default `secured` for new shortcuts.
+- **Status:** active
+
+## 2026-10-09 — ComboBuilder is controlled; vocabulary matches the recorder
+- **Decision:** `ComboBuilder` is a controlled component (`value` / `onChange`). It holds no internal state. `recordedCombo` in the parent (`Builder`) is the single source of truth. Recorder writes to it, ComboBuilder reads from it and writes back. No Set button. No Clear button. Changes apply on every click.
+- **Supersedes:** The previous `onApply` / `onError` API where ComboBuilder held local state and pushed it on Set.
+- **Alternatives:**
+  - Keep `onApply` with explicit commit — rejected; the recorder and the picker had independent state, so the "which one wins?" question was ambiguous by design. Users couldn't tell what the actual combo was.
+  - Auto-apply on change but keep an internal draft — rejected; same ambiguity, just hidden.
+  - Add a Clear button — rejected; clearing means "no key", which is expressible by not picking one. The button was redundant.
+  - Modifiers as a dropdown with `Ctrl`, `Ctrl+Alt`, etc. — rejected; can't express all 16 combinations and allows duplicates.
+- **Why:** The previous design failed on three counts: (1) two surfaces could hold different values with no defined precedence, (2) the dropdown had a strict subset of the recorder's keys, so a user could record something they couldn't rebuild, (3) the Set button forced a "stage then commit" flow that doesn't match how the recorder works. Unifying to one value fixes all three at once.
+- **Consequence:**
+  - `ComboBuilder.tsx` is a full rewrite — modifier toggle chips (Ctrl/Alt/Shift/Win, no duplicates possible), grouped key dropdown (Letters / Number keys / Function keys / Symbols / Navigation / Special), live preview pill.
+  - The key list covers everything the recorder can emit: A–Z, 0–9, F1–F24, all punctuation on the US layout, all navigation keys, all specials (Space / Return / Esc / Backspace / Delete / Tab).
+  - Key labels show both forms where applicable (e.g. `5 / %`, `- / _`) so the user understands what Shift does — but the saved value is always the physical key.
+  - Two call sites updated: `Builder.tsx` and `SettingsBlockedTriggers.tsx`.
+  - Modifier chips allow all four simultaneously — no "at least one required" enforcement. F-keys and media keys can be hotkeys on their own.
+- **Status:** active
+
+## 2026-10-09 — useHotkeyRecorder records e.code, not e.key
+- **Decision:** The recorder captures `e.code` (physical key) and normalizes it to a stable string (`KeyB` → `B`, `Digit5` → `5`). It never uses `e.key`.
+- **Alternatives:**
+  - Use `e.key` — tried; broke on UK and Bengali layouts, where `Shift + 5` produces the character `%` or the internal name `Clear`. `globalShortcut.register()` doesn't recognize `%` or `Clear` and silently refuses to fire the combo.
+  - Use both and fall back — rejected; `e.key` is never the right answer, so there's nothing to fall back to.
+- **Why:** `e.code` is layout-independent — it identifies the physical key. `e.key` is layout- and modifier-dependent — it identifies the character produced. The OS shortcut layer works in physical key terms, so the recorder must too.
+- **Consequence:**
+  - `useHotkeyRecorder.ts` normalizes before saving.
+  - ComboBuilder's key vocabulary is defined in physical-key terms, so a combo captured by the recorder round-trips through the picker (and vice versa).
+  - This fix is what makes the mandatory Test Hotkey gate meaningful — the recorder no longer produces combos that fail silently.
+- **Status:** active

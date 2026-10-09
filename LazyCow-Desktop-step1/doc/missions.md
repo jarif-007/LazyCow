@@ -35,18 +35,57 @@ Status: COMPLETE
 - [x] **Verified:** manual test — Calculator (Not Arranged) appears centered on top of Notepad (assigned Left).
 
 ## Mission: Safety warnings toggle
-Status: COMPLETE
+Status: COMPLETE — ⚠️ SUPERSEDED by "Secured Shortcuts + Safety Override + Test Hotkey" (2026-10-09)
 - [x] New `showDangerWarnings` setting (default ON) in Settings → General.
 - [x] When OFF: hide the "Dangerous" badge on `run_script` / `launch_app` action cards; skip the pre-run confirmation modal in Library; skip the hotkey confirm round-trip in `main.ts`.
 - [x] Builder and ActionSequence re-read the setting live via a `lazycow-settings-changed` custom event — no page reload needed.
 - [x] `syncHotkeys` payload extended to `{ shortcuts, showDangerWarnings }`; main process caches the value in `cachedShowDangerWarnings`.
 - [x] **Verified:** manual — toggle OFF → badge hides instantly in Builder; toggle OFF → Library Run skips modal; toggle OFF → hotkey fires directly. Toggle ON → all three revert.
+- ⚠️ **Superseded 2026-10-09.** The `showDangerWarnings` key is silently migrated to `securedShortcutsEnabled` in `Settings.tsx` on first load; the main process no longer reads it. Per-shortcut `secured` is the runtime gate; per-action `safetyOverride` is the label control. See `decisions.md` (2026-10-09 entries).
+
+## Mission: Secured Shortcuts + Safety Override + Test Hotkey
+Status: COMPLETE (Session 8 — commits `cfec1a6` + `dc34b3c`)
+- [x] **Per-shortcut `secured` flag** replaces the global gate. Runtime branches three ways: focused → confirm modal; minimized → toast + double-press; second press within window → run directly.
+- [x] **`securedPendingFires` map** in `main.ts` tracks pending timestamps. `cachedSecuredDoublePressMs` reads the user's window (5–30s).
+- [x] **`securedDoublePressSeconds` setting** (default 5) — number input in Settings → General.
+- [x] **`securedShortcutsEnabled` setting** (default ON) — controls *new* shortcut defaults only; does not retroactively change existing shortcuts.
+- [x] **Silent migration** `showDangerWarnings` → `securedShortcutsEnabled` in `Settings.tsx` on load; legacy key deleted.
+- [x] **`migrateShortcutsSecured`** in `src/utils/security.ts` (new) — runs on Library mount; computes `secured` for any shortcut missing it; idempotent.
+- [x] **Per-action `safetyOverride`** (`'dangerous' | 'safe'`) on `ActionItem` — user-locked label that survives value changes.
+- [x] **`getActionLabel` / `hasDangerousActions`** in `src/utils/danger.ts` — override-aware, single source of truth for both the badge and the pre-run gate.
+- [x] **`SafetyChip`** on each `SortableActionCard` — inline Dangerous/Safe dropdown.
+- [x] **`ConfirmSecuredModal`** (new) — filter (All / Dangerous / Safe), per-row label editor, "all-safe → offer to turn off Secured" prompt. Staged edits persist on "Run Anyway."
+- [x] **`ShortcutCard` menu** gets a Secured toggle row; card shows a "Secured" badge when on.
+- [x] **`test-hotkey` IPC** in main — snapshot all, unregisterAll, register candidate, 4s race, restore. Returns `{ fired, reason }`.
+- [x] **Mandatory Test Hotkey gate** — Save disabled until `hotkeyIsVerified`. Renderer keydown listener distinguishes 4 outcomes (correct+fired / wrong combo / correct-but-OS-swallowed / nothing pressed).
+- [x] **`set-hotkey-recording` IPC** — suppresses global hotkey callbacks while the recorder is active.
+- [x] **`useHotkeyRecorder` `e.code` fix** — records physical key (`KeyB` → `B`, `Digit5` → `5`), not `e.key`. Fixes UK/Bengali silently-dead digit combos.
+- [x] **ComboBuilder rewrite** — controlled (`value` / `onChange`), modifier toggle chips, grouped key dropdown (Letters / Numbers / F1–F24 / Symbols / Navigation / Special), live preview pill. Both call sites updated.
+- [x] **`npx tsc --noEmit` clean.**
+- [ ] **Manual runtime verification pending** — Test Hotkey flow (four outcomes), secured double-press on minimized window, ConfirmSecuredModal filter + override persistence, `securedShortcutsEnabled` migration on a profile that had `showDangerWarnings: false`. See `handoff.md` §2.
 
 ## Mission: Security Warning modal `open_file` filter bug
 Status: COMPLETE
 - [x] `Library.tsx`'s `runShortcut()` correctly flags `open_file` with a dangerous extension as dangerous and shows the confirmation modal, but the modal's `<span>` list only filtered `run_script` and `launch_app`. Result: a shortcut whose only dangerous action is an `open_file` showed the modal with an empty list.
 - [x] Fix: hoisted `DANGEROUS_EXTENSIONS` to module scope, added a `hasDangerousExtension()` helper, extended both the pre-run gate and the modal's item list to include `open_file` with a dangerous extension, showing *"Open: `<path>`"*.
 - [x] Shipped together with the safety-warnings toggle — see `handoff.md` §2 "Done & verified" and the journal entry for commit `7ed280c`.
+
+## Mission: Code hygiene — remove vestigial `showDangerWarnings` prop
+Status: NOT STARTED
+- [ ] `Builder.tsx`'s `readShowDangerWarnings()` reads `lazycow_settings.showDangerWarnings`, but `Settings.tsx` migrates that key to `securedShortcutsEnabled` and **deletes** it on first load.
+- [ ] After the migration runs once, `Builder` always reads `true` — the "hide the SafetyChip" behavior is effectively dead.
+- [ ] The SafetyChip is now the interactive per-action safety override picker, not a static badge. Hiding it would hide the whole feature, which contradicts the design.
+- [ ] **Recommended action:** delete the read entirely. Remove `readShowDangerWarnings`, the `showDangerWarnings` state + effect listeners from `Builder.tsx`; the prop from `ActionSequence`'s interface + pass-through; the prop + gate from `SortableActionCard`. Always render `SafetyChip`.
+- [ ] **Not a bug** — no UI writes `showDangerWarnings: false` anymore, so a user can't observe the setting doing nothing. It's cleanup.
+- [ ] Touches: `src/pages/Builder.tsx`, `src/components/ActionSequence.tsx`, `src/components/ActionSequence/SortableActionCard.tsx`. ~15 lines deleted.
+
+## Mission: Code hygiene — resolve `onShortcutStarted` dead channel
+Status: NOT STARTED
+- [ ] `onShortcutStarted` is subscribed in `Library.tsx`, exposed in `preload.ts`, declared in `electron-env.d.ts` — but no `win.webContents.send('shortcut-started', ...)` exists anywhere in `main.ts`.
+- [ ] The subscription's job was defensive: close a pending confirmation modal when its shortcut starts running through another path. Never fires because the emit is missing.
+- [ ] **Two valid resolutions:** (a) wire the `webContents.send` at the correct runtime entry points in `runShortcutActions`; or (b) delete the channel entirely — the modal already has three other close paths (`visibilitychange`, `shortcut-complete`, `hotkey-triggered`).
+- [ ] **Recommended action:** (b) delete. The defensive close is nice-to-have; three paths already cover it.
+- [ ] Touches: `electron/preload.ts` (remove bridge), `electron/electron-env.d.ts` (remove declaration), `src/pages/Library.tsx` (remove subscription + cleanup). Optionally `electron/main.ts` if wiring instead of deleting.
 
 ## Mission: NFR Phases 4–6
 Status: NOT STARTED

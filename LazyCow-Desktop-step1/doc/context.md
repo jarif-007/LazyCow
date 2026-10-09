@@ -42,14 +42,18 @@ The application is structured to support:
   - Dangerous actions (scripts, executables) triggered via global hotkeys prompt for confirmation before executing.
   - The `index.html` CSP allows `script-src 'self' 'unsafe-inline'` — this is the intentional exception for the synchronous theme-bootstrap inline script (reads localStorage before the splash paints, preventing a flash of the wrong theme on cold start). Do not remove this exception without moving the bootstrap into a non-inline script first.
 * **Data Persistence:**
-  - `lazycow-shortcuts` — Array of saved `SavedShortcut` objects.
+  - `lazycow-shortcuts` — Array of saved `SavedShortcut` objects. Each shortcut carries `secured?: boolean` (per-shortcut runtime confirmation gate) and each action carries `safetyOverride?: 'dangerous' | 'safe'` (user-locked label).
   - `lazycow-blocked-triggers` — Blocked hotkey trigger strings.
   - `lazycow-os-critical-triggers` — OS-critical protected triggers.
-  - `lazycow_settings` — General desktop settings (`startAtLogin`, `keepInTray`, `executionNotifications`, `generalShade`, `dataShade`).
+  - `lazycow_settings` — General desktop settings (`startAtLogin`, `keepInTray`, `executionNotifications`, `securedShortcutsEnabled`, `securedDoublePressSeconds`, `autoScrollSpeed`, `generalShade`, `dataShade`).
+    - `securedShortcutsEnabled` (default `true`) — controls whether *newly created* shortcuts with dangerous actions default to `secured`. Does **not** retroactively change existing shortcuts.
+    - `securedDoublePressSeconds` (default `5`, range 5–30) — window in seconds for the double-press confirmation on a minimized window.
+    - Legacy `showDangerWarnings` key (from commit `7ed280c`) is **silently migrated** to `securedShortcutsEnabled` on first `Settings.tsx` load and deleted. Do not re-read the old key.
   - `lazycow-theme-mode` — `'system' | 'light' | 'dark'`.
   - `lazycow-custom-color-mode` — Boolean toggle for custom color themes.
   - `lazycow-custom-theme` — `'coffee' | 'ocean' | 'forest'`.
   - `lazycow-dark` — Legacy flag kept in sync with dark mode state.
+  - `lazycow-hide-modal-hints` — Boolean. When true, the multi-delete confirmation modal hides the small `Esc` / `Enter` badges.
 
 ---
 
@@ -77,8 +81,11 @@ LazyCow/
 │           ├── types/
 │           │   └── actions.ts         # Action catalogs, interfaces, blocked trigger defaults
 │           ├── hooks/
-│           │   ├── useHotkeyRecorder.ts # Reusable global keyboard capture hook
+│           │   ├── useHotkeyRecorder.ts # Reusable global keyboard capture hook (records e.code, not e.key)
 │           │   └── useActionValidation.ts # Shared validation for action sequences (sync + debounced path checks)
+│           ├── utils/
+│           │   ├── danger.ts          # DANGEROUS_EXTENSIONS + hasDangerousExtension + isDangerousAction + override-aware getActionLabel / hasDangerousActions
+│           │   └── security.ts        # migrateShortcutsSecured + readSecuredShortcutsDefault + readSecuredDoublePressSeconds
 │           ├── components/
 │           │   ├── ActionSequence.tsx # Orchestrator: DnD, selection mode, auto-scroll, drop zone
 │           │   ├── ActionSequence/    # Sub-components for the action list
@@ -91,7 +98,8 @@ LazyCow/
 │           │   ├── ActionSidebar.tsx  # Collapsible catalog sidebar with drag-to-add
 │           │   ├── BlockedTriggerList.tsx # Searchable blocked triggers list
 │           │   ├── CollapsedSearchPopover.tsx # Command-palette search popover for collapsed ActionSidebar
-│           │   ├── ComboBuilder.tsx   # Dropdown modifier-first hotkey constructor
+│           │   ├── ComboBuilder.tsx   # Controlled hotkey constructor: modifier chips + grouped key dropdown + preview
+│           │   ├── ConfirmSecuredModal.tsx # Interactive per-action review for secured shortcuts (filter + label editor)
 │           │   ├── DeleteModal.tsx    # Confirmation modal for shortcut deletion
 │           │   ├── OSCriticalWarningModal.tsx # Safety warning modal for critical hotkey deletes
 │           │   ├── SettingsAppearance.tsx # Theme, mode, and accent color settings
@@ -156,7 +164,15 @@ LazyCow/
 - **Path Dialogs (`select-path`):** Invokes `dialog.showOpenDialog` for native application (`.exe`), directory, or file selection.
 - **Path Checking (`check-path-exists`):** Verifies file/directory existence using `fs.existsSync`.
 - **URL Test (`test-url`):** Opens a URL in the default browser for a quick preview without executing a shortcut. Used by the **Test** button on `open_url` action cards. Format-checks the URL (scheme must be http/https, host must be present) before opening.
-- **Global Hotkey Registration:** Listens for registered shortcut keys, checks for dangerous actions, emits `hotkey-needs-confirm` or runs shortcut, and notifies on registration failures via `onHotkeyRegisterFailed`.
+- **Global Hotkey Registration:** Listens for registered shortcut keys, notifies on registration failures via `onHotkeyRegisterFailed`. When a shortcut's hotkey fires, the runtime branches:
+  - **Broken-path pre-flight first.** `findFirstBrokenPath` scans every path-based action; if any is missing, a native toast refuses the run and names the first broken path. The renderer never sees the trigger.
+  - **Unsecured shortcut** → emit `hotkey-triggered` and run.
+  - **Secured shortcut, window focused** → emit `hotkey-needs-confirm`; the renderer shows `ConfirmSecuredModal`. Also records a pending timestamp in `securedPendingFires`.
+  - **Secured shortcut, window minimized/hidden** → native Windows toast ("Press `<hotkey>` again, or click to open LazyCow") and record the pending timestamp.
+  - **Second press of a secured hotkey within `cachedSecuredDoublePressMs`** → run directly (the pending entry is consumed).
+- **`test-hotkey` IPC:** Snapshots every registered shortcut, `globalShortcut.unregisterAll()`, registers only the candidate, races a 4-second fire-promise against a timeout, restores the snapshot, returns `{ fired: boolean, reason?: 'invalid' | 'registration-rejected' | 'timeout' }`. This is the only reliable way to know a combo will actually fire on a given Windows + keyboard-layout combination — `globalShortcut.register()` returning `true` is not proof (see §6 rule 23).
+- **`set-hotkey-recording` IPC:** Toggles an `isRecordingHotkey` flag in main. Every global hotkey callback returns early when set, so pressing an already-assigned combo while recording a new one doesn't fire the existing shortcut.
+- **`onShortcutStarted`:** Exposed in preload + declared in `electron-env.d.ts`, subscribed by `Library.tsx` for a defensive modal-close — **but no `webContents.send('shortcut-started', ...)` exists in `main.ts`.** This channel is dead wiring; see §7.E.
 - **Window Layout runtime:** Positions shortcut-launched windows into one of 7 predefined layouts (6 matching Windows Snap Layouts + quad grid). Shortcut-level config (`windowLayout` on `SavedShortcut`) drives it; the engine never runs as a standalone action.
   - **Fires in parallel with the action loop.** `runShortcutActions` creates the `arrangeWindows` promise *before* iterating actions, so arrangement happens concurrently with the remaining launches. `estimateShortcutBudgetMs()` sizes the poll window per-shortcut (5s base + per-action estimates, capped at 60s) so shortcuts with long `delay` actions don't time out.
   - **Per-placement polling.** Each assigned app is polled independently — 15ms warmup for 800ms, then taper to a 200ms maximum. A window is snapped the moment it appears.
@@ -171,17 +187,23 @@ LazyCow/
   - `runShortcut(shortcut)`
   - `testUrl(url): Promise<{ ok: boolean; error?: string }>` — Opens URL externally for preview, does not execute a shortcut
   - `cancelShortcut(shortcutId)` — Graceful cancel of a running shortcut
-  - `syncHotkeys(shortcuts)`
+  - `syncHotkeys(payload: ShortcutForIPC[] | { shortcuts: ShortcutForIPC[]; securedDoublePressSeconds: number })` — Per-shortcut payload includes `secured?: boolean`. Legacy bare-array shape still accepted.
+  - `setHotkeyRecording(value: boolean)` — suppress global hotkey callbacks during recorder capture
+  - `testHotkey(combo: string): Promise<{ fired: boolean; reason?: string }>` — temporarily unregisters all shortcuts, tests one candidate for 4s
   - `updateGeneralSettings(settings: { startAtLogin?: boolean; keepInTray?: boolean; executionNotifications?: boolean })`
   - `checkPathExists(path): Promise<boolean>`
   - `selectPath(type: 'app' | 'file' | 'folder'): Promise<string | null>`
-  - `onShortcutProgress(callback)` / `onShortcutComplete(callback)` (with `durationMs` and `cancelled` / `lastActionTitle` fields)
+  - `onShortcutProgress(callback)` / `onShortcutComplete(callback)` (with `durationMs`, `cancelled`, `lastActionTitle`, `layoutResults` fields)
   - `onHotkeyTriggered(callback)` / `onHotkeyNeedsConfirm(callback)` / `onHotkeyRegisterFailed(callback)`
+  - `onShortcutStarted(callback)` — declared but currently never fires from main (§7.E)
 
 ---
 
 ### B. Action Catalog & Types (`src/types/actions.ts`)
 
+- **Types (`src/types/actions.ts`):**
+  - `ActionItem` carries `safetyOverride?: 'dangerous' | 'safe'` — a user-locked label that overrides the computed classification. There is intentionally no "reset to auto" state; picking the other label is the only change.
+  - `SavedShortcut` carries `secured?: boolean` — the runtime confirmation gate. Absent means "not secured". Migration computes defaults for shortcuts that predate the field.
 - **10 Supported Action Types (All Active):**
   1. `launch_app` — Application Path (`.exe` only)
   2. `open_url` — Website URL
@@ -214,7 +236,11 @@ LazyCow/
   - Popover uses a 140ms delayed-close timer so the cursor can travel from the button to the popover without flicker, repositions on scroll/resize, and hides itself if the anchor scrolls out of view.
 - **`WindowLayout/LayoutThumbnail.tsx`:** Pure visual mockup of a layout with each zone drawn by percentage. Displays assigned action icons (colored), empty-zone labels, and an optional ✗ clear button. Supports drag-to-swap between zones.
 - **`WindowLayout/PositionDropdown.tsx`:** Custom dropdown rendered via `createPortal` for escaping card overflow. Positioned with fixed coordinates computed from the trigger button. Auto-flips above/below based on viewport space and closes on scroll, outside click, or Escape. Disabled zones show "(taken by <Action Title>)". Top option is **"Not arranged"** — selecting it removes the action from its current zone (`onChange('')`), which is the user-judge mechanism for "this app shouldn't be auto-arranged."
-- **`Builder.tsx`:** Shortcut builder with real-time name uniqueness checking, hotkey conflict detection, modifier-first validation, unsaved changes safety modal, and full responsive layout (see Section 2's Responsive Layout subsection). Uses the shared `useActionValidation` hook to **disable Save** when any action is invalid or unsupported, showing *"Fix N invalid action(s) before saving."* Restores the shortcut's hotkey when opening for edit.
+- **`ComboBuilder.tsx`:** Controlled hotkey constructor (`value` / `onChange`; no internal state). Modifier toggle chips (Ctrl / Alt / Shift / Win — no duplicates possible, all four allowed), grouped key dropdown (Letters / Number keys / Function keys F1–F24 / Symbols / Navigation / Special), live preview pill. The key vocabulary matches what the recorder can emit, so any recorded combo round-trips through the picker. No Set button, no Clear button — every change applies immediately.
+- **`Builder.tsx`:** Shortcut builder with real-time name uniqueness checking, hotkey conflict detection, modifier-first validation, unsaved-changes safety modal, and full responsive layout (see §2's Responsive Layout subsection). Uses the shared `useActionValidation` hook to **disable Save** when any action is invalid or unsupported, showing *"Fix N invalid action(s) before saving."* Restores the shortcut's hotkey when opening for edit.
+  - **Mandatory Test Hotkey gate.** Save is gated on `hotkeyIsVerified`. The Test Hotkey button invokes the `test-hotkey` IPC and, during the 4s window, attaches a renderer `keydown` listener so it can distinguish four outcomes: correct combo fired / wrong combo pressed / correct combo but OS swallowed it / nothing pressed. Each outcome shows a distinct message. Editing an existing shortcut auto-verifies the loaded combo — the user doesn't have to re-test an unchanged value.
+  - **Per-action safety override.** `updateSafetyOverride(id, 'dangerous' | 'safe')` is threaded down through `ActionSequence` to `SortableActionCard`'s `SafetyChip`.
+  - **`secured` default on save.** New shortcuts compute `secured` from `readSecuredShortcutsDefault() && hasDangerousActions(sequence)`. Existing shortcuts preserve their stored value.
   - **Test Flow** button in the footer next to Save. Runs the same validation gate as Save, then executes the entire sequence end-to-end (scripts, delays, system actions, layout) via the real `runShortcut` IPC with a synthetic `test-flow-<ts>` id. Purpose: verify the whole shortcut without saving it first.
   - **Test Layout** handler passed down to `WindowLayoutPanel` (see below). Filters the sequence to arrangeable actions only and runs them via `runShortcut` — no scripts, no delays, no side effects beyond launching apps.
 - **`ShortcutCard.tsx`:** Dashboard shortcut card with 3-dot dropdown menu (Edit Flow, Duplicate, Rename, Delete), hotkey conflict warning badge, **Window Layout badge** (shows layout label + assigned zone count via tooltip when `windowLayout.enabled`), **Broken Path badge** (amber; shows when the shortcut references a missing file/folder), elapsed duration analytics (`Sequence Complete • 1.4s`), live step execution log, amber **"Cancelling..."** button state with spinner when cancel is requested, and **"Cancelled after: <action title>"** state display.
@@ -228,7 +254,7 @@ LazyCow/
 
 ### D. Hooks (`src/hooks/`)
 
-- **`useHotkeyRecorder.ts`:** Captures global key combinations for the trigger field. Uses capture-phase `keydown` so all keystrokes are swallowed during recording. Returns `{ recording, recordedCombo, startRecording, stopRecording, clearCombo, setRecordedCombo }`.
+- **`useHotkeyRecorder.ts`:** Captures global key combinations for the trigger field. Uses capture-phase `keydown` so all keystrokes are swallowed during recording. Records **`e.code` (physical key)** and normalizes it to a stable string (`KeyB` → `B`, `Digit5` → `5`) — never `e.key`, which is layout- and modifier-dependent and breaks on UK/Bengali layouts. Toggles the main-process `isRecordingHotkey` flag via `setHotkeyRecording(true/false)` on every start/stop; unmount cleanup forces the flag back to false so a mid-recording unmount can't leave hotkeys muted. Returns `{ recording, recordedCombo, startRecording, stopRecording, clearCombo, setRecordedCombo }`.
 - **`useActionValidation.ts`:** Single source of truth for action-sequence validation. Runs synchronous checks (empty values, format, numeric range) immediately and debounced path-existence checks (~600ms) via `checkPathExists`. Flags actions whose `type` is not in the current `actionCatalog` as **unsupported**. Returns `{ errors, warnings, unsupportedIds, isValid }` (`warnings` is reserved for future offline/soft-failure states but currently always empty). Consumed by both `ActionSequence.tsx` (inline errors) and `Builder.tsx` (Save gating). **Re-runs on window focus** so an inline error refreshes after the user fixes a path in Explorer. **URL validation rules (format-only, no TLD whitelist, no DNS):** empty → error; schemeless with dot + chars after → pending (blur will auto-prefix); IPv4-shaped → strict 4-segment range check; IPv6 requires brackets; malformed → generic error.
 - **`lazycow_settings.autoScrollSpeed`** — New number field (2–20) controlling auto-scroll pacing during card drag and drag-select. Managed by a slider + Slow/Medium/Fast presets in Settings → General.
 - **`lazycow-hide-modal-hints`** — Boolean. When true, the confirm-delete modal hides the small `Esc` / `Enter` keyboard badges on its buttons. Reset automatically by the Danger Zone's factory reset (which calls `localStorage.clear()`).
@@ -291,6 +317,11 @@ npm run build
 20. **Floating Dropdowns Use Portals:** Any custom dropdown or popover that must escape an overflow-clipped parent (like the Position dropdown inside a card) renders via `createPortal(..., document.body)` with fixed coordinates from `getBoundingClientRect()`. Same reasoning as rule 9 — a parent `transform` or `overflow: hidden` traps absolutely-positioned children.
 21. **User-Judge via Unassignment:** An action not assigned to any zone still launches with the shortcut, but the layout engine skips it. This is the primary mechanism for "this app shouldn't be auto-arranged" — do not add a separate per-action `skipLayout` flag, and do not reintroduce a separate opt-out UI. `buildPlacementsFromShortcut` already filters on `assignments`; that's the whole control surface.
 22. **UWP Heuristic is a Fallback Only:** `Place-Window` centers UWP windows (`IsImmersiveProcess`) at native size instead of stretching them. This runs *after* user assignment — if the user didn't assign a UWP app to a zone, the heuristic never fires (the app is skipped entirely). Do not remove the heuristic — it's the graceful default for users who assign UWP apps by mistake. But do not treat it as the primary arrangement strategy either; user-judge (rule 21) is.
+23. **`globalShortcut.register()` Success ≠ Working Hotkey:** On UK and Bengali keyboard layouts, `Ctrl + Alt + <digit>` and `Ctrl + Shift + <digit>` register successfully but never fire. Those layouts treat the digit row as a character composition layer — the OS delivers the keystroke to the IME, not to `RegisterHotKey`. There is no API to detect this. Never build UX that relies on "the hotkey registered, so it works." The `test-hotkey` IPC exists specifically to make the user try the combo before Save enables — do not remove that gate.
+24. **`useHotkeyRecorder` Records `e.code`, Never `e.key`:** `e.key` is layout-dependent (Shift+5 → `%` on US, `Clear` on UK) and `globalShortcut.register()` silently refuses combos containing those strings. `e.code` is the physical key and is what the OS shortcut layer actually matches on. If you ever see `e.key` in the recorder, it's a regression.
+25. **Secured Is Per-Shortcut, Not Global:** The runtime confirmation gate lives on `SavedShortcut.secured`. The global `securedShortcutsEnabled` setting only controls the *default* value for new shortcuts — never retroactively change existing ones. Do not reintroduce a global "warn on everything" toggle; that was the design that `dc34b3c` replaced.
+26. **ComboBuilder Is Controlled:** `ComboBuilder` has no internal state and no Set/Clear buttons. Its `value` prop is the same `recordedCombo` state the recorder writes to — a single source of truth. Any change calls `onChange` and applies immediately. Do not add an internal draft state, do not add an explicit commit step, and keep the key list in sync with what the recorder can emit (any key the recorder can save must be selectable in the dropdown — otherwise the user can record something they can't rebuild).
+27. **`getActionLabel` / `hasDangerousActions` Are the Only Safety Classifiers:** `src/utils/danger.ts` decides whether an action is dangerous (override-aware). Do not compute the classification inline in a component or in `main.ts`. The old inline implementations missed dangerous-extension `open_file` cases and drifted between create-time and run-time — the shared helper was created to end that drift.
 
 ---
 
@@ -325,6 +356,24 @@ npm run build
 5. **Scheduled / Automatic Triggers:** Time-based shortcut execution (e.g., Run "Work Setup" every weekday at 9:00 AM) using node-cron or Windows Task Scheduler.
 
 ### C. Recently Completed
+
+**Session 8 (Secured Shortcuts system, per-action safety override, mandatory Test Hotkey, ComboBuilder rewrite — commits `cfec1a6` + `dc34b3c`):**
+- Replaced the global `showDangerWarnings` toggle with a per-shortcut `secured` flag. Runtime branches: focused → confirm modal; minimized → toast + double-press; second press within window → run directly.
+- `src/utils/security.ts` (new) — `migrateShortcutsSecured` (idempotent, runs on Library mount), `readSecuredShortcutsDefault`, `readSecuredDoublePressSeconds`.
+- Per-action `safetyOverride: 'dangerous' | 'safe'` on `ActionItem` — user-locked label. `getActionLabel` (override-aware) and `hasDangerousActions` in `src/utils/danger.ts` are the single source of truth.
+- New `ConfirmSecuredModal` (interactive) — filter All / Dangerous / Safe, per-row label editor, "all-safe → offer to turn off Secured" prompt. Staged edits persist on "Run Anyway."
+- `ShortcutCard` menu gets a Secured toggle row; card shows a "Secured" badge when on.
+- `Settings.tsx` silently migrates `showDangerWarnings` → `securedShortcutsEnabled` on first load; legacy key deleted. Main process no longer reads the old key.
+- New settings: `securedShortcutsEnabled` (default true) + `securedDoublePressSeconds` (default 5, range 5–30).
+- New `test-hotkey` IPC — snapshots all shortcuts, unregisters, tests one, restores. Save is gated on `hotkeyIsVerified`. Renderer listener during the test distinguishes four outcomes (correct+fired / wrong combo / correct-but-OS-swallowed / nothing pressed).
+- New `set-hotkey-recording` IPC — suppresses global hotkey callbacks during recorder capture.
+- `useHotkeyRecorder` now records `e.code` (physical key) not `e.key` — fixes UK/Bengali layouts where digit combos silently failed to register.
+- `ComboBuilder` full rewrite — controlled component (`value` / `onChange`), modifier toggle chips, grouped key dropdown (Letters / Numbers / F1–F24 / Symbols / Navigation / Special), live preview. Both call sites updated.
+
+**Session 7 (safety-warnings toggle + `open_file` filter fix — commit `7ed280c`):**
+- New `showDangerWarnings` setting (default ON) — the predecessor to Session 8's per-shortcut `secured`. **Superseded** in Session 8; the key is now silently migrated away.
+- Fixed the confirmation modal's `open_file` filter — dangerous-extension `open_file` actions (`.exe`, `.bat`, `.ps1`, etc.) now appear in the modal's list as `Open: <path>` instead of triggering the modal with an empty body.
+- Later extended into `src/utils/danger.ts` (Session 8) as the shared classifier.
 
 **Session 6 (Window Layout runtime, broken-path pre-flight, Test Layout/Flow, richer toasts):**
 - Wired the Window Layout engine into `runShortcutActions` — fires **in parallel** with the action loop, not after.
@@ -386,43 +435,9 @@ npm run build
 
 ### D. In-Progress Work (Locked-in Plan, Not Yet Coded)
 
-**Phase B.2 — Path Field UX:**
-- Read-only path fields — typing disabled, Browse is the only way to set them.
-- Clear (✗) button next to path fields to reset the value.
-- URL live ✓ / ✗ format indicator next to the field.
-- Unsupported-action visual: amber border, "Unsupported action" label, value input disabled, only Delete button works.
-
-**Phase C — Library Badges & Run Guards:**
-- Amber **"⚠ Invalid Action"** badge on Library cards containing unsupported or invalid actions.
-- Run button disabled when the card has any invalid action — greyed out with a tooltip.
-
-**Phase D — Broken Path Handling (Option X):**
-- Amber **"⚠ Broken Path"** badge in Library when a path action references a file/folder that no longer exists.
-- Run button disabled with tooltip: *"Fix broken paths in the Builder to run this shortcut."*
-- **Fix** button on the broken-path action in Builder → opens native picker.
-- Existing Delete (trash) button stays.
-
 **Phase E — `run_script` Error Surfacing (Option C):**
 - Surface actual `cmd.exe` stderr instead of generic "Command exited with code 1" (e.g. *"Command not found: gti"*).
 - **"Fix & Retry"** button on the error state — jumps to Builder with the shortcut pre-loaded.
-
-**Phase E (additional bug):**
-- Security Warning modal in `Library.tsx` shows an empty list when the shortcut's only dangerous action is an `open_file` with a dangerous extension (`.exe`, `.ps1`, etc.). The trigger check in `runShortcut()` flags these, but the modal's `<span>` list only filters `run_script` and `launch_app`. Fix: hoist `DANGEROUS_EXTENSIONS` to module scope and extend the filter to include `open_file` with a dangerous extension, showing *"Open: <path>"*.
-
-**Phase 3 — Drag-and-Drop Rebuild (`@dnd-kit`):** ✅ **Done** (Session 5). Internal card reorder uses dnd-kit; sidebar → sequence drop still uses HTML5 native drag as a temporary measure.
-
-**Broken Path Fix UX (Q2b, next):**
-- "Fix Paths" button on `ShortcutCard` currently routes to Builder without scrolling. Enhance: auto-scroll to and highlight the first broken action.
-- Add a `focusActionId` prop to `Builder`, plumbed from Library's `onEditShortcut` call.
-- Flash the target action card (ring-primary + ring-offset for ~900ms, matching the Flow Preview's click-to-jump flash).
-
-**Not-Arranged App Visibility (bug):**
-- Symptom: unassigned launch-type windows land wherever Windows puts them — often behind the placed apps instead of on top.
-- Example: Notepad (assigned Left) + Calculator (Not Arranged) → Calculator appears *behind* Notepad instead of on top.
-- Cause: the engine only calls `ForceForeground` on windows it *places*. Unassigned windows are never touched.
-- Fix (proposed): after the placement pass, walk every launch-type action and bring-to-front any window that wasn't placed. No resize. Optional safety: center at native size if fully off-screen.
-- Touches: `buildPlacementsFromShortcut` (main.ts), Zod schema, PowerShell loop (`windowLayout.ts`), new `Bring-Unassigned-Window` helper.
-- Open question: should `open_folder` actions also be brought to front? A user might open a folder "just to have it available" without wanting their layout disturbed.
 
 **Window Layout Overlay Animation (Batch 3):**
 - Transparent frameless BrowserWindow overlay appears for ~600ms during arrangement. Fades in zone outlines, animates each app's icon flying to its zone, then fades out as the real windows are placed. Uses the user's chosen theme color.
@@ -443,9 +458,12 @@ npm run build
 
 ### E. Known Issues / Pending Polish
 
-- **Security Warning modal `open_file` filter bug:** `Library.tsx`'s `runShortcut()` correctly flags `open_file` with a dangerous extension as dangerous and shows the confirmation modal, but the modal's `<span>` list only filters `run_script` and `launch_app`. Result: a shortcut whose only dangerous action is an `open_file` shows the modal with an empty list. Fix: hoist `DANGEROUS_EXTENSIONS` to module scope and extend the filter to include `open_file` with a dangerous extension, showing *"Open: <path>"*.
+- **Vestigial `showDangerWarnings` prop in `Builder.tsx`:** `Builder.readShowDangerWarnings()` reads `lazycow_settings.showDangerWarnings`, but `Settings.tsx` migrates the key to `securedShortcutsEnabled` and deletes it on first load. After migration, `Builder` always reads `true`. Not user-observable (there's no UI to toggle the old key), but the prop is dead. Recommended: delete the read + prop entirely; the SafetyChip is now the interactive override picker, not a static badge. Tracked in `missions.md` under "Code hygiene."
+- **`onShortcutStarted` dead channel:** Subscribed in `Library.tsx`, exposed in `preload.ts`, declared in `electron-env.d.ts`, but no `webContents.send('shortcut-started', ...)` exists in `main.ts`. The channel was intended as a defensive modal-close; three other paths already cover it. Recommended: delete. Tracked in `missions.md` under "Code hygiene."
+- **`Builder.handleSave` reimplements `hasDangerousActions` inline** instead of using the shared helper — the inline version misses dangerous-extension `open_file`, so create-time and run-time classification can disagree. Tracked in `handoff.md` §4 open questions.
 - **README.md is stale:** markets an `open_vscode` action that doesn't exist, lists `.lnk/.bat/.cmd` as valid `launch_app` formats (only `.exe` is), describes an "Arrange Windows" action (moved to shortcut-level), and states `sandbox: false` (it's `true`). Needs a rewrite before public sharing.
 - **Unused dependencies:** `electron-store`, `react-router-dom`, `lucide-react`, and `uuid` are listed in `package.json` but never imported. Safe to remove in a dedicated cleanup commit.
 - Library and Settings pages have not been fully tested at narrow window widths (800–900px) — potential responsive layout issues.
 - ESLint emits a harmless TypeScript-version warning (`@typescript-eslint` supports `>=4.7.4 <5.6.0`; project runs `5.9.3`). Not blocking.
 - Running `npx tsc` or `npm run dev` from the repo root (instead of `lazycoww/`) triggers a phantom `tsc@2.0.4` install prompt — always `cd` into `lazycoww/` first.
+- Compiled `dist-electron/main.js` has mangled registry paths in the windowLayout C# block (backslashes dropped by the build step). Source is correct; the built artifact is not. Low priority.
