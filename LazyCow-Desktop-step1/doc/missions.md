@@ -34,11 +34,32 @@ Status: COMPLETE
 - [x] **Touches:** `main.ts` (`buildPlacementsFromShortcut` emits `isUnassigned: true` for unassigned actions, Zod schema accepts the flag); `windowLayout.ts` (`Placement.isUnassigned`, `ScriptPlacement.isUnassigned`, new `Bring-Unassigned-Window` PowerShell helper, loop branches on the flag).
 - [x] **Verified:** manual test — Calculator (Not Arranged) appears centered on top of Notepad (assigned Left).
 
+## Mission: Safety warnings toggle
+Status: COMPLETE
+- [x] New `showDangerWarnings` setting (default ON) in Settings → General.
+- [x] When OFF: hide the "Dangerous" badge on `run_script` / `launch_app` action cards; skip the pre-run confirmation modal in Library; skip the hotkey confirm round-trip in `main.ts`.
+- [x] Builder and ActionSequence re-read the setting live via a `lazycow-settings-changed` custom event — no page reload needed.
+- [x] `syncHotkeys` payload extended to `{ shortcuts, showDangerWarnings }`; main process caches the value in `cachedShowDangerWarnings`.
+- [x] **Verified:** manual — toggle OFF → badge hides instantly in Builder; toggle OFF → Library Run skips modal; toggle OFF → hotkey fires directly. Toggle ON → all three revert.
+
+## Mission: Security Warning modal `open_file` filter bug
+Status: COMPLETE
+- [x] `Library.tsx`'s `runShortcut()` correctly flags `open_file` with a dangerous extension as dangerous and shows the confirmation modal, but the modal's `<span>` list only filtered `run_script` and `launch_app`. Result: a shortcut whose only dangerous action is an `open_file` showed the modal with an empty list.
+- [x] Fix: hoisted `DANGEROUS_EXTENSIONS` to module scope, added a `hasDangerousExtension()` helper, extended both the pre-run gate and the modal's item list to include `open_file` with a dangerous extension, showing *"Open: `<path>`"*.
+- [x] Shipped together with the safety-warnings toggle — see `handoff.md` §2 "Done & verified" and the journal entry for commit `7ed280c`.
+
 ## Mission: NFR Phases 4–6
 Status: NOT STARTED
 - [ ] Phase 4 — Keyboard shortcuts (Ctrl+N, Ctrl+,, Esc, Ctrl+S, Ctrl+1/2/3)
 - [ ] Phase 5 — Motion polish (Framer Motion)
 - [ ] Phase 6 — Perceived performance (startup audit, loading states, optimistic UI, focus traps)
+
+## Mission: Window Layout Overlay Animation (Batch 3)
+Status: NOT STARTED (deferred)
+- [ ] Transparent frameless BrowserWindow overlay appears for ~600ms during arrangement.
+- [ ] Fades in zone outlines, animates each app's icon flying to its zone, fades out as real windows are placed.
+- [ ] Uses the user's chosen theme color.
+- [ ] Deferred — Window Layout engine itself is complete; this is purely a visual polish layer.
 
 ## Mission: Library & Settings responsive audit
 Status: NOT STARTED
@@ -52,16 +73,11 @@ Status: NOT STARTED
 - [ ] README states `sandbox: false` in the security section (it's `true`)
 - [ ] Needs a rewrite before any public sharing
 
-## Mission: Security Warning modal `open_file` filter bug
-Status: NOT STARTED
-- [ ] `Library.tsx`'s `runShortcut()` correctly flags `open_file` with a dangerous extension as dangerous and shows the confirmation modal, but the modal's `<span>` list only filters `run_script` and `launch_app`. Result: a shortcut whose only dangerous action is an `open_file` shows the modal with an empty list.
-- [ ] Fix: hoist `DANGEROUS_EXTENSIONS` to module scope and extend the filter to include `open_file` with a dangerous extension, showing *"Open: `<path>`"*.
-
-## Mission: Dependency cleanup (deferred)
+## Mission: Dependency cleanup
 Status: NOT STARTED
 - [ ] Remove unused deps from `package.json`: `electron-store`, `react-router-dom`, `lucide-react`, `uuid`
-- [ ] None are imported anywhere in the current code
-- [ ] Defer until after Session 6's docs commit lands
+- [ ] None are imported anywhere in the current code — verified by grep across `src/` and `electron/`.
+- [ ] Touches `package.json` + `package-lock.json`. Low risk, dedicated commit.
 
 ## Mission: Boot system — fix stale-handoff false positive
 Status: NOT STARTED
@@ -69,15 +85,6 @@ Status: NOT STARTED
 - [ ] Proposed fix: compare against `git log --format=%h -1 -- <non-doc paths>` — the last commit that touched code, not docs. Or allow a small delta before warning.
 - [ ] Alternative: accept the header as informational only, remove the check entirely.
 - [ ] Decision needed before implementing — **preferred approach:** compare against the last non-doc commit hash. Cheap, no behavior change, ends the false-positive warnings.
-
-## Mission: Performance profile (hardware-adaptive timings)
-Status: NOT STARTED
-- [ ] Add `lazycow_settings.performanceProfile: 'fast' | 'balanced' | 'slow'` — user-facing dropdown in Settings → General.
-- [ ] Auto-detect on first run via PowerShell (`Get-PhysicalDisk` for SSD/HDD, `Win32_ComputerSystem` for RAM) — preselect a profile, user can override.
-- [ ] Extract every timing constant into a single `getTimings(profile)` module shared by main + renderer. No more scattered magic numbers.
-- [ ] Affects: Window Layout poll warmup + taper, layout budget base, launch_app waits, broken-path debounce, hotkey re-trigger guard, auto-scroll default, boot watchdog.
-- [ ] Test all three tiers (fast / balanced / slow).
-- [ ] **Rationale:** any feature that's unusable on low-end hardware is a failure of the app. The app must adapt to the user's machine, not the other way around.
 
 ## Mission: Performance profile (hardware-adaptive timings)
 Status: NOT STARTED

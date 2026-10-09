@@ -1,23 +1,22 @@
 # LazyCow — Handoff
 
-Last updated: 2026-10-06
-Last commit: da558bb
+Last updated: 2026-10-09
+Last commit: 7ed280c
 Working tree: CLEAN
 
 ## §1 Current Focus
-Session 6 fully wrapped: Window Layout engine, broken-path pre-flight,
-Test Layout/Flow, richer toasts, Not-Arranged App Visibility, Q2b
-(broken-action auto-scroll), and 2e (diagnostics cleanup) are all
-shipped + verified + committed.
+Session 7 shipped the **safety-warnings toggle** and the **`open_file` filter
+fix** for the confirmation modal (commit `7ed280c`). Users can now turn off
+safety warnings entirely — both the "Dangerous" badge on action cards and
+the pre-run confirmation modal disappear when the setting is off.
 
 No sub-task is currently in flight. Next pick from `missions.md`. Candidates
 in rough priority order:
-1. Security Warning modal `open_file` filter bug (§2 Bugs)
-2. README accuracy pass (currently markets non-existent features)
-3. Batch 3 — Window Layout overlay animation
-4. Library & Settings responsive audit at 800–900px
-5. Dependency cleanup (4 unused deps)
-6. NFR Phases 4–6 (keyboard shortcuts, motion polish, perceived performance)
+1. README accuracy pass (currently markets non-existent features)
+2. Window Layout Overlay Animation (Batch 3)
+3. Library & Settings responsive audit at 800–900px
+4. Dependency cleanup (4 unused deps)
+5. NFR Phases 4–6 (keyboard shortcuts, motion polish, perceived performance)
 
 ## §2 Sub-task State
 
@@ -54,6 +53,8 @@ in rough priority order:
 - **`useActionValidation` re-runs on window focus** so inline errors refresh after the user fixes a path in Explorer.
 - **Not-Arranged App Visibility.** Unassigned launch-type actions are brought to front and centered on the primary monitor at their native size — no resize. `buildPlacementsFromShortcut` emits a placement for every arrangeable action, with `isUnassigned: true` for ones with no zone. New `Bring-Unassigned-Window` PowerShell helper does the centering + `ForceForeground`. Verified manually — Calculator (Not Arranged) now appears centered on top of Notepad (assigned Left).
 - **Broken Path Fix UX (Q2b).** Clicking "Fix Paths" on a Library card now opens the Builder and auto-scrolls to + flashes the first broken action. `Library.tsx`'s `brokenShortcuts` is now a `Map<shortcutId, actionId>` (was `Set<shortcutId>`); the action id threads through `ShortcutCard.onEditFlow` → `App.handleEditShortcut` → `Builder.focusActionId`. Builder's effect retries up to 30× at 50ms intervals to handle the pre-commit render gap. Verified manually — Fix Paths lands the user on the broken action with a primary-colored ring for ~900ms.
+- **Safety-warnings toggle + `open_file` modal filter fix.** New `showDangerWarnings` setting (default ON) in Settings → General. When OFF: the "Dangerous" badge on `run_script` / `launch_app` cards is hidden; the pre-run confirmation modal in Library is skipped; and the hotkey handler fires directly without the confirm round-trip. Builder and ActionSequence re-read the setting live via a `lazycow-settings-changed` custom event — no page reload. Separately fixed the confirmation modal's filter: `open_file` actions pointing at a dangerous extension (`.exe`, `.bat`, `.ps1`, etc.) now appear in the modal's item list as `Open: <path>` — previously the modal triggered but showed an empty list.
+- **Safety-warnings toggle + `open_file` modal filter fix.** New `showDangerWarnings` setting (default ON) in Settings → General. When OFF: the "Dangerous" badge on `run_script` / `launch_app` cards is hidden; the pre-run confirmation modal in Library is skipped; and the hotkey handler fires directly without the confirm round-trip. Builder and ActionSequence re-read the setting live via a `lazycow-settings-changed` custom event — no page reload. Separately fixed the confirmation modal's filter: `open_file` actions pointing at a dangerous extension (`.exe`, `.bat`, `.ps1`, etc.) now appear in the modal's item list as `Open: <path>` — previously the modal triggered but showed an empty list.
 
 ### Done in code, NOT verified by user
 - Broken-path hotkey refusal toast (the badge + Fix Paths chain is verified via Q2b)
@@ -61,15 +62,14 @@ in rough priority order:
 - Test Flow button
 - Info (i) popover content and positioning
 
-### Not started
+- **Broken Path Fix UX (Q2b).** Clicking "Fix Paths" on a Library card now opens the Builder and auto-scrolls to + flashes the first broken action. `Library.tsx`'s `brokenShortcuts` is now a `Map<shortcutId, actionId>` (was `Set<shortcutId>`); the action id threads through `ShortcutCard.onEditFlow` → `App.handleEditShortcut` → `Builder.focusActionId`. Builder's effect retries up to 30× at 50ms intervals to handle the pre-commit render gap. Verified manually — Fix Paths lands the user on the broken action with a primary-colored ring for ~900ms.### Not started
 - Batch 3 — overlay animation (deferred)
 - Dependency cleanup (4 unused deps)
 - README accuracy pass
-- Security Warning modal `open_file` filter bug (see Bugs below)
+- **Safety-warnings toggle + `open_file` modal filter fix.** New `showDangerWarnings` setting (default ON) in Settings → General. When OFF: the "Dangerous" badge on `run_script` / `launch_app` cards is hidden; the pre-run confirmation modal in Library is skipped; and the hotkey handler fires directly without the confirm round-trip. Builder and ActionSequence re-read the setting live via a `lazycow-settings-changed` custom event — no page reload. Separately fixed the confirmation modal's filter: `open_file` actions pointing at a dangerous extension (`.exe`, `.bat`, `.ps1`, etc.) now appear in the modal's item list as `Open: <path>` — previously the modal triggered but showed an empty list.
 
 ### Bugs / blockers
 - (none blocking)
-- Security Warning modal in `Library.tsx` shows an empty list when the only dangerous action is `open_file` with a dangerous extension. Filter only covers `run_script` and `launch_app`.
 - Compiled `dist-electron/main.js` has mangled registry paths in the windowLayout C# block (backslashes dropped by the build step). Source is correct; the built artifact is not. Low priority.
 
 ## §3 Last Verified Test
@@ -84,6 +84,12 @@ Not-Arranged App Visibility verified manually on 2026-10-06:
 - Notepad (assigned Left) + Calculator (Not Arranged) → Notepad snaps to Left, Calculator appears centered on top.
 - No resize applied to the unassigned window. Terminal confirms `UNASSIGNED_CENTER` fires.
 
+Safety toggle verified manually on 2026-10-09:
+- Toggle OFF → "Dangerous" badge hides in Builder without a reload.
+- Toggle OFF → Library Run skips the confirmation modal.
+- Toggle OFF → registered hotkey fires the shortcut directly.
+- Toggle ON → all three revert.
+
 End-to-end parallel-path verification from a saved shortcut is still pending.
 
 ## §4 Open Questions
@@ -93,15 +99,15 @@ End-to-end parallel-path verification from a saved shortcut is still pending.
 
 ## §5 Uncommitted (mirrors git status)
 
-Working tree: CLEAN. All Session 6 follow-up work committed and pushed.
+Working tree: CLEAN. All Session 7 work committed and pushed.
 
 Recent commits (most recent first):
+- `7ed280c` feat: safety-warnings toggle + fix open_file filter in confirm modal
+- `9ce9553` docs: log v2 roadmap missions (performance profile, workspace closer, text expansion)
+- `5abcb88` docs: sync handoff — 2e complete; log boot-check stale-handoff issue
 - `24db73a` docs: mark 2e complete in missions
 - `3440424` docs: fill journal entry for windowLayout debug cleanup
 - `da558bb` chore: remove debug stdout dump from windowLayout
-- `6dd4baa` docs: bump handoff to post-Session-6 HEAD
-- `bb6fe9f` docs: mark Q2b complete in missions; add Security Warning bug mission
-- `4810142` checkpoint: close Session 6 (Q2b + Not-Arranged complete, tree clean)
 
 ### §5-PENDING (in flight — cleared on confirmation)
 - (nothing pending)
