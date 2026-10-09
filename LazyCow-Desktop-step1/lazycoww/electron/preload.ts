@@ -36,6 +36,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // doesn't fire that shortcut while the user records a new one.
   setHotkeyRecording: (value: boolean) => ipcRenderer.send('set-hotkey-recording', value),
 
+  // Ask the main process to test whether this hotkey actually fires on
+  // this system. Returns { fired: boolean, reason?: string }.
+  testHotkey: (combo: string) => ipcRenderer.invoke('test-hotkey', { combo }),
+
   // ── General settings ──
   updateGeneralSettings: (settings: { startAtLogin?: boolean; keepInTray?: boolean }) => {
     ipcRenderer.send('update-general-settings', settings)
@@ -79,6 +83,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const listener = (_event: unknown, shortcutId: string) => callback(shortcutId)
     ipcRenderer.on('hotkey-needs-confirm', listener)
     return () => ipcRenderer.removeListener('hotkey-needs-confirm', listener)
+  },
+
+  onShortcutStarted: (callback: (info: { shortcutId: string }) => void) => {
+    const listener = (_event: unknown, info: { shortcutId: string }) => callback(info)
+    ipcRenderer.on('shortcut-started', listener)
+    return () => ipcRenderer.removeListener('shortcut-started', listener)
   },
 
 

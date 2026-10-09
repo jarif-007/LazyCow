@@ -313,7 +313,8 @@ const ActionSchema = z.object({
   id: z.string().min(1).max(100),
   type: z.string().min(1).max(50),
   title: z.string().max(200).optional(),
-  value: z.string().max(8192)
+  value: z.string().max(8192),
+  safetyOverride: z.enum(['dangerous', 'safe']).optional(),
 }).passthrough()
 
 // Shortcut-level Window Layout config (see src/types/actions.ts).
@@ -339,6 +340,7 @@ const ShortcutSchema = z.object({
   hotkey: z.string().max(100).optional(),
   actions: z.array(ActionSchema).max(50),
   windowLayout: WindowLayoutConfigSchema,
+  secured: z.boolean().optional(),
 }).passthrough()
 
 type ShortcutActionData = z.infer<typeof ActionSchema>
@@ -777,6 +779,10 @@ async function runShortcutActions(shortcut: ShortcutData): Promise<ActionResult[
   }
   runningShortcuts.add(shortcut.id)
   cancelRequests.delete(shortcut.id)
+  // Any pending "awaiting double-press" entry for this shortcut is now
+  // stale — the shortcut is running via some path (double-press, Library
+  // Run, etc.), so the toast-click guard should reject it.
+  securedPendingFires.delete(shortcut.id)
 
   // Fire the arrangement engine in parallel with the action loop.
   // It polls for windows as they appear, snapping each the moment it's
@@ -962,18 +968,10 @@ ipcMain.handle('select-path', async (_event, type: 'app' | 'file' | 'folder') =>
   return null
 })
 
-const DANGEROUS_EXTENSIONS = new Set(['.exe', '.cmd', '.bat', '.ps1', '.vbs', '.js', '.wsf', '.msi'])
-
-function shortcutHasScript(shortcut: ShortcutData): boolean {
-  return shortcut.actions.some((a) => {
-    if (a.type === 'run_script' || a.type === 'launch_app') return true
-    if (a.type === 'open_file') {
-      const ext = path.extname(a.value).toLowerCase()
-      if (DANGEROUS_EXTENSIONS.has(ext)) return true
-    }
-    return false
-  })
-}
+// The old `shortcutHasScript` / `DANGEROUS_EXTENSIONS` helpers were replaced
+// by the per-shortcut `secured` flag. The dangerous/extension logic now
+// lives in the renderer (`src/utils/danger.ts`) and is not consulted by
+// the main process at hotkey-fire time.
 
 // ──────────────────────────────────────────────
 // GLOBAL HOTKEYS
@@ -1005,13 +1003,25 @@ function comboToAccelerator(combo: string): string | null {
   return accelParts.join('+')
 }
 
+// (Previously `cachedShowDangerWarnings` — removed. The per-shortcut
+// `secured` flag is now the sole gate for whether a hotkey fires a
+// confirmation round-trip. The renderer still sends `showDangerWarnings`
+// in the sync payload for backward compatibility, but the main process
+// no longer reads it.)
+
 /**
- * Cached value of the user's "show safety warnings" preference. The
- * renderer sends this on every `sync-hotkeys` call so the main process
- * knows whether to gate dangerous shortcuts behind a confirm round-trip.
- * Defaults to `true` when the setting is missing (older installs).
+ * Timestamps of recently-fired secured hotkeys awaiting a second press.
+ * When a secured shortcut's hotkey fires and the window isn't focused, we
+ * show a toast and record the time. If the same hotkey fires again within
+ * `securedDoublePressWindowMs`, the shortcut runs directly.
  */
-let cachedShowDangerWarnings = true
+const securedPendingFires = new Map<string, number>()
+
+/**
+ * Read the user's double-press window from settings. Falls back to 5s.
+ * Cached per sync — refreshed on each `sync-hotkeys` call.
+ */
+let cachedSecuredDoublePressMs = 5000
 
 /**
  * True while the renderer is actively recording a new hotkey. Suppresses
@@ -1041,6 +1051,49 @@ function findFirstBrokenPath(shortcut: ShortcutData): { title: string; value: st
 
 ipcMain.on('set-hotkey-recording', (_event, value: unknown) => {
   isRecordingHotkey = value === true
+})
+
+/**
+ * Test whether a hotkey actually fires on this system.
+ *
+ * Some keyboard layouts (UK, Bengali) don't deliver certain combinations
+ * to the OS shortcut layer even though globalShortcut.register() accepts
+ * them — notably Shift+digit and Ctrl+Alt+digit. The only reliable way
+ * to know is to try. We temporarily unregister every shortcut, register
+ * just the candidate, and wait up to 4 seconds for a fire. Then restore.
+ */
+ipcMain.handle('test-hotkey', async (_event, payload: { combo: string }) => {
+  const combo = typeof payload?.combo === 'string' ? payload.combo : ''
+  const accelerator = comboToAccelerator(combo)
+  if (!accelerator) return { fired: false, reason: 'invalid' }
+
+  // Snapshot existing shortcuts so we can restore after the test.
+  const snapshot = [...shortcutById.values()]
+
+  // Clear the stage — the candidate must be the only registered hotkey
+  // so we don't mistake another shortcut's fire for the candidate's.
+  globalShortcut.unregisterAll()
+
+  let resolveFire: (() => void) | null = null
+  const firePromise = new Promise<void>((r) => { resolveFire = r })
+  const timeoutMs = 4000
+  const timeoutPromise = new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), timeoutMs))
+
+  const ok = globalShortcut.register(accelerator, () => resolveFire?.())
+  if (!ok) {
+    registerHotkeys(snapshot)
+    return { fired: false, reason: 'registration-rejected' }
+  }
+
+  const result = await Promise.race([
+    firePromise.then(() => 'fired' as const),
+    timeoutPromise,
+  ])
+
+  globalShortcut.unregister(accelerator)
+  registerHotkeys(snapshot)
+
+  return { fired: result === 'fired', reason: result === 'fired' ? undefined : 'timeout' }
 })
 
 function registerHotkeys(shortcuts: ShortcutData[]) {
@@ -1084,18 +1137,68 @@ function registerHotkeys(shortcuts: ShortcutData[]) {
           return
         }
 
-        // When the user has disabled safety warnings, dangerous shortcuts
-        // fire directly without the confirm round-trip.
-        if (cachedShowDangerWarnings && shortcutHasScript(shortcut)) {
-          win?.webContents.send('hotkey-needs-confirm', shortcut.id)
+        // Secured shortcut — decide between direct run, in-app modal, or
+        // minimized toast + double-press confirmation.
+        if (shortcut.secured) {
+          // The user must have already confirmed via the double-press path.
+          const pendingAt = securedPendingFires.get(shortcut.id)
+          const now = Date.now()
+          if (pendingAt !== undefined && now - pendingAt <= cachedSecuredDoublePressMs) {
+            // Second press within the window → run directly.
+            securedPendingFires.delete(shortcut.id)
+            win?.webContents.send('hotkey-triggered', shortcut.id)
+            void runShortcutActions(shortcut)
+          } else if (win && win.isVisible() && win.isFocused()) {
+            // Window focused → show the in-app confirmation modal.
+            securedPendingFires.set(shortcut.id, now)
+            win.webContents.send('hotkey-needs-confirm', shortcut.id)
+          } else {
+            // Window minimized or hidden → show a native toast. The user
+            // can press the hotkey again within the window, or click the
+            // toast to focus LazyCow and see the modal.
+            securedPendingFires.set(shortcut.id, now)
+            if (executionNotifications && Notification.isSupported()) {
+              try {
+                const notif = new Notification({
+                  title: 'LazyCow — secured shortcut',
+                  body: `Press ${shortcut.hotkey} again, or click to open LazyCow.`,
+                  icon: getAppIconPath(),
+                  silent: false,
+                })
+                notif.on('click', () => {
+                  if (win) {
+                    if (win.isMinimized()) win.restore()
+                    win.show()
+                    win.focus()
+                    // Only send the confirm request if the pending-fire
+                    // entry still holds *our* timestamp. If the user
+                    // pressed the hotkey a second time while the toast
+                    // was visible, the double-press path either ran the
+                    // shortcut (deleting the entry) or re-armed it with
+                    // a different timestamp — either way, this click
+                    // must not re-open the modal.
+                    if (securedPendingFires.get(shortcut.id) === now) {
+                      win.webContents.send('hotkey-needs-confirm', shortcut.id)
+                    }
+                  }
+                })
+                notif.show()
+              } catch (err) {
+                console.warn('Failed to show secured-shortcut toast:', err)
+              }
+            }
+          }
         } else {
+          // Not secured → run directly.
           win?.webContents.send('hotkey-triggered', shortcut.id)
           void runShortcutActions(shortcut)
         }
       })
       if (!ok) {
+        console.log(`[hotkey] FAILED to register "${accelerator}" for "${shortcut.name}"`)
         win?.webContents.send('hotkey-register-failed', { shortcutId: shortcut.id, hotkey: shortcut.hotkey })
       } else {
+        console.log(`[hotkey] registered "${accelerator}" for "${shortcut.name}"`)
         hotkeyToShortcutId.set(accelerator, shortcut.id)
       }
     } catch {
@@ -1106,17 +1209,18 @@ function registerHotkeys(shortcuts: ShortcutData[]) {
 
 ipcMain.on('sync-hotkeys', (_event, payload: unknown) => {
   try {
-    // The renderer now sends `{ shortcuts, showDangerWarnings }`. We also
-    // accept the legacy bare-array shape so a stale renderer build can't
-    // silently break hotkey registration.
+    // The renderer sends `{ shortcuts, securedDoublePressSeconds }`. We
+    // also accept the legacy bare-array shape so a stale renderer build
+    // can't silently break hotkey registration.
     let shortcutsInput: unknown
     if (Array.isArray(payload)) {
       shortcutsInput = payload
     } else if (payload && typeof payload === 'object' && 'shortcuts' in payload) {
-      const p = payload as { shortcuts: unknown; showDangerWarnings?: boolean }
+      const p = payload as { shortcuts: unknown; securedDoublePressSeconds?: number }
       shortcutsInput = p.shortcuts
-      if (typeof p.showDangerWarnings === 'boolean') {
-        cachedShowDangerWarnings = p.showDangerWarnings
+      if (typeof p.securedDoublePressSeconds === 'number') {
+        const n = Math.max(5, Math.min(30, Math.round(p.securedDoublePressSeconds)))
+        cachedSecuredDoublePressMs = n * 1000
       }
     } else {
       return

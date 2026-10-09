@@ -60,9 +60,11 @@ interface Window {
       }>
     >
     cancelShortcut: (shortcutId: string) => Promise<{ ok: boolean; error?: string }>
-    syncHotkeys: (payload: ShortcutForIPC[] | { shortcuts: ShortcutForIPC[]; showDangerWarnings: boolean }) => void
+    syncHotkeys: (payload: ShortcutForIPC[] | { shortcuts: ShortcutForIPC[]; securedDoublePressSeconds: number }) => void
     /** Toggle whether the main process should suppress hotkey firing. */
     setHotkeyRecording: (value: boolean) => void
+    /** Test whether a hotkey fires on this system. */
+    testHotkey: (combo: string) => Promise<{ fired: boolean; reason?: string }>
     onShortcutProgress: (callback: (e: ShortcutProgressEvent) => void) => () => void
     onShortcutComplete: (callback: (e: { 
       shortcutId: string; 
@@ -79,6 +81,7 @@ interface Window {
     }) => void) => () => void
     onHotkeyTriggered: (callback: (shortcutId: string) => void) => () => void
     onHotkeyNeedsConfirm: (callback: (shortcutId: string) => void) => () => void
+    onShortcutStarted: (callback: (info: { shortcutId: string }) => void) => () => void
     onHotkeyRegisterFailed: (callback: (info: { shortcutId: string; hotkey: string }) => void) => () => void
   }
 }
