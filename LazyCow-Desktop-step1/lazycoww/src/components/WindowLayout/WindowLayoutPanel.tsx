@@ -15,6 +15,8 @@ interface WindowLayoutPanelProps {
   sequence: ActionItem[];
   /** Called when the user clicks "Test Layout". Filtering is the caller's job. */
   onTestLayout?: () => void;
+  /** Called when the user clicks the button while a test is in flight. */
+  onCancelTestLayout?: () => void;
   /** True while the Test Layout run is in flight. */
   testRunning?: boolean;
 }
@@ -24,6 +26,7 @@ export const WindowLayoutPanel: React.FC<WindowLayoutPanelProps> = ({
   onChange,
   sequence,
   onTestLayout,
+  onCancelTestLayout,
   testRunning = false,
 }) => {
   const [showTestInfo, setShowTestInfo] = React.useState(false);
@@ -140,6 +143,14 @@ export const WindowLayoutPanel: React.FC<WindowLayoutPanelProps> = ({
   // Count how many zones are filled vs. total
   const assignedCount = Object.keys(value.assignments).length;
   const overflow = activeLayout ? Math.max(0, eligibleCount - activeLayout.zoneCount) : 0;
+
+  // Count assigned actions that are open_url. With 2+, most browsers will
+  // open the second URL as a tab in the same window — no distinct window
+  // exists for the layout engine to place, so the second URL looks
+  // "unarranged" even though nothing is broken.
+  const urlAssignedCount = Object.entries(value.assignments).filter(
+    ([, actionId]) => sequence.find((a) => a.id === actionId)?.type === 'open_url'
+  ).length;
 
   // True when the selected layout has more zones than we have eligible apps.
   // Happens when the user removes an action after picking a larger layout.
@@ -297,24 +308,52 @@ export const WindowLayoutPanel: React.FC<WindowLayoutPanelProps> = ({
             )}
           </div>
 
+          {/* URL-in-same-browser notice — most browsers open a new URL as a
+              tab in the existing window, so a second open_url assigned to a
+              different zone won't have its own window to place. */}
+          {urlAssignedCount >= 2 && (
+            <div className="mt-3 flex items-start gap-2 bg-primary/10 border border-primary/30 rounded-lg p-3">
+              <span className="material-symbols-outlined text-primary text-[18px] shrink-0 mt-0.5">
+                info
+              </span>
+              <div className="flex-1 min-w-0">
+                <p className="text-body-sm text-primary font-medium">
+                  Two or more Open URL actions assigned
+                </p>
+                <p className="text-[11px] text-primary/80 mt-0.5">
+                  Most browsers open a new URL as a tab in the existing window. If both URLs target the same browser, only the first window will be placed — the second reuses it. To place both, set the browser to always open new windows (Firefox: <em>Settings → Tabs → turn off "Open new windows in a new tab instead"</em>).
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Test Layout — launches launch-type actions and previews the layout. */}
           {onTestLayout && (
             <div className="mt-4 pt-4 border-t border-border flex items-center gap-3">
-              <button
-                type="button"
-                onClick={onTestLayout}
-                disabled={testRunning || eligibleCount === 0}
-                className={`px-4 py-2 rounded-full font-title-sm text-body-sm flex items-center gap-2 transition-colors ${
-                  testRunning || eligibleCount === 0
-                    ? 'bg-muted text-muted-foreground cursor-not-allowed'
-                    : 'bg-primary text-primary-foreground hover:opacity-90'
-                }`}
-              >
-                <span className={`material-symbols-outlined text-[18px] ${testRunning ? 'animate-spin' : ''}`}>
-                  {testRunning ? 'progress_activity' : 'play_arrow'}
-                </span>
-                {testRunning ? 'Testing...' : 'Test Layout'}
-              </button>
+              {testRunning ? (
+                <button
+                  type="button"
+                  onClick={onCancelTestLayout}
+                  className="px-4 py-2 rounded-full font-title-sm text-body-sm flex items-center gap-2 transition-colors bg-red-500 text-white hover:bg-red-600"
+                >
+                  <span className="material-symbols-outlined text-[18px]">stop_circle</span>
+                  Cancel Test
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onTestLayout}
+                  disabled={eligibleCount === 0}
+                  className={`px-4 py-2 rounded-full font-title-sm text-body-sm flex items-center gap-2 transition-colors ${
+                    eligibleCount === 0
+                      ? 'bg-muted text-muted-foreground cursor-not-allowed'
+                      : 'bg-primary text-primary-foreground hover:opacity-90'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[18px]">play_arrow</span>
+                  Test Layout
+                </button>
+              )}
 
               <button
                 type="button"

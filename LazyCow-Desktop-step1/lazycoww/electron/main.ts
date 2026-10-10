@@ -490,6 +490,12 @@ const runningShortcuts = new Set<string>()
 // Simple cancellation request set — when a shortcut's id is present,
 // the execution loop will stop at the next step boundary (graceful cancel).
 const cancelRequests = new Set<string>()
+// Per-shortcut AbortControllers for the window-layout engine. When the
+// user cancels a running shortcut (or a Test Layout run), we call
+// .abort() here — this kills the child PowerShell process that's polling
+// for windows, so the cancellation takes effect immediately instead of
+// waiting for the poll deadline (up to 60s).
+const layoutAbortControllers = new Map<string, AbortController>()
 // Carries the window-layout results from the layout call to the
 // shortcut-complete event so the renderer can surface them on the card.
 let lastLayoutResults: PlacementResult[] | null = null
@@ -789,13 +795,17 @@ async function runShortcutActions(shortcut: ShortcutData): Promise<ActionResult[
   // found — instead of waiting for the loop to finish and snapping in a batch.
   // Errors are caught here so a layout failure never fails the shortcut.
   let layoutPromise: Promise<PlacementResult[]> | null = null
+  const layoutAbort = new AbortController()
+  layoutAbortControllers.set(shortcut.id, layoutAbort)
   if (shortcut.windowLayout?.enabled) {
     const placements = buildPlacementsFromShortcut(shortcut)
     if (placements.length > 0) {
       const budgetMs = estimateShortcutBudgetMs(shortcut)
       console.log(`[runShortcut] layout budget: ${budgetMs}ms for ${placements.length} placements`)
-      layoutPromise = arrangeWindows(placements, budgetMs).catch((err) => {
-        console.error('[runShortcut] window layout failed:', err)
+      layoutPromise = arrangeWindows(placements, budgetMs, layoutAbort.signal).catch((err) => {
+        if (!layoutAbort.signal.aborted) {
+          console.error('[runShortcut] window layout failed:', err)
+        }
         return [] as PlacementResult[]
       })
     }
@@ -828,17 +838,18 @@ async function runShortcutActions(shortcut: ShortcutData): Promise<ActionResult[
         results.push({ actionId: action.id, success: false, error: `${detail} — ${rawMsg}` })
       }
     }
-  } finally {
-    runningShortcuts.delete(shortcut.id)
-    cancelRequests.delete(shortcut.id)
+  } catch (err) {
+    // Defensive — the loop shouldn't throw, but if it does we still want
+    // the cleanup below to run.
+    console.error('[runShortcut] action loop threw:', err)
   }
   
   // Wait for the arrangement engine (already running in parallel).
-  // If cancelled, don't block the completion event — let it finish in the
-  // background so the card flips to "Cancelled" promptly.
+  // If cancelled, abort the layout poll instead of awaiting the deadline.
   lastLayoutResults = null
   if (layoutPromise) {
     if (cancelled) {
+      layoutAbort.abort()
       layoutPromise.then((r) =>
         console.log('[runShortcut] layout (post-cancel):', JSON.stringify(r, null, 2))
       )
@@ -851,6 +862,13 @@ async function runShortcutActions(shortcut: ShortcutData): Promise<ActionResult[
     }
   }
 
+  // NOW safe to clean up. runningShortcuts must stay populated during the
+  // layout wait so that a cancel request arriving mid-wait is accepted by
+  // the cancel-shortcut IPC handler (which checks runningShortcuts.has).
+  runningShortcuts.delete(shortcut.id)
+  cancelRequests.delete(shortcut.id)
+  layoutAbortControllers.delete(shortcut.id)
+
   const durationMs = Date.now() - startTime
   win?.webContents.send('shortcut-complete', {
     shortcutId: shortcut.id,
@@ -861,10 +879,14 @@ async function runShortcutActions(shortcut: ShortcutData): Promise<ActionResult[
     layoutResults: lastLayoutResults,
   })
 
-  // Dispatch native Windows notification if enabled
+  // Dispatch native Windows notification if enabled.
+  // Test runs (synthetic ids `test-layout-*` / `test-flow-*`) are previews
+  // launched from inside the Builder — the user is already looking at the
+  // app, so an OS toast is noise. Suppress for test ids.
+  const isTestRun = shortcut.id.startsWith('test-')
   const failed = results.filter((r) => !r.success)
   const allSucceeded = failed.length === 0 && !cancelled
-  if (executionNotifications && Notification.isSupported()) {
+  if (executionNotifications && !isTestRun && Notification.isSupported()) {
     try {
       let body: string
       if (cancelled) {
@@ -927,6 +949,11 @@ ipcMain.handle('cancel-shortcut', async (_event, payload: { shortcutId: string; 
     return { ok: false, error: 'Shortcut is not running.' }
   }
   cancelRequests.add(shortcutId)
+  // Abort the layout engine immediately so its child PowerShell process is
+  // killed instead of polling until the deadline. The action loop will see
+  // cancelRequests on its next iteration and break gracefully.
+  const layoutAbort = layoutAbortControllers.get(shortcutId)
+  if (layoutAbort) layoutAbort.abort()
   return { ok: true }
 })
 

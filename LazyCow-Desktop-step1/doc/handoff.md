@@ -127,8 +127,8 @@ Recent commits (most recent first):
 - `902fcfd` fix: only flag unsaved changes when Builder state differs from loaded shortcut
 
 ### §5-PENDING (in flight — cleared on confirmation)
-- (nothing pending)
-
+- feat(window-layout): URL-in-same-browser notice in WindowLayoutPanel
+- fix(window-layout): cancellable + toast-free Test Layout and Test Flow (separate running states)
 ## §6 Bootstrap order
 1. electron/main.ts, electron/preload.ts, electron/electron-env.d.ts, electron/windowLayout.ts
 2. src/types/actions.ts, src/pages/Library.tsx, src/pages/Builder.tsx

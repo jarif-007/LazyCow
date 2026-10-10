@@ -16,7 +16,11 @@ import os from 'node:os'
  *   - The `-Command -` stdin parser, which mangles nested here-strings
  * User data is JSON-escaped inside the script body — no CLI-injection surface.
  */
-async function runPowerShellScript(script: string, timeoutMs: number): Promise<string> {
+async function runPowerShellScript(
+  script: string,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<string> {
   const tmpPath = path.join(
     os.tmpdir(),
     `lazycow-arrange-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.ps1`
@@ -46,6 +50,11 @@ async function runPowerShellScript(script: string, timeoutMs: number): Promise<s
           // has already initialised its GDI/window subsystem by the time our
           // script runs, so SetProcessDPIAware() is a silent no-op.
           env: { ...process.env, __COMPAT_LAYER: 'HIGHDPIAWARE' },
+          // AbortSignal: killing the child process stops the internal
+          // PowerShell polling loop immediately. Without this, cancellation
+          // would have to wait for the poll deadline (up to 60s) before the
+          // process exits — the user would click Cancel and see nothing happen.
+          signal,
         },
         (err, stdout, stderr) => {
           // Always surface PowerShell's stderr — our diagnostic prints go there.
@@ -153,7 +162,8 @@ function getExpectedProcessName(placement: Placement): string | null {
  */
 export async function arrangeWindows(
   placements: Placement[],
-  timeoutMs = 6000
+  timeoutMs = 6000,
+  signal?: AbortSignal
 ): Promise<PlacementResult[]> {
   if (placements.length === 0) return []
   const engineTimeoutMs = Math.min(timeoutMs, 90000)
@@ -179,8 +189,13 @@ export async function arrangeWindows(
   try {
     // Subprocess timeout = engine poll budget + 5s headroom.
     const subprocessTimeout = engineTimeoutMs + 5000
-    stdout = await runPowerShellScript(script, subprocessTimeout)
+    stdout = await runPowerShellScript(script, subprocessTimeout, signal)
   } catch (err) {
+    // User aborted mid-poll. Return an empty result set — nothing was
+    // placed, and the caller isn't waiting for a status.
+    if (signal?.aborted) {
+      return []
+    }
     const e = err as { stdout?: string; message?: string }
     stdout = e.stdout ?? ''
     if (!stdout) {
