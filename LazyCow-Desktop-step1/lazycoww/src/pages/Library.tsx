@@ -37,7 +37,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
     setShortcuts(loaded);
     setFailedHotkeys(new Set());
     window.electronAPI?.syncHotkeys({
-      shortcuts: loaded.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured })),
+      shortcuts: loaded.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured, windowLayout: s.windowLayout })),
       securedDoublePressSeconds: readSecuredDoublePressSeconds(),
     });
   }, []);
@@ -283,7 +283,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
       setShortcuts(updated);
       localStorage.setItem('lazycow-shortcuts', JSON.stringify(updated));
       window.electronAPI?.syncHotkeys({
-        shortcuts: updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured })),
+        shortcuts: updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured, windowLayout: s.windowLayout })),
         securedDoublePressSeconds: readSecuredDoublePressSeconds(),
       });
     }
@@ -309,7 +309,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
     setShortcuts(updated);
     localStorage.setItem('lazycow-shortcuts', JSON.stringify(updated));
     window.electronAPI?.syncHotkeys({
-      shortcuts: updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured })),
+      shortcuts: updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured, windowLayout: s.windowLayout })),
       securedDoublePressSeconds: readSecuredDoublePressSeconds(),
     });
   };
@@ -324,7 +324,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
     setShortcuts(updated);
     localStorage.setItem('lazycow-shortcuts', JSON.stringify(updated));
     window.electronAPI?.syncHotkeys({
-      shortcuts: updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured })),
+      shortcuts: updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured, windowLayout: s.windowLayout })),
       securedDoublePressSeconds: readSecuredDoublePressSeconds(),
     });
   };
@@ -424,7 +424,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
             setShortcuts(persisted);
             localStorage.setItem('lazycow-shortcuts', JSON.stringify(persisted));
             window.electronAPI?.syncHotkeys({
-              shortcuts: persisted.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured })),
+              shortcuts: persisted.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured, windowLayout: s.windowLayout })),
               securedDoublePressSeconds: readSecuredDoublePressSeconds(),
             });
             setConfirmRun(null);
