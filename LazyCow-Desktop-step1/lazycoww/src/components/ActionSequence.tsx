@@ -420,25 +420,36 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
     const eligibleCount = sequence.filter(isArrangeable).length;
     if (layoutDef.zoneCount > eligibleCount) return undefined;
 
+    // Filter out orphaned assignments before displaying anything. An
+    // orphan is a zoneId → actionId entry whose actionId no longer exists
+    // in the sequence (typically because the action was deleted before
+    // the cleanup landed). Orphans make a zone look "taken by another
+    // action" even though its owner is gone, blocking reassignment.
+    const liveActionIds = new Set(sequence.map((a) => a.id));
+    const liveAssignments: Record<string, string> = {};
+    for (const [zoneId, actionId] of Object.entries(windowLayout.assignments)) {
+      if (liveActionIds.has(actionId)) liveAssignments[zoneId] = actionId;
+    }
+
     const assignZone = (actionId: string, zoneId: string) => {
-      const next = { ...windowLayout.assignments };
-      // Remove this action from any zone it currently owns
-      for (const key of Object.keys(next)) {
-        if (next[key] === actionId) delete next[key];
+      // Build a clean object: drop this action from any zone it owns,
+      // drop any orphaned entries, then write the new assignment.
+      const next: Record<string, string> = {};
+      for (const [key, val] of Object.entries(windowLayout.assignments)) {
+        if (val === actionId) continue;       // action is moving — remove old slot
+        if (!liveActionIds.has(val)) continue; // orphan — drop
+        next[key] = val;
       }
-      // Also clear whatever was in the target zone
-      if (zoneId) {
-        next[zoneId] = actionId;
-      }
+      if (zoneId) next[zoneId] = actionId;
       onWindowLayoutChange({ ...windowLayout, assignments: next });
     };
 
     return {
       zones: layoutDef.zones.map((z) => ({ id: z.id, label: z.label })),
-      assignments: windowLayout.assignments,
+      assignments: liveAssignments,
       findActionById: (id: string) => sequence.find((a) => a.id === id),
       getAssignedZoneId: (actionId: string): string | null => {
-        for (const [zoneId, aId] of Object.entries(windowLayout.assignments)) {
+        for (const [zoneId, aId] of Object.entries(liveAssignments)) {
           if (aId === actionId) return zoneId;
         }
         return null;

@@ -73,7 +73,16 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
     };
   }, []);
   const [hotkeyError, setHotkeyError] = useState('');
-  const [testRunning, setTestRunning] = useState(false);
+  // Test Layout and Test Flow run independently and can each be cancelled
+  // separately. They must NOT share a running flag — otherwise clicking one
+  // makes the other's button flip to Cancel, and the wrong cancel handler
+  // fires (with a null id) and does nothing.
+  const [testLayoutRunning, setTestLayoutRunning] = useState(false);
+  const [testFlowRunning, setTestFlowRunning] = useState(false);
+  // Synthetic ids of the in-flight test runs. Needed so each cancel handler
+  // can call cancelShortcut with the exact id the main process registered.
+  const [testLayoutId, setTestLayoutId] = useState<string | null>(null);
+  const [testFlowId, setTestFlowId] = useState<string | null>(null);
 
   const { recording: hotkeyRecording, recordedCombo, startRecording, stopRecording, clearCombo, setRecordedCombo } = useHotkeyRecorder('Win + Alt + D');
   const hotkey = recordedCombo || 'Win + Alt + D';
@@ -223,7 +232,19 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
       setSequence(editData.actions);
       if (editData.hotkey) setRecordedCombo(editData.hotkey);
       const wl = editData.windowLayout ?? { enabled: false, layoutId: null, assignments: {} };
-      setWindowLayout(wl);
+      // Self-heal legacy orphans: if any assignment points at an action
+      // that no longer exists in the sequence (e.g. it was deleted before
+      // the delete-cleanup fix shipped), drop it now. The zone becomes
+      // free, and the engine will no longer silently skip it.
+      const liveIds = new Set(editData.actions.map((a) => a.id));
+      const cleanedAssignments: Record<string, string> = {};
+      let hasOrphans = false;
+      for (const [zoneId, actionId] of Object.entries(wl.assignments)) {
+        if (liveIds.has(actionId)) cleanedAssignments[zoneId] = actionId;
+        else hasOrphans = true;
+      }
+      const nextWl = hasOrphans ? { ...wl, assignments: cleanedAssignments } : wl;
+      setWindowLayout(nextWl);
       // Snapshot for change detection. Uses the same defaults the form
       // computes with so the baseline matches the post-render state.
       baselineRef.current = JSON.stringify({
@@ -231,7 +252,7 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
         description: editData.description,
         hotkey: editData.hotkey || 'Win + Alt + D',
         actions: editData.actions,
-        windowLayout: wl,
+        windowLayout: nextWl,
       });
     } else {
       baselineRef.current = null;
@@ -298,7 +319,23 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
     setSequence((p) => { const n = [...p]; n.splice(index, 0, { id: `act-${Date.now()}`, type: item.type, title: item.title, icon: item.icon, colorClass: item.colorClass, value: item.defaultValue }); return n; });
   }, []);
 
-  const deleteAction = useCallback((id: string) => setSequence((p) => p.filter((a) => a.id !== id)), []);
+  const deleteAction = useCallback((id: string) => {
+    setSequence((p) => p.filter((a) => a.id !== id));
+    // Prune any zone assignment pointing at the deleted action. Without
+    // this, the zone stays flagged as "taken by another action" in the
+    // PositionDropdown, and the Window Layout engine silently skips the
+    // orphan — the deleted action's zone just disappears from the layout
+    // instead of becoming free for reassignment.
+    setWindowLayout((wl) => {
+      const next: Record<string, string> = {};
+      let changed = false;
+      for (const [zoneId, actionId] of Object.entries(wl.assignments)) {
+        if (actionId === id) { changed = true; continue; }
+        next[zoneId] = actionId;
+      }
+      return changed ? { ...wl, assignments: next } : wl;
+    });
+  }, []);
   const updateValue = useCallback((id: string, value: string) => setSequence((p) => p.map((a) => a.id === id ? { ...a, value } : a)), []);
   const updateSafetyOverride = useCallback((id: string, override: 'dangerous' | 'safe') => {
     setSequence((p) => p.map((a) => a.id === id ? { ...a, safetyOverride: override } : a));
@@ -359,8 +396,9 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
 
     if (previewActions.length === 0) return;
 
+    const testId = `test-layout-${Date.now()}`;
     const previewShortcut: SavedShortcut = {
-      id: `test-layout-${Date.now()}`,
+      id: testId,
       name: shortcutName.trim() || 'Test Layout',
       description: shortcutDesc.trim() || 'Preview',
       hotkey: '',
@@ -369,13 +407,24 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
       windowLayout,
     };
 
-    setTestRunning(true);
+    setTestLayoutId(testId);
+    setTestLayoutRunning(true);
     try {
       await window.electronAPI?.runShortcut(previewShortcut);
     } catch (err) {
       console.error('[Test Layout] failed:', err);
     } finally {
-      setTimeout(() => setTestRunning(false), 800);
+      setTestLayoutId(null);
+      setTestLayoutRunning(false);
+    }
+  };
+
+  // Cancel a running Test Layout. Aborts the layout engine's PowerShell
+  // process so the button flips back immediately instead of waiting for
+  // the poll deadline (up to 60s when a window never appears).
+  const handleCancelTestLayout = () => {
+    if (testLayoutId) {
+      window.electronAPI?.cancelShortcut(testLayoutId);
     }
   };
 
@@ -418,8 +467,9 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
       }
     }
 
+    const testId = `test-flow-${Date.now()}`;
     const testShortcut: SavedShortcut = {
-      id: `test-flow-${Date.now()}`,
+      id: testId,
       name: shortcutName.trim(),
       description: shortcutDesc.trim(),
       hotkey,
@@ -428,13 +478,24 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
       windowLayout,
     };
 
-    setTestRunning(true);
+    setTestFlowId(testId);
+    setTestFlowRunning(true);
     try {
       await window.electronAPI?.runShortcut(testShortcut);
     } catch (err) {
       console.error('[Test Flow] failed:', err);
     } finally {
-      setTimeout(() => setTestRunning(false), 800);
+      setTestFlowId(null);
+      setTestFlowRunning(false);
+    }
+  };
+
+  // Cancel a running Test Flow. Same mechanism as Test Layout — abort the
+  // layout engine's child PowerShell process and let the action loop break
+  // gracefully at the next step boundary.
+  const handleCancelTestFlow = () => {
+    if (testFlowId) {
+      window.electronAPI?.cancelShortcut(testFlowId);
     }
   };
 
@@ -625,7 +686,8 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
             onChange={setWindowLayout}
             sequence={sequence}
             onTestLayout={handleTestLayout}
-            testRunning={testRunning}
+            onCancelTestLayout={handleCancelTestLayout}
+            testRunning={testLayoutRunning}
           />
           <ActionSequence
             sequence={sequence}
@@ -646,25 +708,33 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
               <span className="material-symbols-outlined text-[20px]">close</span> Discard
             </button>
             <div className="flex items-center gap-4">
-              <button
-                onClick={handleTestFlow}
-                disabled={sequence.length === 0 || testRunning}
-                title={
-                  sequence.length === 0
-                    ? 'Add at least one action to test'
-                    : "Runs the shortcut exactly like Library's Run button — all actions, all delays, all side effects."
-                }
-                className={`px-6 py-2 border border-border rounded-full font-title-sm transition-colors flex items-center gap-2 ${
-                  sequence.length === 0 || testRunning
-                    ? 'text-muted-foreground opacity-50 cursor-not-allowed'
-                    : 'text-foreground hover:bg-muted'
-                }`}
-              >
-                <span className={`material-symbols-outlined text-[20px] ${testRunning ? 'animate-spin' : ''}`}>
-                  {testRunning ? 'progress_activity' : 'play_arrow'}
-                </span>
-                {testRunning ? 'Running...' : 'Test Flow'}
-              </button>
+              {testFlowRunning ? (
+                <button
+                  onClick={handleCancelTestFlow}
+                  className="px-6 py-2 bg-red-500 text-white rounded-full font-title-sm transition-colors flex items-center gap-2 hover:bg-red-600"
+                >
+                  <span className="material-symbols-outlined text-[20px]">stop_circle</span>
+                  Cancel Test
+                </button>
+              ) : (
+                <button
+                  onClick={handleTestFlow}
+                  disabled={sequence.length === 0}
+                  title={
+                    sequence.length === 0
+                      ? 'Add at least one action to test'
+                      : "Runs the shortcut exactly like Library's Run button — all actions, all delays, all side effects."
+                  }
+                  className={`px-6 py-2 border border-border rounded-full font-title-sm transition-colors flex items-center gap-2 ${
+                    sequence.length === 0
+                      ? 'text-muted-foreground opacity-50 cursor-not-allowed'
+                      : 'text-foreground hover:bg-muted'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[20px]">play_arrow</span>
+                  Test Flow
+                </button>
+              )}
               <button onClick={handleSave} disabled={!isFormValid}
                 className={`px-8 py-2.5 rounded-full font-title-sm shadow-md transition-all flex items-center gap-2 ${isFormValid ? 'bg-primary text-primary-foreground hover:opacity-90' : 'bg-muted text-muted-foreground opacity-50 cursor-not-allowed grayscale'}`}>
                 <span className="material-symbols-outlined text-[20px]">save</span> {editData ? 'Update Shortcut' : 'Save Shortcut'}
