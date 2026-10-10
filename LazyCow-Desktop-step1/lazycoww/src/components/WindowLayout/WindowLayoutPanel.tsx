@@ -168,9 +168,8 @@ export const WindowLayoutPanel: React.FC<WindowLayoutPanelProps> = ({
           </p>
         </div>
         <label
-          className={`relative inline-flex items-center shrink-0 ${
-            canEnable ? 'cursor-pointer' : 'cursor-not-allowed'
-          }`}
+          className={`relative inline-flex items-center shrink-0 ${canEnable ? 'cursor-pointer' : 'cursor-not-allowed'
+            }`}
         >
           <input
             type="checkbox"
@@ -180,9 +179,8 @@ export const WindowLayoutPanel: React.FC<WindowLayoutPanelProps> = ({
             onChange={handleToggle}
           />
           <div
-            className={`w-11 h-6 rounded-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full ${
-              canEnable ? 'bg-muted peer-checked:bg-primary' : 'bg-muted opacity-40'
-            }`}
+            className={`w-11 h-6 rounded-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full ${canEnable ? 'bg-muted peer-checked:bg-primary' : 'bg-muted opacity-40'
+              }`}
           />
         </label>
       </div>
@@ -209,15 +207,14 @@ export const WindowLayoutPanel: React.FC<WindowLayoutPanelProps> = ({
                   type="button"
                   disabled={tooManyZones}
                   onClick={() => handleLayoutChange(layout.id)}
-                  className={`relative group/layout p-2 rounded-lg border-2 transition-all ${
-                    selectedInvalid
-                      ? 'border-amber-500/60 bg-amber-500/5'
-                      : tooManyZones
+                  className={`relative group/layout p-2 rounded-lg border-2 transition-all ${selectedInvalid
+                    ? 'border-amber-500/60 bg-amber-500/5'
+                    : tooManyZones
                       ? 'border-border/40 opacity-35 cursor-not-allowed'
                       : selectedValid
-                      ? 'border-primary bg-primary/5'
-                      : 'border-border hover:border-primary/50 hover:bg-muted/30'
-                  }`}
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border hover:border-primary/50 hover:bg-muted/30'
+                    }`}
                 >
                   <LayoutThumbnail
                     layout={layout}
@@ -227,28 +224,28 @@ export const WindowLayoutPanel: React.FC<WindowLayoutPanelProps> = ({
                     onClearZone={
                       selectedValid
                         ? (zoneId) => {
-                            const next = { ...value.assignments };
-                            delete next[zoneId];
-                            onChange({ ...value, assignments: next });
-                          }
+                          const next = { ...value.assignments };
+                          delete next[zoneId];
+                          onChange({ ...value, assignments: next });
+                        }
                         : undefined
                     }
                     onSwapZones={
                       selectedValid
                         ? (fromId, toId) => {
-                            const next = { ...value.assignments };
-                            const from = next[fromId];
-                            const to = next[toId];
-                            if (from === undefined) return;
-                            if (to === undefined) {
-                              delete next[fromId];
-                              next[toId] = from;
-                            } else {
-                              next[fromId] = to;
-                              next[toId] = from;
-                            }
-                            onChange({ ...value, assignments: next });
+                          const next = { ...value.assignments };
+                          const from = next[fromId];
+                          const to = next[toId];
+                          if (from === undefined) return;
+                          if (to === undefined) {
+                            delete next[fromId];
+                            next[toId] = from;
+                          } else {
+                            next[fromId] = to;
+                            next[toId] = from;
                           }
+                          onChange({ ...value, assignments: next });
+                        }
                         : undefined
                     }
                   />
@@ -295,9 +292,8 @@ export const WindowLayoutPanel: React.FC<WindowLayoutPanelProps> = ({
           <div className="mt-3 flex items-center justify-between gap-3">
             <p className="text-[11px] text-muted-foreground opacity-70">
               {activeLayout
-                ? `${assignedCount} of ${activeLayout.zoneCount} zone${
-                    activeLayout.zoneCount !== 1 ? 's' : ''
-                  } assigned. Use the position dropdown on each card below.`
+                ? `${assignedCount} of ${activeLayout.zoneCount} zone${activeLayout.zoneCount !== 1 ? 's' : ''
+                } assigned. Use the position dropdown on each card below.`
                 : 'Pick a layout to enable position assignment.'}
             </p>
             {overflow > 0 && (
@@ -318,10 +314,10 @@ export const WindowLayoutPanel: React.FC<WindowLayoutPanelProps> = ({
               </span>
               <div className="flex-1 min-w-0">
                 <p className="text-body-sm text-primary font-medium">
-                  Two or more Open URL actions assigned
+                  Multiple URLs need separate browser windows
                 </p>
                 <p className="text-[11px] text-primary/80 mt-0.5">
-                  Most browsers open a new URL as a tab in the existing window. If both URLs target the same browser, only the first window will be placed — the second reuses it. To place both, set the browser to always open new windows (Firefox: <em>Settings → Tabs → turn off "Open new windows in a new tab instead"</em>).
+                  Browsers normally open the second URL as a tab in the first window, so only one window ends up in your layout. To get each URL into its own window, use a <strong>Chromium-based browser</strong> (Chrome, Edge, Brave, Helium) with the free <strong>New Tab New Window</strong> extension from the Chrome Web Store, then close and relaunch the browser. <strong>Firefox is not supported</strong> for multi-URL layouts.
                 </p>
               </div>
             </div>
@@ -344,11 +340,10 @@ export const WindowLayoutPanel: React.FC<WindowLayoutPanelProps> = ({
                   type="button"
                   onClick={onTestLayout}
                   disabled={eligibleCount === 0}
-                  className={`px-4 py-2 rounded-full font-title-sm text-body-sm flex items-center gap-2 transition-colors ${
-                    eligibleCount === 0
-                      ? 'bg-muted text-muted-foreground cursor-not-allowed'
-                      : 'bg-primary text-primary-foreground hover:opacity-90'
-                  }`}
+                  className={`px-4 py-2 rounded-full font-title-sm text-body-sm flex items-center gap-2 transition-colors ${eligibleCount === 0
+                    ? 'bg-muted text-muted-foreground cursor-not-allowed'
+                    : 'bg-primary text-primary-foreground hover:opacity-90'
+                    }`}
                 >
                   <span className="material-symbols-outlined text-[18px]">play_arrow</span>
                   Test Layout

@@ -10,6 +10,58 @@ import fs from 'node:fs'
 import os from 'node:os'
 
 /**
+ * Fast, minimal PowerShell snapshot: return every currently-visible
+ * top-level window handle as a comma-separated string.
+ *
+ * Called by main.ts BEFORE the action loop fires, so windows the shortcut
+ * opens can be classified as "new" by the layout engine. Without this,
+ * the engine's own PowerShell startup (~400ms) loses the race — browser
+ * windows opened by the shortcut are already on screen by the time the
+ * snapshot would run, so they're marked "old" and never placed.
+ *
+ * Uses -EncodedCommand (small script, no 32 KB cap issue) so quoting in
+ * the embedded C# here-string survives intact.
+ */
+export async function snapshotHandles(): Promise<Set<string>> {
+  const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+Add-Type @"
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public class Snap {
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    public static List<long> Get() {
+        var list = new List<long>();
+        EnumWindows((h, lp) => { if (IsWindowVisible(h)) list.Add(h.ToInt64()); return true; }, IntPtr.Zero);
+        return list;
+    }
+}
+"@
+[Snap]::Get() -join ','
+`
+  const encoded = Buffer.from(script, 'utf16le').toString('base64')
+  return new Promise((resolve) => {
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+      { windowsHide: true, maxBuffer: 1024 * 1024, timeout: 5000 },
+      (err, stdout) => {
+        if (err || !stdout) {
+          console.warn('[snapshotHandles] failed:', err)
+          resolve(new Set())
+          return
+        }
+        const handles = stdout.trim().split(',').filter(Boolean)
+        resolve(new Set(handles))
+      }
+    )
+  })
+}
+
+/**
  * Run a multi-line PowerShell script by writing it to a temp .ps1 file and
  * invoking `powershell.exe -File`. This avoids both:
  *   - Windows' ~32 KB command-line cap that `-EncodedCommand` hits on large scripts
@@ -163,6 +215,7 @@ function getExpectedProcessName(placement: Placement): string | null {
 export async function arrangeWindows(
   placements: Placement[],
   timeoutMs = 6000,
+  preExistingHandles?: Set<string>,
   signal?: AbortSignal
 ): Promise<PlacementResult[]> {
   if (placements.length === 0) return []
@@ -183,7 +236,13 @@ export async function arrangeWindows(
     isUnassigned: p.isUnassigned === true,
   }))
 
-  const script = buildScript(placementsForScript, engineTimeoutMs)
+  // Pre-sanitize the handle list: digits + commas only. Prevents any
+  // possibility of injection via the CSV when it's interpolated into
+  // the PowerShell script body.
+  const existingHandlesCsv = preExistingHandles
+    ? [...preExistingHandles].join(',').replace(/[^0-9,]/g, '')
+    : ''
+  const script = buildScript(placementsForScript, engineTimeoutMs, existingHandlesCsv)
 
   let stdout = ''
   try {
@@ -246,7 +305,11 @@ interface ScriptPlacement {
   isUnassigned: boolean
 }
 
-function buildScript(placements: ScriptPlacement[], engineTimeoutMs: number): string {
+function buildScript(
+  placements: ScriptPlacement[],
+  engineTimeoutMs: number,
+  existingHandlesCsv: string
+): string {
   const json = JSON.stringify(placements)
   const escapedJson = json.replace(/'/g, "''") // single-quote escape for PS
 
@@ -492,7 +555,44 @@ $areaH = $area.Height
 $usedHandles = [System.Collections.Generic.HashSet[IntPtr]]::new()
 $results = @()
 
-function Find-Window($placement) {
+# ── Pre-snapshot: the list of window handles that were ALREADY on screen
+#    when Node captured the snapshot, before this shortcut's actions fired.
+#    These are "old" windows — a pre-existing browser window must never be
+#    used to satisfy a placement meant for a freshly-launched window.
+$existingHandles = [System.Collections.Generic.HashSet[IntPtr]]::new()
+$existingCsv = '${existingHandlesCsv}'
+if ($existingCsv) {
+    foreach ($s in $existingCsv.Split(',')) {
+        if ($s) {
+            try { $existingHandles.Add([IntPtr][long]$s) | Out-Null } catch { }
+        }
+    }
+}
+[Console]::Error.WriteLine("PRE_SNAPSHOT: " + $existingHandles.Count + " windows passed from Node")
+
+# ── URL title helpers ──
+# For open_url placements, extract meaningful keywords from the URL host
+# so we can match against the browser window's title. This is how we tell
+# google.com and youtube.com apart when both open in the same browser.
+function Get-UrlKeyword($url) {
+    try {
+        $uri = [System.Uri]$url
+        if (-not $uri.Host) { return @() }
+        $parts = $uri.Host.ToLower().Split('.') | Where-Object { $_ -and $_ -ne 'www' }
+        return @($parts)
+    } catch { return @() }
+}
+
+function Test-TitleMatchesUrl($title, $keywords) {
+    if (-not $title) { return $false }
+    $normalized = ($title -replace '[^a-zA-Z0-9]', '').ToLower()
+    foreach ($kw in $keywords) {
+        if ($kw -and $normalized.Contains($kw)) { return $true }
+    }
+    return $false
+}
+
+function Find-Window($placement, $relaxed = $false) {
     $proc = $placement.process
     if ($proc -eq 'auto') {
         if ($placement.actionType -eq 'open_url') {
@@ -503,31 +603,80 @@ function Find-Window($placement) {
         }
     }
 
-    # Collect ALL unused candidate windows matching the process, then
-    # pick the one whose process started most recently. This prefers
-    # the window the shortcut JUST launched over a stale leftover.
-    $candidates = @()
+    # Partition unused candidates into "new" (opened after the Node
+    # snapshot, i.e. by THIS shortcut run) and "old" (were already on
+    # screen). Placements strongly prefer new.
+    $new = @()
+    $old = @()
     if (-not $proc -or $proc -eq 'auto') {
         foreach ($w in $allWindows) {
-            if (-not $usedHandles.Contains($w.Handle)) { $candidates += $w }
+            if ($usedHandles.Contains($w.Handle)) { continue }
+            if ($existingHandles.Contains($w.Handle)) { $old += $w } else { $new += $w }
         }
     } else {
+        $strict = @()
         foreach ($w in $allWindows) {
             if ($usedHandles.Contains($w.Handle)) { continue }
-            if ($w.ProcessName -eq $proc) { $candidates += $w }
+            if ($w.ProcessName -eq $proc) { $strict += $w }
         }
-        if ($candidates.Count -eq 0) {
+        if ($strict.Count -eq 0) {
             foreach ($w in $allWindows) {
                 if ($usedHandles.Contains($w.Handle)) { continue }
-                if ($w.ProcessName -like "*$proc*") { $candidates += $w }
+                if ($w.ProcessName -like "*$proc*") { $strict += $w }
             }
+        }
+        foreach ($w in $strict) {
+            if ($existingHandles.Contains($w.Handle)) { $old += $w } else { $new += $w }
         }
     }
 
-    if ($candidates.Count -eq 0) { return $null }
+    # ── open_url: NEW windows only, never old ──
+    # A pre-existing browser window must NEVER be placed in place of a URL
+    # the shortcut asked to open. If the browser reused an existing window
+    # (URL opened as a tab), there is no new window — the placement becomes
+    # not_found and the browser is left untouched.
+    #
+    # This is what stops a "meet.google.com" window from being grabbed by a
+    # "google.com" placement just because "google" appears in "Google Meet".
+    if ($placement.actionType -eq 'open_url') {
+        if ($new.Count -eq 0) {
+            # No new browser window yet — retry next poll iteration.
+            return $null
+        }
 
-    # Prefer the newest process. Sort by ProcessStartTime descending.
-    $sorted = $candidates | Sort-Object -Property ProcessStartTime -Descending
+        # Title matching works in BOTH passes — a slow-loading title may
+        # resolve after the main deadline but before the fallback runs.
+        $keywords = Get-UrlKeyword $placement.actionValue
+        if ($keywords -and $keywords.Count -gt 0) {
+            $titleMatch = @()
+            foreach ($w in $new) {
+                if (Test-TitleMatchesUrl $w.Title $keywords) { $titleMatch += $w }
+            }
+            if ($titleMatch.Count -gt 0) {
+                $picked = $titleMatch[0]
+                [Console]::Error.WriteLine("URL_TITLE_MATCH: " + $placement.actionValue + " -> '" + $picked.Title + "'")
+                return $picked
+            }
+        }
+
+        # Strict (main) pass: no title match yet — retry, give the page
+        # time to load and update its title.
+        if (-not $relaxed) { return $null }
+
+        # Relaxed (fallback) pass only: no title match ever resolved. Take
+        # any unused NEW browser window — better than leaving it unarranged.
+        $picked = $new[0]
+        [Console]::Error.WriteLine("URL_NEW_FALLBACK: " + $placement.actionValue + " -> '" + $picked.Title + "'")
+        return $picked
+    }
+
+    # ── launch_app / open_folder / open_file: prefer new, fall back to old ──
+    # Process-name matching is unique enough (notepad.exe, Code.exe) that
+    # using a pre-existing window if no new one appears is safe.
+    $preferred = if ($new.Count -gt 0) { $new } else { $old }
+    if ($preferred.Count -eq 0) { return $null }
+
+    $sorted = $preferred | Sort-Object -Property ProcessStartTime -Descending
     return $sorted[0]
 }
 
@@ -659,8 +808,16 @@ $warmupUntil = [DateTime]::UtcNow.AddMilliseconds(800)
 $pollInterval = 15
 $allWindows = @()
 
+# Stall detection: if no placement succeeds for this many ms, exit the
+# poll loop early. Prevents the shortcut from burning the full 18s budget
+# when placements can never resolve (Firefox single-window, missing apps,
+# etc). 5s is generous — Chrome URL placements resolve in 1-2s.
+$lastProgressAt = [DateTime]::UtcNow
+$stallThresholdMs = 5000
+
 while ([DateTime]::UtcNow -lt $deadline -and $placed.Count -lt $placements.Count) {
     $allWindows = [WinArranger]::GetWindows()
+    $progressThisIteration = $false
 
     foreach ($p in $placements) {
         $key = if ($p.isUnassigned) { "unassigned-$($p.actionValue)" } else { $p.zoneId }
@@ -670,6 +827,7 @@ while ([DateTime]::UtcNow -lt $deadline -and $placed.Count -lt $placements.Count
 
         $usedHandles.Add($w.Handle) | Out-Null
         $placed[$key] = $true
+        $progressThisIteration = $true
 
         if ($p.isUnassigned) {
             Bring-Unassigned-Window $w.Handle
@@ -690,6 +848,13 @@ while ([DateTime]::UtcNow -lt $deadline -and $placed.Count -lt $placements.Count
         }
     }
 
+    if ($progressThisIteration) {
+        $lastProgressAt = [DateTime]::UtcNow
+    } elseif (([DateTime]::UtcNow - $lastProgressAt).TotalMilliseconds -gt $stallThresholdMs) {
+        [Console]::Error.WriteLine("STALL_EXIT: no placements in " + $stallThresholdMs + "ms — exiting poll loop early")
+        break
+    }
+
     if ($placed.Count -eq $placements.Count) { break }
     Start-Sleep -Milliseconds $pollInterval
     # Stay fast during warmup, then taper.
@@ -700,10 +865,40 @@ while ([DateTime]::UtcNow -lt $deadline -and $placed.Count -lt $placements.Count
     }
 }
 
-# Anything never found becomes not_found
+# ── Fallback pass ──
+# Any placement that never resolved in the main poll loop gets one more
+# shot with relaxed matching (URL title requirement disabled). This
+# catches URLs whose page never loaded a title in time, or slow apps
+# that appeared right at the deadline.
+$allWindows = [WinArranger]::GetWindows()
 foreach ($p in $placements) {
     $key = if ($p.isUnassigned) { "unassigned-$($p.actionValue)" } else { $p.zoneId }
-    if (-not $placed.ContainsKey($key)) {
+    if ($placed.ContainsKey($key)) { continue }
+
+    $w = Find-Window $p $true
+    if ($w) {
+        $usedHandles.Add($w.Handle) | Out-Null
+        $placed[$key] = $true
+        [Console]::Error.WriteLine("FALLBACK_PLACED: " + $p.title + " — placed via relaxed match")
+        if ($p.isUnassigned) {
+            Bring-Unassigned-Window $w.Handle
+            $results += [PSCustomObject]@{
+                zoneId = $p.zoneId
+                actionTitle = $p.title
+                status = 'placed'
+                reason = 'unassigned — brought to front (fallback)'
+            }
+        } else {
+            Log-Zone-Occupancy $p.x $p.y $p.w $p.h $w.Handle
+            Place-Window $w.Handle $p.x $p.y $p.w $p.h $w.IsUwp
+            $results += [PSCustomObject]@{
+                zoneId = $p.zoneId
+                actionTitle = $p.title
+                status = 'placed'
+                reason = 'placed via fallback (no title match)'
+            }
+        }
+    } else {
         $results += [PSCustomObject]@{
             zoneId = $p.zoneId
             actionTitle = $p.title

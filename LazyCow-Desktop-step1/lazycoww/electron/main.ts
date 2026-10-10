@@ -10,7 +10,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { z } from 'zod'
 import contextMenu from 'electron-context-menu'
-import { arrangeWindows, type Placement, type PlacementResult } from './windowLayout'
+import { arrangeWindows, snapshotHandles, type Placement, type PlacementResult } from './windowLayout'
 
 // ── Native right-click context menu (copy / paste / cut / select all) ──
 // Without this, Electron shows nothing on right-click — which breaks a
@@ -418,8 +418,13 @@ function estimateShortcutBudgetMs(shortcut: ShortcutData): number {
       case 'launch_app':
       case 'open_folder':
       case 'open_file':
-      case 'open_url':
         total += 1500
+        break
+      case 'open_url':
+        // Browsers (especially Firefox) can take several seconds to open a
+        // window AND load the page. The title only becomes useful for
+        // matching after the page starts loading, so give URLs more room.
+        total += 5000
         break
       case 'run_script':
         total += 3000
@@ -544,7 +549,15 @@ async function runAction(action: ShortcutActionData): Promise<void> {
       if (!isValidUrlFormat(action.value)) {
         throw new Error('Invalid URL — must be a full web address')
       }
-      await shell.openExternal(action.value)
+      // Race shell.openExternal against a timeout. Firefox (and occasionally
+      // Explorer / a hung default browser) can leave the ShellExecute
+      // promise unresolved indefinitely — which locks the action loop and
+      // leaves the shortcut stuck in "running" state. 3s is more than
+      // enough for a healthy OS handoff; if it hasn't acknowledged by then,
+      // we move on and let the layout engine catch the window on its own poll.
+      const openPromise = shell.openExternal(action.value)
+      const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, 3000))
+      await Promise.race([openPromise, timeoutPromise])
       return
     }
     case 'set_volume': {
@@ -790,6 +803,17 @@ async function runShortcutActions(shortcut: ShortcutData): Promise<ActionResult[
   // Run, etc.), so the toast-click guard should reject it.
   securedPendingFires.delete(shortcut.id)
 
+  // Take the pre-snapshot BEFORE any action fires. This is the only way
+  // to correctly classify shortcut-opened windows as "new" — the layout
+  // engine's own PowerShell startup is ~400ms behind the actions, so a
+  // snapshot taken inside the script misses fast-appearing browser windows.
+  // Only pays the ~300-500ms latency cost when layout is actually enabled.
+  let preExistingHandles: Set<string> | undefined
+  if (shortcut.windowLayout?.enabled) {
+    preExistingHandles = await snapshotHandles()
+    console.log(`[runShortcut] pre-snapshot (Node side): ${preExistingHandles.size} existing windows`)
+  }
+
   // Fire the arrangement engine in parallel with the action loop.
   // It polls for windows as they appear, snapping each the moment it's
   // found — instead of waiting for the loop to finish and snapping in a batch.
@@ -802,7 +826,7 @@ async function runShortcutActions(shortcut: ShortcutData): Promise<ActionResult[
     if (placements.length > 0) {
       const budgetMs = estimateShortcutBudgetMs(shortcut)
       console.log(`[runShortcut] layout budget: ${budgetMs}ms for ${placements.length} placements`)
-      layoutPromise = arrangeWindows(placements, budgetMs, layoutAbort.signal).catch((err) => {
+      layoutPromise = arrangeWindows(placements, budgetMs, preExistingHandles, layoutAbort.signal).catch((err) => {
         if (!layoutAbort.signal.aborted) {
           console.error('[runShortcut] window layout failed:', err)
         }
