@@ -41,7 +41,7 @@ Status: COMPLETE — ⚠️ SUPERSEDED by "Secured Shortcuts + Safety Override +
 - [x] Builder and ActionSequence re-read the setting live via a `lazycow-settings-changed` custom event — no page reload needed.
 - [x] `syncHotkeys` payload extended to `{ shortcuts, showDangerWarnings }`; main process caches the value in `cachedShowDangerWarnings`.
 - [x] **Verified:** manual — toggle OFF → badge hides instantly in Builder; toggle OFF → Library Run skips modal; toggle OFF → hotkey fires directly. Toggle ON → all three revert.
-- ⚠️ **Superseded 2026-10-09.** The `showDangerWarnings` key is silently migrated to `securedShortcutsEnabled` in `Settings.tsx` on first load; the main process no longer reads it. Per-shortcut `secured` is the runtime gate; per-action `safetyOverride` is the label control. See `decisions.md` (2026-10-09 entries).
+- ⚠️ **Superseded 2026-10-09.** The `showDangerWarnings` key is silently migrated to `securedShortcutsEnabled` in `Settings.tsx` on first load; the main process no longer reads it. Per-shortcut `secured` is the runtime gate; per-action `safetyOverride` is the label control.
 
 ## Mission: Secured Shortcuts + Safety Override + Test Hotkey
 Status: COMPLETE (Session 8 — commits `cfec1a6` + `dc34b3c`)
@@ -50,48 +50,68 @@ Status: COMPLETE (Session 8 — commits `cfec1a6` + `dc34b3c`)
 - [x] **`securedDoublePressSeconds` setting** (default 5) — number input in Settings → General.
 - [x] **`securedShortcutsEnabled` setting** (default ON) — controls *new* shortcut defaults only; does not retroactively change existing shortcuts.
 - [x] **Silent migration** `showDangerWarnings` → `securedShortcutsEnabled` in `Settings.tsx` on load; legacy key deleted.
-- [x] **`migrateShortcutsSecured`** in `src/utils/security.ts` (new) — runs on Library mount; computes `secured` for any shortcut missing it; idempotent.
-- [x] **Per-action `safetyOverride`** (`'dangerous' | 'safe'`) on `ActionItem` — user-locked label that survives value changes.
-- [x] **`getActionLabel` / `hasDangerousActions`** in `src/utils/danger.ts` — override-aware, single source of truth for both the badge and the pre-run gate.
+- [x] **`migrateShortcutsSecured`** in `src/utils/security.ts` — runs on Library mount; computes `secured` for any shortcut missing it; idempotent.
+- [x] **Per-action `safetyOverride`** (`'dangerous' | 'safe'`) on `ActionItem` — user-locked label.
+- [x] **`getActionLabel` / `hasDangerousActions`** in `src/utils/danger.ts` — override-aware, single source of truth.
 - [x] **`SafetyChip`** on each `SortableActionCard` — inline Dangerous/Safe dropdown.
-- [x] **`ConfirmSecuredModal`** (new) — filter (All / Dangerous / Safe), per-row label editor, "all-safe → offer to turn off Secured" prompt. Staged edits persist on "Run Anyway."
+- [x] **`ConfirmSecuredModal`** — filter (All / Dangerous / Safe), per-row label editor, "all-safe → offer to turn off Secured" prompt.
 - [x] **`ShortcutCard` menu** gets a Secured toggle row; card shows a "Secured" badge when on.
-- [x] **`test-hotkey` IPC** in main — snapshot all, unregisterAll, register candidate, 4s race, restore. Returns `{ fired, reason }`.
-- [x] **Mandatory Test Hotkey gate** — Save disabled until `hotkeyIsVerified`. Renderer keydown listener distinguishes 4 outcomes (correct+fired / wrong combo / correct-but-OS-swallowed / nothing pressed).
+- [x] **`test-hotkey` IPC** — snapshot all, unregisterAll, register candidate, 4s race, restore.
+- [x] **Mandatory Test Hotkey gate** — Save disabled until `hotkeyIsVerified`.
 - [x] **`set-hotkey-recording` IPC** — suppresses global hotkey callbacks while the recorder is active.
-- [x] **`useHotkeyRecorder` `e.code` fix** — records physical key (`KeyB` → `B`, `Digit5` → `5`), not `e.key`. Fixes UK/Bengali silently-dead digit combos.
-- [x] **ComboBuilder rewrite** — controlled (`value` / `onChange`), modifier toggle chips, grouped key dropdown (Letters / Numbers / F1–F24 / Symbols / Navigation / Special), live preview pill. Both call sites updated.
+- [x] **`useHotkeyRecorder` `e.code` fix** — records physical key, not `e.key`.
+- [x] **ComboBuilder rewrite** — controlled, modifier chips, grouped dropdown, live preview.
 - [x] **`npx tsc --noEmit` clean.**
-- [ ] **Manual runtime verification pending** — Test Hotkey flow (four outcomes), secured double-press on minimized window, ConfirmSecuredModal filter + override persistence, `securedShortcutsEnabled` migration on a profile that had `showDangerWarnings: false`. See `handoff.md` §2.
+- [ ] **Manual runtime verification pending** — Test Hotkey flow (four outcomes), secured double-press on minimized window, ConfirmSecuredModal filter + override persistence, `securedShortcutsEnabled` migration on a legacy profile.
 
 ## Mission: Security Warning modal `open_file` filter bug
 Status: COMPLETE
-- [x] `Library.tsx`'s `runShortcut()` correctly flags `open_file` with a dangerous extension as dangerous and shows the confirmation modal, but the modal's `<span>` list only filtered `run_script` and `launch_app`. Result: a shortcut whose only dangerous action is an `open_file` showed the modal with an empty list.
-- [x] Fix: hoisted `DANGEROUS_EXTENSIONS` to module scope, added a `hasDangerousExtension()` helper, extended both the pre-run gate and the modal's item list to include `open_file` with a dangerous extension, showing *"Open: `<path>`"*.
-- [x] Shipped together with the safety-warnings toggle — see `handoff.md` §2 "Done & verified" and the journal entry for commit `7ed280c`.
+- [x] `Library.tsx`'s `runShortcut()` correctly flags `open_file` with a dangerous extension as dangerous and shows the confirmation modal, but the modal's `<span>` list only filtered `run_script` and `launch_app`.
+- [x] Fix: hoisted `DANGEROUS_EXTENSIONS` to module scope, added `hasDangerousExtension()` helper, extended both the pre-run gate and the modal's item list.
+- [x] Shipped with the safety-warnings toggle — see journal entry for `7ed280c`.
+
+## Mission: Session 10 — open_url layout fixes
+Status: COMPLETE (commits `7a2d54e` + `a06b193`)
+- [x] **`syncHotkeys` payload carries `windowLayout`.** Added to all 5 call sites in `Library.tsx`. Hotkey-triggered runs now reach the layout engine. (`7a2d54e`)
+- [x] **Node-side pre-snapshot.** `snapshotHandles()` in `windowLayout.ts` runs before the action loop in `main.ts`; the resulting handle set flows into `arrangeWindows` → `buildScript` → PowerShell CSV parse. (`a06b193`)
+- [x] **`Find-Window` rewritten.** Partitions unused candidates into new vs old; `open_url` placements consider only new.
+- [x] **URL title matching.** `Get-UrlKeyword` + `Test-TitleMatchesUrl` — disambiguates two URLs in the same browser.
+- [x] **Fallback pass.** Unresolved placements get one more attempt with title matching relaxed.
+- [x] **Stall detection.** Poll loop exits after 5s of no progress instead of burning the full budget.
+- [x] **`shell.openExternal` 3s timeout.** A hung ShellExecute no longer locks the action loop.
+- [x] **URL budget bump.** `estimateShortcutBudgetMs` gives each `open_url` 5000ms instead of 1500ms.
+- [x] **Firefox notice updated.** `WindowLayoutPanel` says Firefox isn't supported for multi-URL layouts.
+- [x] **Verified:** Chromium (Helium + "New Tab New Window") — both URLs placed in correct zones, pre-existing `meet.google.com` untouched. Firefox — stall exits at ~5s, notice accurate.
+
+## Mission: WhatsApp / Telegram multi-window limitation
+Status: NOT STARTED (documented, no fix planned)
+- [ ] WhatsApp Desktop has one process hosting both the chat window and the call window. The engine can't distinguish them by process name.
+- [ ] `ProcessStartTime` is identical for both — the "prefer newest" tiebreaker is a no-op.
+- [ ] **Possible heuristic if a real user hits it:** prefer the largest window for the process (call windows are usually smaller dialogs).
+- [ ] **Current decision:** wait for a real complaint. Documented rather than pre-emptively fixed.
+- [ ] **Rationale:** speculative fixes for unobserved problems add code without proven value.
 
 ## Mission: Code hygiene — remove vestigial `showDangerWarnings` prop
 Status: NOT STARTED
-- [ ] `Builder.tsx`'s `readShowDangerWarnings()` reads `lazycow_settings.showDangerWarnings`, but `Settings.tsx` migrates that key to `securedShortcutsEnabled` and **deletes** it on first load.
-- [ ] After the migration runs once, `Builder` always reads `true` — the "hide the SafetyChip" behavior is effectively dead.
-- [ ] The SafetyChip is now the interactive per-action safety override picker, not a static badge. Hiding it would hide the whole feature, which contradicts the design.
-- [ ] **Recommended action:** delete the read entirely. Remove `readShowDangerWarnings`, the `showDangerWarnings` state + effect listeners from `Builder.tsx`; the prop from `ActionSequence`'s interface + pass-through; the prop + gate from `SortableActionCard`. Always render `SafetyChip`.
-- [ ] **Not a bug** — no UI writes `showDangerWarnings: false` anymore, so a user can't observe the setting doing nothing. It's cleanup.
-- [ ] Touches: `src/pages/Builder.tsx`, `src/components/ActionSequence.tsx`, `src/components/ActionSequence/SortableActionCard.tsx`. ~15 lines deleted.
+- [ ] `Builder.tsx`'s `readShowDangerWarnings()` reads `lazycow_settings.showDangerWarnings`, but `Settings.tsx` migrates that key and **deletes** it on first load.
+- [ ] After migration, `Builder` always reads `true` — the "hide the SafetyChip" behavior is dead.
+- [ ] **Recommended action:** delete the read entirely. Remove the prop from `ActionSequence` and `SortableActionCard`. Always render `SafetyChip`.
+- [ ] **Not a bug** — no UI writes `showDangerWarnings: false` anymore.
+- [ ] Touches: `src/pages/Builder.tsx`, `src/components/ActionSequence.tsx`, `src/components/ActionSequence/SortableActionCard.tsx`.
 
 ## Mission: `open_url` same-browser limitation — documented, no fix planned
 Status: COMPLETE (documented behavior)
-- [x] Two `open_url` actions targeting the same browser open as tabs in one window — the engine has only one window handle to place, so the second URL appears "unarranged." This is browser behavior, not an app bug.
-- [x] `WindowLayoutPanel` shows an informational banner when 2+ assigned actions are `open_url`, explaining the behavior and pointing at Firefox's "Open new windows in a new tab instead" toggle.
-- [ ] No engine-side fix planned — Chrome/Edge have no clean "always open new windows" setting, and killing the tab-reuse behavior from the app would require process manipulation that conflicts with the safety posture.
+- [x] Two `open_url` actions targeting the same browser open as tabs in one window unless the browser is configured otherwise.
+- [x] `WindowLayoutPanel` shows the multi-URL notice.
+- [x] **Firefox is not supported** — Firefox always opens external URLs as tabs, regardless of `about:config`. UI notice updated in Session 10.
+- [x] **Chromium browsers are supported** — install the "New Tab New Window" extension from the Chrome Web Store.
+- [ ] No engine-side fix planned — this is browser behaviour, not a LazyCow bug.
 
 ## Mission: Code hygiene — resolve `onShortcutStarted` dead channel
 Status: NOT STARTED
 - [ ] `onShortcutStarted` is subscribed in `Library.tsx`, exposed in `preload.ts`, declared in `electron-env.d.ts` — but no `win.webContents.send('shortcut-started', ...)` exists anywhere in `main.ts`.
-- [ ] The subscription's job was defensive: close a pending confirmation modal when its shortcut starts running through another path. Never fires because the emit is missing.
-- [ ] **Two valid resolutions:** (a) wire the `webContents.send` at the correct runtime entry points in `runShortcutActions`; or (b) delete the channel entirely — the modal already has three other close paths (`visibilitychange`, `shortcut-complete`, `hotkey-triggered`).
-- [ ] **Recommended action:** (b) delete. The defensive close is nice-to-have; three paths already cover it.
-- [ ] Touches: `electron/preload.ts` (remove bridge), `electron/electron-env.d.ts` (remove declaration), `src/pages/Library.tsx` (remove subscription + cleanup). Optionally `electron/main.ts` if wiring instead of deleting.
+- [ ] **Recommended action:** delete the channel entirely — the modal already has three other close paths (`visibilitychange`, `shortcut-complete`, `hotkey-triggered`).
+- [ ] Touches: `electron/preload.ts`, `electron/electron-env.d.ts`, `src/pages/Library.tsx`.
 
 ## Mission: NFR Phases 4–6
 Status: NOT STARTED
@@ -127,37 +147,34 @@ Status: NOT STARTED
 ## Mission: Boot system — fix stale-handoff false positive
 Status: NOT STARTED
 - [ ] `boot.mjs` compares `handoff.md`'s `Last commit:` line against `git rev-parse HEAD` with exact string equality. Any commit that touches `handoff.md` moves HEAD past the value in the file, so the warning fires on a clean tree.
-- [ ] Proposed fix: compare against `git log --format=%h -1 -- <non-doc paths>` — the last commit that touched code, not docs. Or allow a small delta before warning.
+- [ ] **Preferred fix:** compare against `git log --format=%h -1 -- <non-doc paths>` — the last commit that touched code, not docs.
 - [ ] Alternative: accept the header as informational only, remove the check entirely.
-- [ ] Decision needed before implementing — **preferred approach:** compare against the last non-doc commit hash. Cheap, no behavior change, ends the false-positive warnings.
+- [ ] Decision needed before implementing.
 
 ## Mission: Performance profile (hardware-adaptive timings)
 Status: NOT STARTED
 - [ ] Add `lazycow_settings.performanceProfile: 'fast' | 'balanced' | 'slow'` — user-facing dropdown in Settings → General.
 - [ ] Auto-detect on first run via PowerShell (`Get-PhysicalDisk` for SSD/HDD, `Win32_ComputerSystem` for RAM) — preselect a profile, user can override.
 - [ ] Extract every timing constant into a single `getTimings(profile)` module shared by main + renderer. No more scattered magic numbers.
-- [ ] Affects: Window Layout poll warmup + taper, layout budget base, launch_app waits, broken-path debounce, hotkey re-trigger guard, auto-scroll default, boot watchdog.
+- [ ] Affects: Window Layout poll warmup + taper, layout budget base, launch_app waits, broken-path debounce, hotkey re-trigger guard, auto-scroll default, boot watchdog, URL budget, stall threshold.
 - [ ] Test all three tiers (fast / balanced / slow).
-- [ ] **Rationale:** any feature that's unusable on low-end hardware is a failure of the app. The app must adapt to the user's machine, not the other way around.
+- [ ] **Rationale:** any feature that's unusable on low-end hardware is a failure of the app.
 
 ## Mission: Workspace Closer (v1 — window-handle tracking)
 Status: NOT STARTED (deferred)
 - [ ] Per-shortcut toggle in a new `WorkspaceCloserPanel.tsx` in Builder. Default OFF.
-- [ ] Open-phase watcher records HWNDs for windows appearing after each shortcut's `openedAt` (persistent enum, backoff interval, 60s cap).
-- [ ] Hotkey double-press within 4s triggers close mode. Single press runs open as usual and clears any stale state.
-- [ ] Close phase: `WM_CLOSE` to each tracked HWND. Decaying recheck at 1/3/6/12/20s. Never force-kill.
+- [ ] Open-phase watcher records HWNDs for windows appearing after each shortcut's `openedAt`.
+- [ ] Hotkey double-press within 4s triggers close mode.
+- [ ] Close phase: `WM_CLOSE` to each tracked HWND. Never force-kill.
 - [ ] Toast with progress + "Undo" (10s). Library card shows "Reopen Workspace" while state exists.
-- [ ] Panel note explains that system-state actions (volume, brightness, DND, Night Light) don't participate — only windows get closed.
-- [ ] In-memory state; lost on restart. Documented limitation.
 - [ ] **Covers all window-producing actions:** `launch_app`, `open_folder`, `open_file`, `open_url`, and `run_script` if it opens a GUI window.
 - [ ] **Rationale:** the app must feel safe. Never close what it didn't open. Never force-close. Always provide Undo.
-- [ ] Slow-hardware hardening is part of v1, not v2 — see Performance profile mission.
 
 ## Mission: Text expansion / snippet manager (deferred)
 Status: NOT STARTED (v2 roadmap — own session, own risk budget)
-- [ ] **Decision logged 2026-10-06:** deferred. The idea is high-value (60–80% less typing on repeated content) but requires a global low-level keyboard hook (`uiohook-napi`) — a native binary, ~5MB, with real AV/corporate-policy risk. Not compatible with the current "pure TS/JS + Electron" architecture without accepting that dependency permanently.
-- [ ] If revisited: ship the toggle first (pause/resume control), test in one app, one trigger type, one session. Expand only if v1 holds.
-- [ ] **Interim alternative:** hotkey-triggered snippet paste (uses only `globalShortcut` + clipboard + synthetic paste — no native hook). Gets ~70% of the value at ~5% of the risk. Not committed; just a note.
+- [ ] **Decision logged 2026-10-06:** deferred. Requires a global low-level keyboard hook (`uiohook-napi`) — a native binary with real AV/corporate-policy risk.
+- [ ] If revisited: ship the toggle first, test in one app, one trigger type, one session.
+- [ ] **Interim alternative:** hotkey-triggered snippet paste (uses only `globalShortcut` + clipboard + synthetic paste).
 
 ## Mission: Doc hygiene (recurring)
 Status: ONGOING

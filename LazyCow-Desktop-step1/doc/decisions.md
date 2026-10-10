@@ -271,3 +271,45 @@ Append-only. Never delete. Each entry: date, decision, alternatives, why, conseq
   - `ActionSequence.windowLayoutForCard` builds `liveAssignments` (filtered) for display and cleans orphans on `assignZone` write.
   - The layout engine's behavior is unchanged — orphans are simply never present when it runs.
 - **Status:** active
+## 2026-10-11 — Every runtime field must be in the sync-hotkeys payload
+- **Decision:** Any field the runtime reads on a hotkey-triggered shortcut run must be present in the `sync-hotkeys` IPC payload. The `shortcutById` map in main is the sole source of hotkey-run data; it is populated only from that payload.
+- **Alternatives:**
+  - Have main re-read `lazycow-shortcuts` from localStorage directly — rejected. Main would have to duplicate the renderer's storage schema and migration logic, and would drift over time.
+  - Have the hotkey handler round-trip to the renderer to fetch the current shortcut — rejected. Adds an IPC hop per hotkey fire and creates a race (the renderer might not be focused).
+  - Send the entire `SavedShortcut` object through the sync payload — this is what we're doing now, we just forgot one field. Reinforces the rule: keep the payload shape in lockstep with `SavedShortcut`.
+- **Why:** Hotkey runs and Library runs are two paths to the same runtime function. Any field that exists on one path but not the other creates silent divergence — the same shortcut behaves differently depending on how the user triggered it. That is the most user-confusing class of bug: "it worked when I clicked Run, why doesn't the hotkey work?"
+- **Consequence:**
+  - New rule in `context.md` §6 (rule 30).
+  - When adding a new field to `SavedShortcut`, add it to the sync payload at the same time.
+  - The 5 `syncHotkeys` call sites in `Library.tsx` are the canonical write points for this payload.
+- **Status:** active
+
+## 2026-10-11 — Pre-snapshot must run in Node, before the action loop
+- **Decision:** The "which windows existed before this shortcut fired" snapshot is captured by the Node main process in `snapshotHandles()`, awaited by `runShortcutActions` **before** the action loop begins, and passed as a `Set<string>` through `arrangeWindows` into `buildScript`.
+- **Alternatives:**
+  - **In-script snapshot.** PowerShell's `SnapshotVisibleWindows()` called at the top of `arrangeWindows`'s script. Tried; failed. PowerShell startup (~400ms) loses the race with the action loop — browser windows opened by the shortcut's first two actions are already on screen by the time the script's snapshot runs. They get classified as "old" and refused for placement.
+  - **Snapshot after the action loop finishes.** Rejected — by then the layout engine has already started (it fires in parallel). No help.
+  - **Per-placement snapshot with a delay.** Rejected — arbitrary, unprincipled, and would still race slow browsers.
+- **Why:** The snapshot's entire purpose is to say "these windows existed *before* the shortcut ran." Capturing it any time after the action loop starts defeats that purpose. Node can take the snapshot at t=0 (before the first `shell.openPath`) because `runShortcutActions` controls the sequence.
+- **Consequence:**
+  - New rule in `context.md` §6 (rule 31).
+  - `snapshotHandles()` adds ~300–500ms to every layout-enabled shortcut run. Only paid when `shortcut.windowLayout?.enabled` is true.
+  - The `existingHandlesCsv` string passed into the PowerShell script is sanitized to `[0-9,]` before interpolation.
+  - `Find-Window` partitions candidates into `$new` (not in snapshot) and `$old` (in snapshot). `open_url` placements only consider `$new`.
+- **Status:** active
+
+## 2026-10-11 — `open_url` placements require a NEW window; Firefox is unsupported for multi-URL
+- **Decision:** For `open_url` placements, the engine considers only windows that appeared **after** the pre-snapshot. Pre-existing browser windows are never touched, even if no new window appears. If the browser reused an existing window (URL opened as a tab), the placement becomes `not_found` and the browser is left alone. Title matching is used to disambiguate two URLs in the same browser. The UI notice in `WindowLayoutPanel` documents Firefox as unsupported for multi-URL layouts.
+- **Alternatives:**
+  - **Fall back to any matching window when no new one exists.** Tried; failed. This is the bug that grabbed the "Google Meet" window for the "google.com" placement.
+  - **Match on process name only.** Tried; failed for the same reason — all Chrome windows share a process name.
+  - **Match on process start time only.** Tried; no-op. Chrome (and modern browsers) reuse the parent process for new windows, so all windows have the same `ProcessStartTime`.
+  - **Use `chrome.debugger` or Chrome DevTools Protocol to identify windows.** Rejected — requires elevated install or a companion extension, and Firefox has no equivalent.
+  - **Fight Firefox's external-URL behaviour.** Rejected. No setting (`browser.link.open_newwindow`, `browser.link.open_newwindow.restriction`, or anything in `about:config`) reliably changes how Firefox handles URLs delivered via `ShellExecute`. This is Firefox's design choice, not a bug we can patch around.
+- **Why:** The user's mental model is "I asked the shortcut to open google.com in the top-right zone — a window with google.com must appear there." Placing a pre-existing window (even a real google.com window from a previous session) violates the *this shortcut* contract. Not placing anything is more honest: the user sees "not placed" and understands the browser reused a window. Placing the wrong window feels like a bug even when it technically opens the URL the user requested.
+- **Consequence:**
+  - `Find-Window` for `open_url` placements returns `$null` if `$new.Count -eq 0` — even in the relaxed (fallback) pass.
+  - A fallback pass after the main poll loop allows relaxed placement (title matching optional) but still requires a new window.
+  - The UI notice in `WindowLayoutPanel` explicitly says Firefox is not supported and recommends a Chromium browser with the "New Tab New Window" extension.
+  - Multi-URL layouts are verified only for Chromium-based browsers.
+- **Status:** active
