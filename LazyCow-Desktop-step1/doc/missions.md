@@ -79,6 +79,12 @@ Status: NOT STARTED
 - [ ] **Not a bug** — no UI writes `showDangerWarnings: false` anymore, so a user can't observe the setting doing nothing. It's cleanup.
 - [ ] Touches: `src/pages/Builder.tsx`, `src/components/ActionSequence.tsx`, `src/components/ActionSequence/SortableActionCard.tsx`. ~15 lines deleted.
 
+## Mission: `open_url` same-browser limitation — documented, no fix planned
+Status: COMPLETE (documented behavior)
+- [x] Two `open_url` actions targeting the same browser open as tabs in one window — the engine has only one window handle to place, so the second URL appears "unarranged." This is browser behavior, not an app bug.
+- [x] `WindowLayoutPanel` shows an informational banner when 2+ assigned actions are `open_url`, explaining the behavior and pointing at Firefox's "Open new windows in a new tab instead" toggle.
+- [ ] No engine-side fix planned — Chrome/Edge have no clean "always open new windows" setting, and killing the tab-reuse behavior from the app would require process manipulation that conflicts with the safety posture.
+
 ## Mission: Code hygiene — resolve `onShortcutStarted` dead channel
 Status: NOT STARTED
 - [ ] `onShortcutStarted` is subscribed in `Library.tsx`, exposed in `preload.ts`, declared in `electron-env.d.ts` — but no `win.webContents.send('shortcut-started', ...)` exists anywhere in `main.ts`.

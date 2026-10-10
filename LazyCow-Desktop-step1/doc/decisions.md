@@ -242,3 +242,32 @@ Append-only. Never delete. Each entry: date, decision, alternatives, why, conseq
   - ComboBuilder's key vocabulary is defined in physical-key terms, so a combo captured by the recorder round-trips through the picker (and vice versa).
   - This fix is what makes the mandatory Test Hotkey gate meaningful — the recorder no longer produces combos that fail silently.
 - **Status:** active
+## 2026-10-10 — Test runs are cancellable and don't fire toasts
+- **Decision:** Test Layout and Test Flow use synthetic ids (`test-layout-<ts>` / `test-flow-<ts>`) and are exempt from OS toast dispatch. Both are fully cancellable. Test Layout's cancel aborts the layout engine's child PowerShell process immediately; Test Flow's cancel is graceful-only (the current action finishes, then the loop breaks).
+- **Alternatives:**
+  - Let test runs show the normal completion toast — rejected; the user is already looking at the app, the toast says "LazyCow: test", and the frequency of layout iteration makes the noise disruptive.
+  - Make Test Flow's cancel immediate — rejected; conflicts with the graceful-only rule (2026-09-15). Cancelling mid-`run_script` would require killing an arbitrary process tree, which is exactly what that decision was written to prevent.
+  - No cancel at all — rejected; a poll that never finds a window (browser tab reuse) leaves the button in a running state for up to 60s.
+- **Why:** Test runs are a preview from inside the app. The user's mental model is "I'm iterating on a layout" — they want fast feedback and a way to stop early if the preview isn't what they wanted. A native toast fights that; a cancel button supports it.
+- **Consequence:**
+  - `runShortcutActions` skips the notification dispatch when `shortcut.id.startsWith('test-')`.
+  - Per-shortcut `AbortController`s in `layoutAbortControllers`; `cancel-shortcut` aborts the controller in addition to setting the graceful flag.
+  - `runPowerShellScript` accepts an `AbortSignal` and passes it to `execFile` — child process is killed on abort.
+  - `runningShortcuts.delete()` moved *after* the layout wait, so cancel requests arriving mid-wait are accepted by the cancel handler.
+  - `Builder` splits `testRunning` into `testLayoutRunning` + `testFlowRunning` — each button tracks its own state.
+- **Status:** active
+
+## 2026-10-10 — Orphaned zone assignments are pruned at three layers
+- **Decision:** A `windowLayout.assignments` entry is valid only if its `actionId` exists in the shortcut's current `actions`. Orphans are pruned at three points: when the user deletes an action (`Builder.deleteAction`); when a shortcut is loaded for edit (`Builder`'s `editData` useEffect self-heals legacy orphans); and when the assignment view-model is built or written (`ActionSequence.windowLayoutForCard`).
+- **Alternatives:**
+  - Prune only at delete — rejected; shortcuts saved before this fix still have orphans in localStorage, and they'd remain broken until the user happened to delete another action.
+  - Prune only at load — rejected; doesn't help the current session (user deletes an action, immediately tries to assign a new one, still sees the stale lock).
+  - Change the engine to *not* skip orphans — rejected; the engine can't do anything sensible with a zone that has no owner. The orphan has to be removed before the engine sees it.
+  - Move assignment state out of the shortcut object into a separate store — rejected; too invasive for the problem.
+- **Why:** The engine's silent `continue` on unknown zone ids was correct — an orphan is a data-integrity problem, not an engine problem. Pruning on the renderer side keeps the engine simple and puts the fix where the data actually lives. Three layers because any single layer leaves a hole (already-saved orphans, current-session orphans, and the write path).
+- **Consequence:**
+  - `Builder.deleteAction` prunes the deleted id from `windowLayout.assignments`.
+  - `Builder`'s `editData` useEffect filters assignments against the loaded sequence; `baselineRef` uses the cleaned value so the form doesn't immediately look "dirty."
+  - `ActionSequence.windowLayoutForCard` builds `liveAssignments` (filtered) for display and cleans orphans on `assignZone` write.
+  - The layout engine's behavior is unchanged — orphans are simply never present when it runs.
+- **Status:** active
