@@ -177,7 +177,7 @@ Status: NOT STARTED (v2 roadmap — own session, own risk budget)
 - [ ] **Interim alternative:** hotkey-triggered snippet paste (uses only `globalShortcut` + clipboard + synthetic paste).
 
 ## Mission: Cold-start layout failure (Session 11)
-Status: NOT STARTED — under investigation
+Status: MONITORING — not reproduced since Session 10
 - [ ] **Symptom:** On a freshly booted PC, the first `npm run dev` session does
   not place windows correctly. Restarting `npm run dev` (no OS reboot) works.
 - [ ] **Suspected cause:** PowerShell's first `Add-Type -TypeDefinition <C#>` call
@@ -194,8 +194,13 @@ Status: NOT STARTED — under investigation
 - [ ] **Candidate fix (if compile-throw):** move the C# compilation out of the
   main layout script into a one-time setup at app startup; persist the compiled
   assembly so subsequent runs load it from the assembly cache.
-- [ ] **Do not patch before diagnosing.** Cold-start behaviour is
-  environment-sensitive — a wrong fix could make the first run worse.
+- [x] **Diagnostic run 2026-10-11:** Added `BEFORE_ADD_TYPE` / `AFTER_ADD_TYPE`
+  timestamps and raw stdout logging. Result: Add-Type compile was 286ms (warm,
+  normal) — the cold-start-compile hypothesis is ruled out. Engine placed all
+  4 zones correctly on warm restart. Session 10's Node-side pre-snapshot timing
+  fix may have eliminated the race that caused the original symptom.
+- [ ] **True cold-boot test pending** (full OS reboot, not just `npm run dev`).
+  Revisit only if the bug reproduces after genuine cold boot.
 
 ## Mission: Doc hygiene (recurring)
 Status: ONGOING
