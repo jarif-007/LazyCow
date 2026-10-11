@@ -202,6 +202,35 @@ Status: MONITORING — not reproduced since Session 10
 - [ ] **True cold-boot test pending** (full OS reboot, not just `npm run dev`).
   Revisit only if the bug reproduces after genuine cold boot.
 
+## Mission: Session 11 — Hotkey UX overhaul
+Status: COMPLETE (commits `ab8fdba` + `ba8e6cd` + `9e0cf2a`)
+- [x] **Recorder rewrite** — canonical key vocabulary from `e.code`; shifted symbols store the physical key; single-main-key replacement with a 3-second notice.
+- [x] **`initialMods` parameter** — ComboBuilder chips seed a live recording; pick Win then press K → `Win + K`.
+- [x] **Mirror effect** — chip edits during recording survive subsequent keystrokes.
+- [x] **Modifiers-only intermediate state** — chips visibly respond even before a key is picked.
+- [x] **Numpad keys** added to the picker.
+- [x] **Test Hotkey redesign** — 3-step flow (Test → Verify → Verified), no timer, user-paced.
+- [x] **Wrong-combo error** — distinguishes wrong key / OS-swallowed / no key pressed.
+- [x] **Auto-add to blocked** on Windows registration rejection.
+- [x] **Blocked Triggers polish** — expanded `Win + <letter>` defaults; `Del` → `Delete`; alias normalization on read; token-based filter; fixed-height list.
+- [x] **Pencil loads the trigger into the recorder.** `EditBlockedTriggerModal` deleted.
+- [x] **`OSCriticalWarningModal` uses `createPortal`** + `z-[250]` — the "delete appears to do nothing" bug.
+- [x] **Page Zoom** — 50%–200%, `Ctrl + +/-/0` shortcuts, persisted.
+- [x] **Verified:** tsc clean; manual verification for full flow pending (see `handoff.md` §2).
+
+## Mission: Canonical key module refactor
+Status: NOT STARTED
+- [ ] **Problem:** The key vocabulary exists in four places that must all agree: `canonicalKeyFromEvent` in `useHotkeyRecorder.ts`; `KEY_GROUPS` in `ComboBuilder.tsx`; `LEGACY_KEY_ALIASES` + `normalizeTrigger` in `SettingsBlockedTriggers.tsx`; `SPECIAL_KEY_MAP` in `electron/main.ts`. Any new key added to one but not the others creates a silent bug — e.g. the recorder emits `Numpad5` and the picker says "Unknown key".
+- [ ] **Goal:** Extract `KEY_GROUPS`, `KEY_ALIASES`, `normalizeKeyName`, and `canonicalKeyFromEvent` into `src/utils/keys.ts`. Have ComboBuilder and useHotkeyRecorder import from it.
+- [ ] **Challenge:** `electron/main.ts` can't import from `src/` (separate bundle). Two options:
+  - (a) Mirror the vocabulary into `electron/keys.ts` — the same file duplicated. Fragile.
+  - (b) Pre-build the vocabulary at commit time into a JSON file both sides import. More work.
+  - (c) Keep the electron-side `SPECIAL_KEY_MAP` minimal and only for the OS-critical-trigger list — accept that the two vocabularies are separate but keep them in sync via a test.
+- [ ] **Recommendation:** Start with (a) and a check-in-comment. If drift bites again, do (b).
+- [ ] **Also update:** `DEFAULT_BLOCKED_TRIGGERS` in `types/actions.ts` — should be derived from the same vocabulary so it can't drift.
+- [ ] **Test additions to verify:** recorder round-trips every key in `KEY_GROUPS`; every default trigger name is pickable in ComboBuilder.
+- [ ] **Rationale:** We've now fixed the same class of bug three times in this session (`Del`, numpad, shifted symbols). Each fix was surgical and worked, but the root cause — no single source of truth — remains.
+
 ## Mission: Doc hygiene (recurring)
 Status: ONGOING
 - [ ] Archive journal.md when it exceeds ~500 lines → journal-archive.md

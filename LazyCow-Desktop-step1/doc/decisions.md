@@ -313,3 +313,43 @@ Append-only. Never delete. Each entry: date, decision, alternatives, why, conseq
   - The UI notice in `WindowLayoutPanel` explicitly says Firefox is not supported and recommends a Chromium browser with the "New Tab New Window" extension.
   - Multi-URL layouts are verified only for Chromium-based browsers.
 - **Status:** active
+## 2026-10-12 — Test Hotkey is user-paced, no timer
+- **Decision:** Test Hotkey is a three-step flow: click Test → button becomes Verify → user presses the combo at their own pace → click Verify to confirm. No timeout. Cancel link reverts to idle.
+- **Supersedes:** The 4-second race in the original design.
+- **Alternatives:**
+  - 4-second timer (original) — rejected; hostile to slow users and puts the burden on typing speed rather than correctness.
+  - 8-second timer — rejected; still arbitrary and still fails users on slower connections or unfamiliar combos.
+  - Auto-verify when the combo fires — rejected; the user may want to press it multiple times to be sure, and auto-verify removes the explicit confirmation step.
+- **Why:** The user's mental model is "I want to confirm this combo works on my machine". The 4-second window made the test feel like a reflex challenge. The button-flip-to-Verify model removes time pressure entirely and makes the user the authority on "did that fire?".
+- **Consequence:**
+  - New IPC lifecycle: `test-hotkey-start` / `test-hotkey-check` / `test-hotkey-stop` replace the single `test-hotkey` call.
+  - The candidate combo stays registered until Verify or Cancel. Cancel and the unmount cleanup both call `test-hotkey-stop`.
+  - Failure paths give specific errors: wrong combo pressed / OS swallowed it / nothing pressed.
+- **Status:** active
+
+## 2026-10-12 — Windows-rejected combos auto-add to Blocked Triggers
+- **Decision:** When `globalShortcut.register()` returns false during a Test Hotkey run, the app adds the combo to `lazycow-blocked-triggers` (with a `lazycow-settings-changed` event so any open Settings panel refreshes), and explains: *"Windows won't let any app register 'X'. Added to Blocked Triggers — remove it from Settings if you've remapped this key at the OS level."*
+- **Alternatives:**
+  - Hardcode a list of Windows-reserved combos and reject at record time — rejected; we can't enumerate the OS's reservations reliably across versions and layouts. Better to discover empirically.
+  - Show the error but don't persist — rejected; the user would hit the same wall next time they tried the combo.
+  - Block the combo silently — rejected; the user would be confused about why their picker refused input.
+- **Why:** Two design goals. (1) Discover what Windows will accept empirically, using the OS as the source of truth. (2) Surface the fact in a durable place the user can find later — Blocked Triggers. The user can also *unblock* the combo if they've remapped it at the OS level (e.g. Autohotkey), which wouldn't work if we hardcoded the reservation.
+- **Consequence:**
+  - `Builder.handleTestHotkey` writes to `lazycow-blocked-triggers` on `registration-rejected`.
+  - `SettingsBlockedTriggers` listens for `lazycow-settings-changed` with key `blockedTriggers` and re-reads storage.
+  - The migrated `Ctrl + Alt + Delete` naming and the alias table (`KEY_ALIASES`) prevent duplicate-looking entries where the same combo appears twice with different key names.
+- **Status:** active
+
+## 2026-10-12 — Page Zoom is a first-class setting
+- **Decision:** `Settings → Appearance` gains a **Page Zoom** dropdown (50%–200%), and `Ctrl + +` / `Ctrl + -` / `Ctrl + 0` work globally. The zoom factor persists in `lazycow_settings.zoomFactor`. Shortcuts are handled in `main.ts` via `before-input-event` by physical key code, not in the renderer.
+- **Alternatives:**
+  - Chromium's built-in zoom handlers — rejected; they don't fire reliably across keyboard layouts (`+` is Shift+= on US, different on UK/Bengali).
+  - Renderer-side keyboard handling — rejected; keystrokes get intercepted by the hotkey recorder and ComboBuilder before they reach the zoom handler.
+  - Rely on window resize instead of zoom — rejected; users resize windows for layout reasons, not for reading comfort. Browsers separate these concerns and so should we.
+- **Why:** Users who work on high-DPI displays or who sit further from the screen expect a zoom control. Every browser has one. Consistency with user expectations is worth the ~100 lines.
+- **Consequence:**
+  - New IPC: `get-zoom-factor` / `set-zoom-factor`, plus a `zoom-changed` event for the renderer.
+  - Zoom is skipped while `isRecordingHotkey` is true, so pressing `Ctrl + +` during recording captures the combo instead of zooming.
+  - Zoom factor is applied on app mount via `Settings.tsx`, read from `lazycow_settings.zoomFactor`.
+  - Does not affect the window layout engine — that uses physical pixel coordinates from `windowLayout.ts`, independent of renderer zoom.
+- **Status:** active
