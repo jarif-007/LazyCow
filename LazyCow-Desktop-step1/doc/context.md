@@ -487,6 +487,6 @@ npm run build
 - Library and Settings pages have not been fully tested at narrow window widths (800–900px) — potential responsive layout issues.
 - ESLint emits a harmless TypeScript-version warning (`@typescript-eslint` supports `>=4.7.4 <5.6.0`; project runs `5.9.3`). Not blocking.
 - Running `npx tsc` or `npm run dev` from the repo root (instead of `lazycoww/`) triggers a phantom `tsc@2.0.4` install prompt — always `cd` into `lazycoww/` first.
-- - Compiled `dist-electron/main.js` has mangled registry paths in the windowLayout C# block. Source is correct; the built artifact is not. Low priority.
+- Compiled `dist-electron/main.js` has mangled registry paths in the windowLayout C# block. Source is correct; the built artifact is not. Low priority.
 - **WhatsApp / Telegram multi-window ambiguity:** WhatsApp Desktop has one process hosting both the chat window and the call window. The layout engine can't tell them apart by process name, and `ProcessStartTime` is identical for both. No fix planned until a real user hits it — the likely heuristic is "prefer the largest window for the process" (call windows are usually smaller dialogs). Tracked in `missions.md`.
 - **Test Layout synthetic-id race (observed once, not reproduced):** In one Session 10 run, Test Layout produced an empty `layout results: []` array when clicked rapidly. Suspected race with a previous-in-flight Test Layout. Not reproducible after the fixes. Monitor; if it recurs, look at `runningShortcuts` guard timing for test ids.

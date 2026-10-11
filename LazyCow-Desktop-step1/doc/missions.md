@@ -176,6 +176,27 @@ Status: NOT STARTED (v2 roadmap — own session, own risk budget)
 - [ ] If revisited: ship the toggle first, test in one app, one trigger type, one session.
 - [ ] **Interim alternative:** hotkey-triggered snippet paste (uses only `globalShortcut` + clipboard + synthetic paste).
 
+## Mission: Cold-start layout failure (Session 11)
+Status: NOT STARTED — under investigation
+- [ ] **Symptom:** On a freshly booted PC, the first `npm run dev` session does
+  not place windows correctly. Restarting `npm run dev` (no OS reboot) works.
+- [ ] **Suspected cause:** PowerShell's first `Add-Type -TypeDefinition <C#>` call
+  on a cold system has to spin up `csc.exe` and compile the `WinArranger` class.
+  On warm systems this is cached. Cold compile either (a) takes 2–4s and delays
+  placement past the poll deadline, or (b) throws because `$ErrorActionPreference
+  = 'Stop'` turns a slow-compile warning into a hard error.
+- [ ] **Diagnostics to run on cold boot:** add temporary `[Console]::Error.WriteLine`
+  timestamps before/after `Add-Type -TypeDefinition $code`, and log raw PowerShell
+  stdout even when it's empty (in `runPowerShellScript`'s callback).
+- [ ] **Candidate fix (if slow-compile):** warm up PowerShell during
+  `app.whenReady()` — fire a no-op `Add-Type` compile so the first real shortcut
+  run finds the compiler warm. ~500ms added to app startup.
+- [ ] **Candidate fix (if compile-throw):** move the C# compilation out of the
+  main layout script into a one-time setup at app startup; persist the compiled
+  assembly so subsequent runs load it from the assembly cache.
+- [ ] **Do not patch before diagnosing.** Cold-start behaviour is
+  environment-sensitive — a wrong fix could make the first run worse.
+
 ## Mission: Doc hygiene (recurring)
 Status: ONGOING
 - [ ] Archive journal.md when it exceeds ~500 lines → journal-archive.md

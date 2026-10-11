@@ -6,7 +6,7 @@ Working tree: (see git status)
 
 ## §1 Current Focus
 Session 10 fixed the open_url layout bugs end to end. Two code commits landed on
-top of Session 9 (plus this docs checkpoint):
+top of Session 9, and the docs checkpoint (`5da4193`) landed on top of those:
 
 - `7a2d54e` — sync-hotkeys payload now carries `windowLayout`. Hotkey-triggered
   runs no longer skip the layout engine while Library runs worked. The two paths
@@ -88,6 +88,14 @@ in rough priority order:
 - **WhatsApp / Telegram multi-window ambiguity.** The engine can't yet tell
   the chat window from the call window. Tracked in `missions.md` — no fix
   planned until a real user hits it.
+- **Cold-start layout failure (Session 11).** When the PC is freshly booted
+  and `npm run dev` runs for the first time, the layout engine does not place
+  windows correctly. Restarting `npm run dev` (no OS reboot) works. Suspected
+  root cause: PowerShell's first `Add-Type -TypeDefinition <C#>` call on a
+  cold system has to spin up `csc.exe` and compile the `WinArranger` class —
+  either delaying placement past the poll deadline, or throwing because of
+  `$ErrorActionPreference = 'Stop'`. Under investigation. Tracked in
+  `missions.md`.
 - Compiled `dist-electron/main.js` has mangled registry paths in the
   windowLayout C# block. Source is correct; the built artifact is not. Low
   priority.
@@ -95,14 +103,13 @@ in rough priority order:
 ## §3 Last Verified Test
 Session 10 — `npx tsc --noEmit` clean across the whole tree.
 
-Chromium multi-URL test (Helium, "New Tab New Window" extension) — verified:
+- Chromium multi-URL test (Helium, "New Tab New Window" extension) — verified:
 PRE_SNAPSHOT: 45 windows passed from Node
 URL_TITLE_MATCH: https://google.com -> 'Google - Helium'
 URL_TITLE_MATCH: https://youtube.com -> 'YouTube - Helium'
 All 4 zones placed.
 The pre-existing `meet.google.com` window was correctly excluded (never
 grabbed for the google.com placement).
-
 Previously verified (still hold):
 - Engine + claim-the-zone on 1920×1080 @ 125% — 4-app quad grid ✅
 - Not-Arranged App Visibility — Calculator centered on top of Notepad ✅
@@ -127,9 +134,10 @@ Previously verified (still hold):
 
 ## §5 Uncommitted (mirrors git status)
 
-Working tree: docs updates in flight (this checkpoint).
+Working tree: clean.
 
 Recent commits (most recent first):
+- `5da4193` docs: checkpoint — Session 10 open_url layout fixes
 - `a06b193` fix(electron): pre-snapshot + URL title matching for window layout
 - `7a2d54e` fix(renderer): include windowLayout in syncHotkeys payload
 - `1d42950` docs: checkpoint — Session 9 window layout fixes
@@ -140,7 +148,7 @@ Recent commits (most recent first):
 - `cfec1a6` feat(electron): test-hotkey IPC + secured-shortcut double-press runtime
 
 ### §5-PENDING (in flight — cleared on confirmation)
-- (nothing pending — Session 10 fixes committed)
+- (nothing pending)
 
 ## §6 Bootstrap order
 1. electron/main.ts, electron/preload.ts, electron/electron-env.d.ts, electron/windowLayout.ts
