@@ -118,8 +118,15 @@ function App() {
   // ── Splash screen ──
   useEffect(() => {
     const init = async () => {
-      try { await document.fonts.ready; } catch (err) { console.warn('Font loading check:', err); }
-      await new Promise((r) => setTimeout(r, 400));
+      // Wait for fonts, but never block the splash more than 1.5s —
+      // on slow or offline connections, Google Fonts can stall for
+      // seconds. We'd rather show the app with fallback fonts than
+      // keep the user staring at a spinner.
+      await Promise.race([
+        document.fonts.ready.catch(() => {}),
+        new Promise((r) => setTimeout(r, 1500)),
+      ]);
+      await new Promise((r) => setTimeout(r, 200));
       const splash = document.getElementById('splash-screen');
       if (splash) splash.classList.add('hidden');
       setTimeout(() => { if (splash) splash.remove(); }, 500);
