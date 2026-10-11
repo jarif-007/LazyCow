@@ -45,6 +45,13 @@ const KEY_GROUPS: KeyGroup[] = [
     })),
   },
   {
+    label: 'Numpad',
+    keys: Array.from({ length: 10 }, (_, i) => ({
+      value: `Numpad${i}`,
+      label: `Numpad ${i}`,
+    })),
+  },
+  {
     label: 'Symbols',
     keys: [
       { value: '`', label: '` / ~' },
@@ -83,11 +90,67 @@ const KEY_GROUPS: KeyGroup[] = [
       { value: 'Backspace', label: 'Backspace' },
       { value: 'Delete', label: 'Delete' },
       { value: 'Tab', label: 'Tab' },
+      { value: 'PrintScreen', label: 'Print Screen' },
     ],
   },
 ];
 
 const ALL_KEY_VALUES = new Set(KEY_GROUPS.flatMap((g) => g.keys.map((k) => k.value)));
+
+/**
+ * Alias table — maps alternate/common key names to the canonical one that
+ * the recorder emits. The recorder always uses the canonical name (e.g.
+ * "Delete", "Return", "Esc"), but hand-written strings or legacy data
+ * might use shorthands ("Del", "Enter", "Escape") or Windows short forms
+ * ("PgUp", "PrtSc"). Normalizing on parse means every combo round-trips
+ * through the picker without an "Unknown key" surprise.
+ *
+ * This is the single source of truth for key-name aliases. If you add a
+ * new key to KEY_GROUPS, no alias entry is needed — canonical names never
+ * alias to themselves.
+ */
+const KEY_ALIASES: Record<string, string> = {
+  // Delete family
+  'Del': 'Delete',
+  'Delete': 'Delete',
+  // Enter / Return
+  'Enter': 'Return',
+  'Return': 'Return',
+  // Escape
+  'Escape': 'Esc',
+  'Esc': 'Esc',
+  // Navigation
+  'PgUp': 'PageUp',
+  'PgDn': 'PageDown',
+  'Ins': 'Insert',
+  // Print screen
+  'PrtSc': 'PrintScreen',
+  'PrtScn': 'PrintScreen',
+  'PrintScr': 'PrintScreen',
+  'PrintScreen': 'PrintScreen',
+  // Space
+  'Spacebar': 'Space',
+  'Space': 'Space',
+  // Tab
+  'Tab': 'Tab',
+  // Backspace
+  'Backspace': 'Backspace',
+};
+
+/** Normalize a key name to its canonical form. Case-insensitive. */
+function normalizeKeyName(key: string): string {
+  const trimmed = key.trim();
+  if (!trimmed) return trimmed;
+  // Exact match first
+  if (KEY_ALIASES[trimmed]) return KEY_ALIASES[trimmed];
+  // Case-insensitive fallback — "escape" → "Esc", "DELETE" → "Delete"
+  const lower = trimmed.toLowerCase();
+  const found = Object.entries(KEY_ALIASES).find(([k]) => k.toLowerCase() === lower);
+  if (found) return found[1];
+  // Single-letter keys uppercase; multi-letter keys unchanged
+  if (trimmed.length === 1) return trimmed.toUpperCase();
+  return trimmed;
+}
 
 /** Split "Ctrl + Shift + B" into { mods: ['Ctrl','Shift'], key: 'B' }. */
 function parseCombo(combo: string): { mods: string[]; key: string | null } {
@@ -97,16 +160,23 @@ function parseCombo(combo: string): { mods: string[]; key: string | null } {
   let key: string | null = null;
   for (const p of parts) {
     if (MODIFIERS.includes(p)) mods.push(p);
-    else key = p;
+    else if (key === null) key = normalizeKeyName(p);
   }
   if (key && key.length === 1) key = key.toUpperCase();
   return { mods, key };
 }
 
-/** Build "Ctrl + Shift + B" from mods + key, ordered consistently. */
+/**
+ * Build "Ctrl + Shift + B" from mods + key, ordered consistently.
+ *
+ * Modifiers-only (no key yet) is a valid intermediate state while the
+ * user is still picking — if we returned '' here, clicking a modifier
+ * chip would visually do nothing, and users would think the chip is
+ * broken. The parent decides what counts as a "complete" combo.
+ */
 function buildCombo(mods: string[], key: string | null): string {
-  if (!key) return '';
   const ordered = MODIFIERS.filter((m) => mods.includes(m));
+  if (!key) return ordered.join(' + ');
   return [...ordered, key].join(' + ');
 }
 
@@ -161,6 +231,7 @@ export const ComboBuilder: React.FC<ComboBuilderProps> = ({ value, onChange }) =
           })}
         </div>
       </div>
+
 
       {/* Key — grouped dropdown, physical keys only */}
       <div className="flex items-center gap-3 mb-3">
