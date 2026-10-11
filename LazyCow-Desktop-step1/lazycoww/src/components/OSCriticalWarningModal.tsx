@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 
 interface OSCriticalWarningModalProps {
   trigger: string;
@@ -7,11 +8,11 @@ interface OSCriticalWarningModalProps {
 }
 
 export const OSCriticalWarningModal: React.FC<OSCriticalWarningModalProps> = ({ trigger, onConfirm, onCancel }) => {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+  return createPortal(
+    <div className="fixed inset-0 z-[250] flex items-center justify-center">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-background/90" onClick={onCancel} />
-      
+
       {/* Modal */}
       <div className="relative bg-card border border-red-500/30 rounded-2xl p-8 shadow-2xl max-w-md w-full mx-4">
         <div className="flex flex-col items-center text-center gap-4">
@@ -23,8 +24,8 @@ export const OSCriticalWarningModal: React.FC<OSCriticalWarningModalProps> = ({ 
           <h2 className="font-title-sm text-foreground text-lg">System-Critical Shortcut</h2>
 
           <p className="text-muted-foreground font-body-md leading-relaxed">
-            <code className="bg-muted px-2 py-0.5 rounded text-foreground font-code-sm">{trigger}</code> is marked as a system-critical shortcut. 
-            Removing it from the blocked list may allow a custom shortcut to override this key combination, 
+            <code className="bg-muted px-2 py-0.5 rounded text-foreground font-code-sm">{trigger}</code> is marked as a system-critical shortcut.
+            Removing it from the blocked list may allow a custom shortcut to override this key combination,
             potentially interfering with normal system behavior.
           </p>
 
@@ -44,6 +45,7 @@ export const OSCriticalWarningModal: React.FC<OSCriticalWarningModalProps> = ({ 
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

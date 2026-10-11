@@ -21,6 +21,8 @@ interface LocalSettings {
   dataShade: Shade;
   /** Auto-scroll acceleration during card drag and drag-select. 2 (slow) – 20 (fast). */
   autoScrollSpeed: number;
+  /** Page zoom factor. 0.5 = 50%, 1.0 = 100% (default), 2.0 = 200%. */
+  zoomFactor: number;
 }
 
 const DEFAULT_SETTINGS: LocalSettings = {
@@ -32,6 +34,7 @@ const DEFAULT_SETTINGS: LocalSettings = {
   generalShade: 'light',
   dataShade: 'light',
   autoScrollSpeed: 6,
+  zoomFactor: 1,
 };
 
 interface SettingsProps {
@@ -67,6 +70,8 @@ export default function Settings({ themeMode, onThemeModeChange, customColorMode
       } catch { /* ignore */ }
     }
     setSettings(initialSettings);
+    // Apply saved zoom immediately on mount.
+    window.electronAPI?.setZoomFactor(initialSettings.zoomFactor);
     if (window.electronAPI?.updateGeneralSettings) {
       window.electronAPI.updateGeneralSettings({
         startAtLogin: initialSettings.startAtLogin,
@@ -89,6 +94,10 @@ export default function Settings({ themeMode, onThemeModeChange, customColorMode
       window.electronAPI.updateGeneralSettings({ [key]: value as boolean });
     }
   }
+  // Zoom is main-process-driven. Push it when the user picks a new value.
+  if (key === 'zoomFactor') {
+    window.electronAPI?.setZoomFactor(value as number);
+  }
 };
 
   return (
@@ -101,6 +110,8 @@ export default function Settings({ themeMode, onThemeModeChange, customColorMode
           onCustomColorModeChange={onCustomColorModeChange}
           customTheme={customTheme}
           onCustomThemeChange={onCustomThemeChange}
+          zoomFactor={settings.zoomFactor}
+          onZoomChange={(factor) => updateSetting('zoomFactor', factor)}
         />
         <SettingsGeneral settings={settings} onUpdate={updateSetting} customColorMode={customColorMode} />
         <SettingsBlockedTriggers customColorMode={customColorMode} />

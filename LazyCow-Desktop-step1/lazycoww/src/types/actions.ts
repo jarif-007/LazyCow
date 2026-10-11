@@ -241,21 +241,27 @@ export const STORAGE_KEY_SHORTCUTS = 'lazycow-shortcuts';
 export const STORAGE_KEY_BLOCKED_TRIGGERS = 'lazycow-blocked-triggers';
 
 export const DEFAULT_BLOCKED_TRIGGERS: string[] = [
+  // ── System-critical ──
   'Alt + F4',
-  'Ctrl + Alt + Del',
-  'Win + L',
-  'Win + D',
-  'Win + R',
-  'Win + E',
-  'Win + Tab',
-  'Alt + Tab',
+  'Ctrl + Alt + Delete',
   'Ctrl + Shift + Esc',
-  'Win + X',
-  'Win + I',
-  'Win + S',
-  'Ctrl + C',
-  'Ctrl + V',
-  'Ctrl + X',
-  'Ctrl + Z',
-  'Ctrl + Y',
+  'Alt + Tab',
+  'Win + Tab',
+
+  // ── Windows clipboard / undo-redo ──
+  'Ctrl + C', 'Ctrl + V', 'Ctrl + X', 'Ctrl + Z', 'Ctrl + Y',
+
+  // ── Win + letter ──
+  // Windows reserves the full Win+<letter> space for shell features.
+  // globalShortcut.register() returns false for these — no app can claim
+  // them. Included by default so the user sees WHY in Settings; they can
+  // remove any entry if they've remapped the key with a tool like AHK.
+  'Win + A', 'Win + B', 'Win + C', 'Win + D', 'Win + E', 'Win + F',
+  'Win + G', 'Win + H', 'Win + I', 'Win + J', 'Win + K', 'Win + L',
+  'Win + M', 'Win + N', 'Win + O', 'Win + P', 'Win + Q', 'Win + R',
+  'Win + S', 'Win + T', 'Win + U', 'Win + V', 'Win + W', 'Win + X',
+  'Win + Y', 'Win + Z',
+
+  // ── Win + symbol ──
+  'Win + .', 'Win + ;', 'Win + ,',
 ];
