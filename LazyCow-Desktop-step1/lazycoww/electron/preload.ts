@@ -36,9 +36,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // doesn't fire that shortcut while the user records a new one.
   setHotkeyRecording: (value: boolean) => ipcRenderer.send('set-hotkey-recording', value),
 
-  // Ask the main process to test whether this hotkey actually fires on
-  // this system. Returns { fired: boolean, reason?: string }.
-  testHotkey: (combo: string) => ipcRenderer.invoke('test-hotkey', { combo }),
+  // ── Test Hotkey (3-step lifecycle, no timer) ──
+  // start: snapshot shortcuts, register only the candidate.
+  // check: read whether the candidate fired.
+  // stop:  restore the snapshot. MUST be called when the test ends.
+  testHotkeyStart: (combo: string) => ipcRenderer.invoke('test-hotkey-start', { combo }),
+  testHotkeyCheck: () => ipcRenderer.invoke('test-hotkey-check'),
+  testHotkeyStop: () => ipcRenderer.invoke('test-hotkey-stop'),
+
+  // ── Zoom ──
+  getZoomFactor: () => ipcRenderer.invoke('get-zoom-factor'),
+  setZoomFactor: (factor: number) => ipcRenderer.invoke('set-zoom-factor', factor),
+  onZoomChanged: (callback: (factor: number) => void) => {
+    const listener = (_event: unknown, factor: number) => callback(factor)
+    ipcRenderer.on('zoom-changed', listener)
+    return () => ipcRenderer.removeListener('zoom-changed', listener)
+  },
 
   // ── General settings ──
   updateGeneralSettings: (settings: { startAtLogin?: boolean; keepInTray?: boolean }) => {

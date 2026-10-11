@@ -46,6 +46,10 @@ interface Window {
     onSystemAccent: (callback: (color: string) => void) => void
     // ── Settings, Path, & Pickers ──
     updateGeneralSettings: (settings: { startAtLogin?: boolean; keepInTray?: boolean; executionNotifications?: boolean }) => void
+    // ── Zoom ──
+    getZoomFactor: () => Promise<number>
+    setZoomFactor: (factor: number) => Promise<number>
+    onZoomChanged: (callback: (factor: number) => void) => () => void
     checkPathExists: (path: string) => Promise<boolean>
     selectPath: (type: 'app' | 'file' | 'folder') => Promise<string | null>
     // ── Real execution + global hotkeys. Each `on*` returns an unsubscribe function. ──
@@ -63,8 +67,12 @@ interface Window {
     syncHotkeys: (payload: ShortcutForIPC[] | { shortcuts: ShortcutForIPC[]; securedDoublePressSeconds: number }) => void
     /** Toggle whether the main process should suppress hotkey firing. */
     setHotkeyRecording: (value: boolean) => void
-    /** Test whether a hotkey fires on this system. */
-    testHotkey: (combo: string) => Promise<{ fired: boolean; reason?: string }>
+    /** Begin a hotkey test — register only the candidate, snapshot the rest. */
+    testHotkeyStart: (combo: string) => Promise<{ ok: boolean; reason?: string }>
+    /** Read whether the candidate hotkey fired during an open test. */
+    testHotkeyCheck: () => Promise<{ fired: boolean }>
+    /** End a hotkey test — restore the previous registration state. */
+    testHotkeyStop: () => Promise<void>
     onShortcutProgress: (callback: (e: ShortcutProgressEvent) => void) => () => void
     onShortcutComplete: (callback: (e: { 
       shortcutId: string; 

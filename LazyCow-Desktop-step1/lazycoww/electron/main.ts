@@ -106,7 +106,7 @@ function getTrayIconPath(): string {
 function createTray() {
   const iconPath = getTrayIconPath()
   let icon = nativeImage.createFromPath(iconPath)
-  
+
   if (icon.isEmpty()) {
     const fallbackBase64 = 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAGFJREFUOE9jZKAQMFKon2HUAAaGGyA2N/8H4sFozEg3AKYIrzFIBgP5sBqMboBsM0hxiG4ATHHIAcMFGBmRzCBF3FAzSAEDAwOjgOERx8AoGoRygxgXY2REYvFIM4iSAQAA7X0/wT9P1JcAAAAASUVORK5CYII='
     icon = nativeImage.createFromDataURL(`data:image/png;base64,${fallbackBase64}`)
@@ -115,10 +115,12 @@ function createTray() {
   tray = new Tray(icon)
   const contextMenu = Menu.buildFromTemplate([
     { label: 'Show LazyCow', click: () => win?.show() },
-    { label: 'Quit', click: () => {
-      isQuitting = true
-      app.quit()
-    }}
+    {
+      label: 'Quit', click: () => {
+        isQuitting = true
+        app.quit()
+      }
+    }
   ])
   tray.setToolTip('LazyCow')
   tray.setContextMenu(contextMenu)
@@ -155,6 +157,33 @@ function createWindow() {
 
   win.on('focus', () => {
     setTimeout(() => checkAndSendAccentIfChanged(), 300)
+  })
+
+  // Zoom keyboard shortcuts — handled here (not in the renderer) so they
+  // work regardless of keyboard layout, and so they don't get eaten by
+  // renderer key handlers. Skips when the hotkey recorder is active —
+  // otherwise pressing Ctrl + + during recording would zoom instead of
+  // capturing the combo.
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return
+    if (!input.control) return
+    if (isRecordingHotkey) return
+
+    const code = input.code
+    const isPlus = code === 'Equal' || code === 'NumpadAdd'
+    const isMinus = code === 'Minus' || code === 'NumpadSubtract'
+    const isZero = code === 'Digit0' || code === 'Numpad0'
+
+    if (isPlus || isMinus || isZero) {
+      event.preventDefault()
+      const current = win!.webContents.getZoomFactor()
+      let next = current
+      if (isPlus) next = Math.min(ZOOM_MAX, Math.round((current + 0.1) * 100) / 100)
+      else if (isMinus) next = Math.max(ZOOM_MIN, Math.round((current - 0.1) * 100) / 100)
+      else next = 1.0  // Ctrl + 0 resets
+      win!.webContents.setZoomFactor(next)
+      win!.webContents.send('zoom-changed', next)
+    }
   })
 
   if (VITE_DEV_SERVER_URL) {
@@ -216,6 +245,26 @@ async function checkAndSendAccentIfChanged() {
 
 ipcMain.handle('get-system-accent', async () => {
   return await getWindowsAccentColor()
+})
+
+// ── Zoom ──
+// Chromium's default zoom keyboard shortcuts (Ctrl + +/-/0) are unreliable
+// across keyboard layouts — the +/-/= keys shift differently on US, UK,
+// Bengali, etc. We intercept them by physical key code in before-input-event
+// (see createWindow) and drive webContents.setZoomFactor directly. This is
+// the only layout-agnostic path.
+const ZOOM_MIN = 0.5
+const ZOOM_MAX = 2.0
+
+ipcMain.handle('get-zoom-factor', () => {
+  return win?.webContents.getZoomFactor() ?? 1
+})
+
+ipcMain.handle('set-zoom-factor', (_event, factor: unknown) => {
+  const n = typeof factor === 'number' && Number.isFinite(factor) ? factor : 1
+  const clamped = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, n))
+  win?.webContents.setZoomFactor(clamped)
+  return clamped
 })
 
 // Format-only URL check — scheme http/https + host present.
@@ -363,36 +412,36 @@ interface LayoutZone { id: string; label: string; x: number; y: number; w: numbe
 
 const LAYOUT_ZONES: Record<LayoutId, LayoutZone[]> = {
   split_50: [
-    { id: 'left',  label: 'Left',  x: 0,    y: 0, w: 0.5, h: 1 },
-    { id: 'right', label: 'Right', x: 0.5,  y: 0, w: 0.5, h: 1 },
+    { id: 'left', label: 'Left', x: 0, y: 0, w: 0.5, h: 1 },
+    { id: 'right', label: 'Right', x: 0.5, y: 0, w: 0.5, h: 1 },
   ],
   split_67_33: [
-    { id: 'main_left', label: 'Main Left', x: 0,    y: 0, w: 0.67, h: 1 },
-    { id: 'right',     label: 'Right',     x: 0.67, y: 0, w: 0.33, h: 1 },
+    { id: 'main_left', label: 'Main Left', x: 0, y: 0, w: 0.67, h: 1 },
+    { id: 'right', label: 'Right', x: 0.67, y: 0, w: 0.33, h: 1 },
   ],
   split_33_67: [
-    { id: 'left',       label: 'Left',       x: 0,    y: 0, w: 0.33, h: 1 },
+    { id: 'left', label: 'Left', x: 0, y: 0, w: 0.33, h: 1 },
     { id: 'main_right', label: 'Main Right', x: 0.33, y: 0, w: 0.67, h: 1 },
   ],
   thirds: [
-    { id: 'left',   label: 'Left',   x: 0,     y: 0, w: 0.333, h: 1 },
+    { id: 'left', label: 'Left', x: 0, y: 0, w: 0.333, h: 1 },
     { id: 'center', label: 'Center', x: 0.333, y: 0, w: 0.334, h: 1 },
-    { id: 'right',  label: 'Right',  x: 0.667, y: 0, w: 0.333, h: 1 },
+    { id: 'right', label: 'Right', x: 0.667, y: 0, w: 0.333, h: 1 },
   ],
   main_left: [
-    { id: 'main_left',    label: 'Main Left',    x: 0,   y: 0,   w: 0.5, h: 1 },
-    { id: 'top_right',    label: 'Top Right',    x: 0.5, y: 0,   w: 0.5, h: 0.5 },
+    { id: 'main_left', label: 'Main Left', x: 0, y: 0, w: 0.5, h: 1 },
+    { id: 'top_right', label: 'Top Right', x: 0.5, y: 0, w: 0.5, h: 0.5 },
     { id: 'bottom_right', label: 'Bottom Right', x: 0.5, y: 0.5, w: 0.5, h: 0.5 },
   ],
   main_right: [
-    { id: 'top_left',    label: 'Top Left',    x: 0,   y: 0,   w: 0.5, h: 0.5 },
-    { id: 'bottom_left', label: 'Bottom Left', x: 0,   y: 0.5, w: 0.5, h: 0.5 },
-    { id: 'main_right',  label: 'Main Right',  x: 0.5, y: 0,   w: 0.5, h: 1 },
+    { id: 'top_left', label: 'Top Left', x: 0, y: 0, w: 0.5, h: 0.5 },
+    { id: 'bottom_left', label: 'Bottom Left', x: 0, y: 0.5, w: 0.5, h: 0.5 },
+    { id: 'main_right', label: 'Main Right', x: 0.5, y: 0, w: 0.5, h: 1 },
   ],
   quad: [
-    { id: 'tl', label: 'Top Left',     x: 0,   y: 0,   w: 0.5, h: 0.5 },
-    { id: 'tr', label: 'Top Right',    x: 0.5, y: 0,   w: 0.5, h: 0.5 },
-    { id: 'bl', label: 'Bottom Left',  x: 0,   y: 0.5, w: 0.5, h: 0.5 },
+    { id: 'tl', label: 'Top Left', x: 0, y: 0, w: 0.5, h: 0.5 },
+    { id: 'tr', label: 'Top Right', x: 0.5, y: 0, w: 0.5, h: 0.5 },
+    { id: 'bl', label: 'Bottom Left', x: 0, y: 0.5, w: 0.5, h: 0.5 },
     { id: 'br', label: 'Bottom Right', x: 0.5, y: 0.5, w: 0.5, h: 0.5 },
   ],
 }
@@ -528,7 +577,7 @@ async function runAction(action: ShortcutActionData): Promise<void> {
       if (ext !== '.exe') {
         throw new Error('Only .exe files are supported for Launch App')
       }
-      
+
       const err = await shell.openPath(action.value)
       if (err) throw new Error(err)
       // No settle wait — the window-layout engine polls for the actual
@@ -744,21 +793,21 @@ async function runAction(action: ShortcutActionData): Promise<void> {
       await execAsync(`powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}`, { windowsHide: true })
       return
     }
-    
+
     case 'run_script': {
       const controller = new AbortController()
       const { signal } = controller
       const timeoutId = setTimeout(() => { controller.abort() }, 120000)
-      
+
       try {
         const child = exec(action.value, { windowsHide: true })
-        
+
         signal.addEventListener('abort', () => {
           if (child.pid) {
             exec(`taskkill /pid ${child.pid} /t /f`, { windowsHide: true })
           }
         })
-        
+
         await new Promise<void>((resolve, reject) => {
           child.on('exit', (code) => {
             if (code === 0) resolve()
@@ -790,9 +839,9 @@ async function runAction(action: ShortcutActionData): Promise<void> {
 async function runShortcutActions(shortcut: ShortcutData): Promise<ActionResult[]> {
   const startTime = Date.now()
   const results: ActionResult[] = []
-   let cancelled: 'graceful' | null = null
+  let cancelled: 'graceful' | null = null
   let lastActionTitle: string | null = null
-  
+
   if (runningShortcuts.has(shortcut.id)) {
     return [{ actionId: 'system', success: false, error: 'Shortcut is already running.' }]
   }
@@ -867,7 +916,7 @@ async function runShortcutActions(shortcut: ShortcutData): Promise<ActionResult[
     // the cleanup below to run.
     console.error('[runShortcut] action loop threw:', err)
   }
-  
+
   // Wait for the arrangement engine (already running in parallel).
   // If cancelled, abort the layout poll instead of awaiting the deadline.
   lastLayoutResults = null
@@ -1033,7 +1082,7 @@ const shortcutById = new Map<string, ShortcutData>()
 const SPECIAL_KEY_MAP: Record<string, string> = {
   ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
   ' ': 'Space', Escape: 'Esc', Delete: 'Delete', Backspace: 'Backspace',
-  Enter: 'Return', Tab: 'Tab',
+  Enter: 'Return', Tab: 'Tab', PrintScreen: 'PrintScreen',
 }
 
 function comboToAccelerator(combo: string): string | null {
@@ -1046,7 +1095,11 @@ function comboToAccelerator(combo: string): string | null {
     else if (part === 'Alt') accelParts.push('Alt')
     else if (part === 'Shift') accelParts.push('Shift')
     else if (part === 'Win') accelParts.push('Super')
-    else mainKey = SPECIAL_KEY_MAP[part] ?? part
+    // First non-modifier wins. Windows RegisterHotKey only accepts one
+    // main key anyway — if a legacy combo has two (e.g. "Ctrl + G + F"),
+    // we want to register the same key the picker is showing (which is
+    // also the first one), so both surfaces agree.
+    else if (mainKey === null) mainKey = SPECIAL_KEY_MAP[part] ?? part
   }
 
   if (!mainKey) return null
@@ -1113,38 +1166,57 @@ ipcMain.on('set-hotkey-recording', (_event, value: unknown) => {
  * to know is to try. We temporarily unregister every shortcut, register
  * just the candidate, and wait up to 4 seconds for a fire. Then restore.
  */
-ipcMain.handle('test-hotkey', async (_event, payload: { combo: string }) => {
+// ── Test Hotkey (redesigned) ──
+// The old implementation used a 4-second race — hostile to slow users who
+// couldn't press the combo in time. Now the renderer controls the lifecycle:
+//   - `test-hotkey-start` — snapshot shortcuts, register only the candidate
+//   - `test-hotkey-check` — read the fired flag
+//   - `test-hotkey-stop`  — restore the snapshot
+// No timer. The user presses when ready, then clicks Verify.
+interface TestHotkeyState {
+  accelerator: string | null
+  fired: boolean
+  snapshot: ShortcutData[] | null
+}
+let testHotkeyState: TestHotkeyState = { accelerator: null, fired: false, snapshot: null }
+
+ipcMain.handle('test-hotkey-start', async (_event, payload: { combo: string }) => {
   const combo = typeof payload?.combo === 'string' ? payload.combo : ''
   const accelerator = comboToAccelerator(combo)
-  if (!accelerator) return { fired: false, reason: 'invalid' }
+  if (!accelerator) return { ok: false, reason: 'invalid' }
+
+  // If a previous test is somehow still open, restore it first.
+  if (testHotkeyState.accelerator !== null) {
+    globalShortcut.unregister(testHotkeyState.accelerator)
+    if (testHotkeyState.snapshot) registerHotkeys(testHotkeyState.snapshot)
+  }
 
   // Snapshot existing shortcuts so we can restore after the test.
   const snapshot = [...shortcutById.values()]
-
-  // Clear the stage — the candidate must be the only registered hotkey
-  // so we don't mistake another shortcut's fire for the candidate's.
   globalShortcut.unregisterAll()
 
-  let resolveFire: (() => void) | null = null
-  const firePromise = new Promise<void>((r) => { resolveFire = r })
-  const timeoutMs = 4000
-  const timeoutPromise = new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), timeoutMs))
-
-  const ok = globalShortcut.register(accelerator, () => resolveFire?.())
+  const ok = globalShortcut.register(accelerator, () => {
+    testHotkeyState.fired = true
+  })
   if (!ok) {
     registerHotkeys(snapshot)
-    return { fired: false, reason: 'registration-rejected' }
+    return { ok: false, reason: 'registration-rejected' }
   }
 
-  const result = await Promise.race([
-    firePromise.then(() => 'fired' as const),
-    timeoutPromise,
-  ])
+  testHotkeyState = { accelerator, fired: false, snapshot }
+  return { ok: true }
+})
 
-  globalShortcut.unregister(accelerator)
-  registerHotkeys(snapshot)
+ipcMain.handle('test-hotkey-check', async () => {
+  return { fired: testHotkeyState.fired }
+})
 
-  return { fired: result === 'fired', reason: result === 'fired' ? undefined : 'timeout' }
+ipcMain.handle('test-hotkey-stop', async () => {
+  if (testHotkeyState.accelerator !== null) {
+    globalShortcut.unregister(testHotkeyState.accelerator)
+    if (testHotkeyState.snapshot) registerHotkeys(testHotkeyState.snapshot)
+    testHotkeyState = { accelerator: null, fired: false, snapshot: null }
+  }
 })
 
 function registerHotkeys(shortcuts: ShortcutData[]) {

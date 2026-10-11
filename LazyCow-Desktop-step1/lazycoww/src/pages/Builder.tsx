@@ -84,8 +84,18 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
   const [testLayoutId, setTestLayoutId] = useState<string | null>(null);
   const [testFlowId, setTestFlowId] = useState<string | null>(null);
 
-  const { recording: hotkeyRecording, recordedCombo, startRecording, stopRecording, clearCombo, setRecordedCombo } = useHotkeyRecorder('Win + Alt + D');
+  const { recording: hotkeyRecording, recordedCombo, notice: recorderNotice, startRecording, stopRecording, clearCombo, setRecordedCombo } = useHotkeyRecorder('Win + Alt + D');
   const hotkey = recordedCombo || 'Win + Alt + D';
+
+  // True only when the user has explicitly recorded or picked a combo, OR
+  // is editing an existing shortcut (whose stored hotkey counts as chosen).
+  // The pristine default ('Win + Alt + D') and 'Listening...' do NOT count.
+  const hasUserChosenHotkey =
+    (!!recordedCombo && recordedCombo !== 'Win + Alt + D' && recordedCombo !== 'Listening...')
+    || !!editData?.hotkey;
+
+
+
 
   // Tracks the combo that has been successfully Test-fired this session.
   // Save is gated on `hotkey === verifiedHotkey`. When editing an existing
@@ -94,6 +104,28 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
   const [verifiedHotkey, setVerifiedHotkey] = useState<string | null>(null);
   const [testingHotkey, setTestingHotkey] = useState(false);
   const [testHotkeyError, setTestHotkeyError] = useState<string | null>(null);
+  // Holds the cleanup function for the renderer-side keydown listener
+  // that records what the user actually pressed during a test. Used ONLY
+  // to give a useful error when Verify fails — the main process remains
+  // the source of truth for "did the combo fire".
+  const testHotkeyListenerRef = useRef<(() => void) | null>(null);
+  // The last combo the user pressed during a test, in canonical form.
+  // Compared against `hotkey` on Verify to distinguish "wrong combo" from
+  // "OS swallowed it" from "pressed nothing".
+  const lastPressedComboRef = useRef<string | null>(null);
+  // Safety net: if the user navigates away or the component unmounts while
+  // a test is open, clean up both the renderer listener and the main-process
+  // registration state. Without this, the candidate hotkey would stay
+  // registered and no other shortcut's hotkey would fire.
+  useEffect(() => {
+    return () => {
+      if (testHotkeyListenerRef.current) {
+        testHotkeyListenerRef.current();
+        testHotkeyListenerRef.current = null;
+      }
+      window.electronAPI?.testHotkeyStop();
+    };
+  }, []);
 
   useEffect(() => {
     if (editData && editData.hotkey) {
@@ -115,28 +147,111 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
   const hotkeyIsVerified = !!hotkey && hotkey !== 'Listening...' && hotkey === verifiedHotkey;
 
   const handleTestHotkey = async () => {
-    if (!hotkey || hotkey === 'Listening...' || testingHotkey) return;
+    // If a test is already running, this click means "Verify" — ask the
+    // main process whether the candidate fired, and confirm or retry.
+    if (testingHotkey) {
+      setTestHotkeyError(null);
+      try {
+        const res = await window.electronAPI?.testHotkeyCheck();
+        if (res?.fired) {
+          setVerifiedHotkey(hotkey);
+          setTestHotkeyError(null);
+          if (testHotkeyListenerRef.current) {
+            testHotkeyListenerRef.current();
+            testHotkeyListenerRef.current = null;
+          }
+          await window.electronAPI?.testHotkeyStop();
+          setTestingHotkey(false);
+        } else {
+          // The combo never fired. Give the user a specific reason so they
+          // know exactly what to do next.
+          const pressed = lastPressedComboRef.current;
+          if (pressed && pressed !== hotkey) {
+            setTestHotkeyError(
+              `Wrong key combo — press "${hotkey}" and click Verify again.\n(You pressed "${pressed}".)`
+            );
+          } else if (pressed === hotkey) {
+            setTestHotkeyError(
+              `This combo doesn't fire on your keyboard. Try a letter like "Ctrl+Shift+B" or an F-key.`
+            );
+          } else {
+            setTestHotkeyError(`No key detected. Press "${hotkey}" and click Verify.`);
+          }
+        }
+      } catch {
+        setTestHotkeyError('Test failed. Try again.');
+      }
+      return;
+    }
+
+    // Idle — start the test. Main process snapshots all shortcuts,
+    // registers only the candidate, and waits for it to fire.
+    if (!hasUserChosenHotkey || hotkeyError) return;
+
+    // Defensive: if a previous listener somehow survived, clean it up
+    // before starting a new test. Should never happen, but the cost of
+    // checking is zero.
+    if (testHotkeyListenerRef.current) {
+      testHotkeyListenerRef.current();
+      testHotkeyListenerRef.current = null;
+    }
+
     setTestingHotkey(true);
     setTestHotkeyError(null);
+    lastPressedComboRef.current = null;
 
-    // While the test runs, listen for whatever the user actually presses.
-    // LazyCow has focus during the test (the button was just clicked), so
-    // the renderer sees every keydown. This lets us distinguish:
-    //   - user pressed a *different* combo → we know exactly which
-    //   - user pressed the *correct* combo but Windows swallowed it
-    //     (UK Shift+digit, etc.) → keydown fired, globalShortcut didn't
-    //   - user pressed nothing → we fall through to a generic timeout
-    let wrongCombo: string | null = null;
-    let matchingKeydown = false;
+    let res: { ok: boolean; reason?: string } | undefined;
+    try {
+      res = await window.electronAPI?.testHotkeyStart(hotkey);
+    } catch {
+      // IPC itself threw — clean up and bail.
+      await window.electronAPI?.testHotkeyStop();
+      setTestingHotkey(false);
+      setTestHotkeyError('Test failed. Try again.');
+      return;
+    }
 
-    const comboFromEvent = (e: KeyboardEvent): string => {
+    if (!res?.ok) {
+      setTestingHotkey(false);
+
+      if (res?.reason === 'registration-rejected') {
+        // Windows refused the combo. This means NO app can register it —
+        // not just ours. Auto-add to the blocked triggers list so the user
+        // sees it in Settings → Blocked Triggers with an OS badge and
+        // understands why. They can remove it if they've remapped the key
+        // at the OS level.
+        try {
+          const raw = localStorage.getItem('lazycow-blocked-triggers') || '[]';
+          const existing: string[] = JSON.parse(raw);
+          if (!existing.some((t) => t.toLowerCase() === hotkey.toLowerCase())) {
+            const updated = [...existing, hotkey];
+            localStorage.setItem('lazycow-blocked-triggers', JSON.stringify(updated));
+            // Notify any open Settings panel.
+            window.dispatchEvent(new CustomEvent('lazycow-settings-changed', {
+              detail: { key: 'blockedTriggers', value: updated },
+            }));
+          }
+        } catch { /* ignore storage errors */ }
+
+        setTestHotkeyError(
+          `Windows won't let any app register "${hotkey}".\nAdded to Blocked Triggers — remove it from Settings if you've remapped this key at the OS level.`
+        );
+      } else {
+        setTestHotkeyError('Test failed. Try again.');
+      }
+      return;
+    }
+
+    // Track what the user actually presses — for the wrong-combo message.
+    // This does NOT flip any state or verify anything. The main process
+    // is still the only thing that decides whether the combo fired.
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (['Control', 'Alt', 'Shift', 'Meta', 'OS'].includes(e.key)) return;
       const parts: string[] = [];
       if (e.ctrlKey) parts.push('Ctrl');
       if (e.altKey) parts.push('Alt');
       if (e.shiftKey) parts.push('Shift');
       if (e.metaKey) parts.push('Win');
-      // Normalize the key the same way the recorder does, so the strings
-      // compare equal regardless of what e.key happens to be on this layout.
       let key = e.key;
       if (/^Key[A-Z]$/.test(e.code)) key = e.code.slice(3);
       else if (/^Digit[0-9]$/.test(e.code)) key = e.code.slice(5);
@@ -150,49 +265,23 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
       else if (e.code === 'Tab') key = 'Tab';
       else if (e.code.startsWith('Arrow')) key = e.code.slice(5);
       parts.push(key.length === 1 ? key.toUpperCase() : key);
-      return parts.join(' + ');
+      lastPressedComboRef.current = parts.join(' + ');
     };
 
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (['Control', 'Alt', 'Shift', 'Meta', 'OS'].includes(e.key)) return;
-      const pressed = comboFromEvent(e);
-      if (pressed === hotkey) matchingKeydown = true;
-      else wrongCombo = pressed;
-    };
     window.addEventListener('keydown', onKeyDown, true);
-
-    const startedAt = Date.now();
-    try {
-      const res = await window.electronAPI?.testHotkey(hotkey);
-      // Keep the "Listening..." state visible for at least 400ms so the
-      // UI doesn't flicker on instant results.
-      const elapsed = Date.now() - startedAt;
-      if (elapsed < 400) await new Promise((r) => setTimeout(r, 400 - elapsed));
-
-      if (res?.fired) {
-        setVerifiedHotkey(hotkey);
-      } else if (wrongCombo) {
-        setVerifiedHotkey(null);
-        setTestHotkeyError(`Wrong key combo — press "${hotkey}" again.\n(You pressed "${wrongCombo}".)`);
-      } else if (matchingKeydown) {
-        setVerifiedHotkey(null);
-        setTestHotkeyError(
-          `This combo won't work as a hotkey on your keyboard. Try a letter like "Ctrl+Shift+B" or an F-key.`
-        );
-      } else if (res?.reason === 'registration-rejected') {
-        setVerifiedHotkey(null);
-        setTestHotkeyError('Windows won\'t allow this combo. Try a different one.');
-      } else {
-        setVerifiedHotkey(null);
-        setTestHotkeyError(`No key detected. Try "${hotkey}" again.`);
-      }
-    } catch {
-      setVerifiedHotkey(null);
-      setTestHotkeyError('Test failed. Try again.');
-    } finally {
+    testHotkeyListenerRef.current = () => {
       window.removeEventListener('keydown', onKeyDown, true);
-      setTestingHotkey(false);
+    };
+  };
+
+  const handleCancelTestHotkey = async () => {
+    if (testHotkeyListenerRef.current) {
+      testHotkeyListenerRef.current();
+      testHotkeyListenerRef.current = null;
     }
+    await window.electronAPI?.testHotkeyStop();
+    setTestingHotkey(false);
+    setTestHotkeyError(null);
   };
 
   const { errors: actionErrors, unsupportedIds } = useActionValidation(sequence);
@@ -201,7 +290,13 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
   const actionsValid = invalidActionCount === 0;
 
   useEffect(() => {
-    if (hotkeyRecording) return;
+    if (hotkeyRecording) {
+      // Recording started — clear any stale error from a previous attempt.
+      // Otherwise the user sees "Ctrl + C is blocked" while they're trying
+      // to record something new, which is confusing.
+      setHotkeyError('');
+      return;
+    }
     if (!recordedCombo || recordedCombo === 'Win + Alt + D') { setHotkeyError(''); return; }
     const parts = recordedCombo.split(' + ');
     if (!MODIFIERS.includes(parts[0])) {
@@ -613,7 +708,29 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
                 </div>
               </div>
             </div>
-            <button id="hotkey-btn" onClick={() => hotkeyRecording ? stopRecording() : startRecording()}
+            {hotkeyRecording && (
+              <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 flex items-start gap-2">
+                <span className="material-symbols-outlined text-amber-500 text-[18px] shrink-0 mt-0.5">warning</span>
+                <div className="flex-1 min-w-0 text-[11px] leading-snug">
+                  <p className="text-amber-500 font-semibold">Recording — press modifiers + one main key.</p>
+                  <p className="text-amber-500/80 mt-0.5">
+                    The <strong>Win key</strong> opens the Start menu; Windows handles it before we can. To include Win, use the <strong>Win chip</strong> in the manual builder below.
+                  </p>
+                </div>
+              </div>
+            )}
+            <button id="hotkey-btn" onClick={() => {
+              if (hotkeyRecording) { stopRecording(); return; }
+              // Pass any modifiers already selected via the ComboBuilder
+              // chips, so a user who picks "Win" from the chips can then
+              // click the recorder and just press the main key. Without
+              // this, startRecording resets recordedCombo to 'Listening...'
+              // and the chip choice is lost.
+              const existingMods = recordedCombo && recordedCombo !== 'Listening...'
+                ? recordedCombo.split(' + ').filter((p) => ['Ctrl', 'Alt', 'Shift', 'Win'].includes(p))
+                : [];
+              startRecording(existingMods);
+            }}
               className={`w-full border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center gap-2 transition-colors cursor-pointer group ${
                 hotkeyRecording ? 'border-red-400 bg-red-400/5' : hotkeyError ? 'border-red-400/50 bg-red-400/5' :
                 recordedCombo && recordedCombo !== 'Win + Alt + D' ? 'border-primary bg-primary/5' : 'border-primary/50 bg-primary/5 hover:bg-primary/10'
@@ -627,6 +744,9 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
               </span>
             </button>
             {hotkeyError && <p className="text-red-500 font-body-sm mt-2 text-center">{hotkeyError}</p>}
+            {recorderNotice && (
+              <p className="text-amber-500 font-body-sm mt-2 text-center">{recorderNotice}</p>
+            )}
             <ComboBuilder
               value={recordedCombo}
               onChange={(combo) => { setRecordedCombo(combo); setHotkeyError(''); }}
@@ -638,25 +758,36 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
               <button
                 type="button"
                 onClick={handleTestHotkey}
-                disabled={testingHotkey || !hotkey || hotkey === 'Listening...'}
+                disabled={!testingHotkey && (!hasUserChosenHotkey || !!hotkeyError)}
                 className={`px-4 py-2 rounded-full font-title-sm text-body-sm flex items-center gap-2 transition-colors ${
-                  testingHotkey || !hotkey || hotkey === 'Listening...'
+                  !testingHotkey && (!hasUserChosenHotkey || hotkeyError)
                     ? 'bg-muted text-muted-foreground cursor-not-allowed'
+                    : testingHotkey
+                    ? 'bg-primary text-primary-foreground hover:opacity-90'
                     : hotkeyIsVerified
                     ? 'bg-primary/10 text-primary border border-primary/40 hover:bg-primary/15'
                     : 'bg-primary text-primary-foreground hover:opacity-90'
                 }`}
               >
-                <span className={`material-symbols-outlined text-[18px] ${testingHotkey ? 'animate-pulse' : ''}`}>
-                  {testingHotkey ? 'radio_button_checked' : hotkeyIsVerified ? 'check_circle' : 'bolt'}
+                <span className="material-symbols-outlined text-[18px]">
+                  {testingHotkey ? 'task_alt' : hotkeyIsVerified ? 'check_circle' : 'bolt'}
                 </span>
-                {testingHotkey ? 'Listening...' : hotkeyIsVerified ? 'Verified' : 'Test Hotkey'}
+                {testingHotkey ? 'Verify' : hotkeyIsVerified ? 'Verified' : 'Test Hotkey'}
               </button>
 
               {testingHotkey && (
-                <span className="text-body-sm text-primary flex items-center gap-1">
-                  Press <span className="font-code-sm font-semibold">{hotkey}</span> now…
-                </span>
+                <>
+                  <span className="text-body-sm text-muted-foreground flex items-center gap-1">
+                    Press <span className="font-code-sm font-semibold text-foreground">{hotkey}</span>, then click Verify
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleCancelTestHotkey}
+                    className="text-body-sm text-muted-foreground hover:text-foreground transition-colors underline-offset-2 hover:underline"
+                  >
+                    Cancel
+                  </button>
+                </>
               )}
 
               {!testingHotkey && hotkeyIsVerified && (
@@ -666,7 +797,7 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
                 </span>
               )}
 
-              {!testingHotkey && testHotkeyError && (
+              {testHotkeyError && (
                 <span className="text-body-sm text-amber-500 flex items-start gap-1">
                   <span className="material-symbols-outlined text-[16px] shrink-0">warning</span>
                   <span className="whitespace-pre-line leading-tight">
