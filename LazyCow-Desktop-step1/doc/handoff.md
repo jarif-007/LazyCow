@@ -1,8 +1,8 @@
 # LazyCow — Handoff
 
-Last updated: 2026-10-14
-Last commit: 9f196fe
-Working tree: clean. Session 12 App Drawer committed in three commits (`e30c497` backend, `bdce23d` frontend, `9f196fe` docs).
+Last updated: 2026-10-15
+Last commit: fa993de
+Working tree: clean. Session 12 App Drawer committed in five commits (`e30c497` backend, `bdce23d` frontend, `9f196fe` docs checkpoint, `e2675e9` handoff header, `fa993de` journal stubs).
 
 ## §1 Current Focus
 Session 12 built the App Drawer — the "Select App" modal for `launch_app`
@@ -10,17 +10,16 @@ actions. This replaced the old Browse-to-.exe picker with an installed-apps
 grid: icons, live search, alphabet strip, custom apps, hide/unhide,
 backdrop setting.
 
-Status: **uncommitted**. Three commits pending.
-- Backend: `electron/main.ts`, `preload.ts`, `electron-env.d.ts`
-- Frontend: `AppDrawerModal.tsx` (new), `HiddenAppsModal.tsx` (new),
-  `appUsage.ts` (new), `appVisibility.ts` (new), `ActionValueInput.tsx`,
-  `useActionValidation.ts`, `Library.tsx`, `types/actions.ts`,
-  `Settings.tsx`, `SettingsAppearance.tsx`, `index.css`
-- Docs: `context.md`, `handoff.md`, `decisions.md`, `missions.md`
+Status: **committed**. Five commits landed:
+- `e30c497` feat(electron): app drawer backend
+- `bdce23d` feat(builder): app drawer — modal, hide/custom management, backdrop setting
+- `9f196fe` docs: checkpoint — Session 12 app drawer + design direction
+- `e2675e9` docs: update handoff header to post-Session-12 state
+- `fa993de` docs: fill journal stubs for Session 12 commits
 
-After the two commits, the next arc is **Design polish Phase 1 (motion
-layer)** — springs on modals, cards, and drawer cells; anchored modal
-origins; reduced-motion respect. See `missions.md`.
+Next arc: **Design polish Phase 1 (motion layer)** — springs on modals,
+cards, and drawer cells; anchored modal origins; reduced-motion respect.
+See `missions.md`.
 
 Other open candidates in `missions.md`:
 1. Manual runtime verification of Sessions 8, 10, 11 (still not done).
@@ -121,33 +120,14 @@ Previously verified (still hold):
 
 ## §5 Uncommitted (mirrors git status)
 
-Working tree before the three Session 12 commits (indented, not fenced):
-
-    M ../doc/context.md
-    M ../doc/decisions.md
-    M ../doc/handoff.md
-    M ../doc/missions.md
-    M electron/electron-env.d.ts
-    M electron/main.ts
-    M electron/preload.ts
-    M src/components/ActionSequence/ActionValueInput.tsx
-    M src/components/SettingsAppearance.tsx
-    M src/hooks/useActionValidation.ts
-    M src/index.css
-    M src/pages/Library.tsx
-    M src/pages/Settings.tsx
-    M src/types/actions.ts
-    ?? src/components/AppDrawerModal.tsx
-    ?? src/components/HiddenAppsModal.tsx
-    ?? src/utils/appUsage.ts
-    ?? src/utils/appVisibility.ts
-
-Pending commits (three, in this order):
-1. `feat(electron): app drawer backend` — main.ts, preload.ts, electron-env.d.ts
-2. `feat(builder): app drawer — modal, hide/custom management, backdrop setting` — everything else
-3. `docs: checkpoint — Session 12 app drawer + design direction` — the four docs
+Working tree: clean. Nothing uncommitted.
 
 Recent commits (most recent first):
+- `fa993de` docs: fill journal stubs for Session 12 commits (e30c497, bdce23d)
+- `e2675e9` docs: update handoff header to post-Session-12 state
+- `9f196fe` docs: checkpoint — Session 12 app drawer + design direction
+- `bdce23d` feat(builder): app drawer — modal, hide/custom management, backdrop setting
+- `e30c497` feat(electron): app drawer backend — discovery, UWP, shell folders, test-launch
 - `a3ece59` docs: checkpoint — Session 11 hotkey UX + blocked triggers + zoom
 - `9e0cf2a` feat(settings): blocked triggers polish + page zoom
 - `ba8e6cd` feat(hotkeys): Test Hotkey redesign — user-paced Verify flow
@@ -155,7 +135,7 @@ Recent commits (most recent first):
 - `5af414d` perf(renderer): cap splash-screen wait at 1.5s to survive slow/offline font loads
 
 ### §5-PENDING (in flight — cleared on confirmation)
-- (nothing pending — Session 12 work is being committed in this checkpoint. Design polish Phase 1 is the next session's scope, tracked in `missions.md`.)
+- (nothing pending — Session 12 is committed. Design polish Phase 1 is the next session's scope, tracked in `missions.md`.)
 
 ## §6 Bootstrap order
 1. electron/main.ts, electron/preload.ts, electron/electron-env.d.ts, electron/windowLayout.ts
