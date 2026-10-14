@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { motion } from 'motion/react';
 import { SavedShortcut, isUwpPath } from '../types/actions';
 import { ShortcutCard } from '../components/ShortcutCard';
 import { DeleteModal } from '../components/DeleteModal';
 import { ConfirmSecuredModal } from '../components/ConfirmSecuredModal';
 import { migrateShortcutsSecured, readSecuredDoublePressSeconds } from '../utils/security';
+import { usePrefersReducedMotion } from '../hooks/usePrefersReducedMotion';
 
 interface LibraryProps {
   setActiveTab: (tab: string) => void;
@@ -25,6 +27,11 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
   // button, show the amber "Broken Path" badge, and (via onEditShortcut)
   // auto-scroll the Builder to the broken action when "Fix Paths" is clicked.
   const [brokenShortcuts, setBrokenShortcuts] = useState<Map<string, string>>(new Map());
+
+  // Reduced-motion detection for the grid entrance stagger. Same hook
+  // the App Drawer uses — single source of truth for the accessibility
+  // preference across every animated surface.
+  const reducedMotion = usePrefersReducedMotion();
 
   const refreshShortcuts = useCallback(() => {
     const raw: SavedShortcut[] = JSON.parse(localStorage.getItem('lazycow-shortcuts') || '[]');
@@ -371,9 +378,21 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
         </div>
       )}
 
-      <div className={`grid grid-cols-1 gap-gutter transition-all duration-300 ${gridCols === 2 ? 'md:grid-cols-2' : gridCols === 3 ? 'md:grid-cols-2 lg:grid-cols-3' : 'md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
-        }`}>
-        {filtered.map((card) => (
+      <motion.div
+        className={`grid grid-cols-1 gap-gutter ${gridCols === 2 ? 'md:grid-cols-2' : gridCols === 3 ? 'md:grid-cols-2 lg:grid-cols-3' : 'md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
+          }`}
+        initial="hidden"
+        animate="visible"
+        variants={{
+          hidden: {},
+          visible: {
+            transition: reducedMotion
+              ? { staggerChildren: 0, delayChildren: 0 }
+              : { staggerChildren: 0.03, delayChildren: 0.02 },
+          },
+        }}
+      >
+        {filtered.map((card, index) => (
           <ShortcutCard
             key={card.id}
             shortcut={card}
@@ -392,9 +411,11 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
             execution={executions[card.id]}
             customColorMode={customColorMode}
             onToggleSecured={handleToggleSecured}
+            staggerIndex={index}
+            reducedMotion={reducedMotion}
           />
         ))}
-      </div>
+      </motion.div>
 
       {renameId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">

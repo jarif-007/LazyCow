@@ -5,6 +5,15 @@ import react from '@vitejs/plugin-react'
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  // Pin the dev-server port. In dev, Electron loads the renderer from
+  // http://localhost:<port>, and Chromium keys localStorage by origin.
+  // If Vite silently bumps to 5174 (because a stale process held 5173),
+  // the app sees an empty localStorage — the user's saved shortcuts
+  // appear to be gone. `strictPort` fails loudly instead.
+  server: {
+    port: 5173,
+    strictPort: true,
+  },
   plugins: [
     react(),
     electron({

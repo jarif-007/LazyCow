@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
+import { motion } from 'motion/react';
 import { SavedShortcut, LAYOUTS } from '../types/actions';
+import { SPRING_ENTER, FADE_ENTER, MODAL_OFFSET_Y } from '../utils/motion';
 
 interface ShortcutCardProps {
   shortcut: SavedShortcut;
@@ -31,12 +33,17 @@ interface ShortcutCardProps {
   };
   customColorMode: boolean;
   onToggleSecured: (id: string) => void;
+  /** 0-based index of the card within the Library grid. Used to cap the
+   *  entrance stagger so the Nth card doesn't wait N × 30ms. */
+  staggerIndex?: number;
+  /** When true, replaces the staggered slide-in with a shared cross-fade. */
+  reducedMotion?: boolean;
 }
 
 export const ShortcutCard: React.FC<ShortcutCardProps> = ({
   shortcut, shade, onShadeChange, onEditFlow, onRename, onDelete, onRun, onCancel, onDuplicate,
    hasHotkeyConflict, hasBrokenPath, brokenActionId, isCancelling, execution, customColorMode,
-  onToggleSecured,
+  onToggleSecured, staggerIndex = 0, reducedMotion = false,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const execState = execution || { status: 'idle' as const, currentStepIndex: -1, errors: [] as string[] };
@@ -51,8 +58,25 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
   const isRunning = execState.status === 'running';
   const showLog = execState.status === 'running' || execState.status === 'success' || execState.status === 'error' || execState.status === 'cancelled';
 
+  // Stagger is capped at index 8 — card #9 waits the same as #8. Prevents
+  // a 30-card library from taking 900ms to reveal. The variants are defined
+  // once per card so the parent's `staggerChildren` on the grid can drive
+  // them; `custom` carries the reduced-motion decision into the variant.
+  const entranceVariants = {
+    hidden: reducedMotion ? { opacity: 0 } : { opacity: 0, y: MODAL_OFFSET_Y },
+    visible: reducedMotion ? { opacity: 1 } : { opacity: 1, y: 0 },
+  };
+  const entranceTransition = reducedMotion ? FADE_ENTER : SPRING_ENTER;
+
   return (
-    <div className={`card-themeable bg-gradient-to-br ${shadeClasses} border border-border rounded-xl p-5 group shadow-sm hover:shadow-md hover:-translate-y-1 transition-all flex flex-col gap-4 relative`}>
+    <motion.div
+      className={`card-themeable bg-gradient-to-br ${shadeClasses} border border-border rounded-xl p-5 group shadow-sm hover:shadow-md hover:-translate-y-1 transition-all flex flex-col gap-4 relative`}
+      initial="hidden"
+      animate="visible"
+      variants={entranceVariants}
+      transition={entranceTransition}
+      custom={staggerIndex}
+    >
       {/* Header */}
       <div className="flex justify-between items-start">
         <div>
@@ -288,6 +312,6 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
           )}
         </button>
       )}
-    </div>
+    </motion.div>
   );
 };

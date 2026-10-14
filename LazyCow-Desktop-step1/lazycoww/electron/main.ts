@@ -14,7 +14,7 @@ const hardwareAccelerationEnabled = bootPreferences.hardwareAcceleration ?? fals
 if (!hardwareAccelerationEnabled) {
     app.disableHardwareAcceleration()
 }
-import { exec, execFile } from 'child_process'
+import { exec, execFile, spawn } from 'child_process'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
@@ -140,7 +140,36 @@ ipcMain.handle('set-hardware-acceleration', (_event, enabled: unknown) => {
   return { ok: true }
 })
 
-ipcMain.handle('relaunch-app', () => {
+ipcMain.handle('relaunch-app', async () => {
+  // Flush pending localStorage before killing the process. Chromium
+  // batches writes; app.exit(0) is a hard kill and would discard them.
+  // Same rationale as the will-quit handler below.
+  try {
+    await win?.webContents.session.flushStorageData()
+  } catch (err) {
+    console.warn('[relaunch] storage flush failed:', err)
+  }
+  // In dev, app.relaunch() alone kills the Vite server and leaves a
+  // blank window. Spawn a detached dev server instead.
+  if (process.env.VITE_DEV_SERVER_URL) {
+    const cwd = process.env.APP_ROOT || process.cwd()
+    setTimeout(() => {
+      try {
+        const child = spawn('npm', ['run', 'dev'], {
+          cwd,
+          detached: true,
+          stdio: 'ignore',
+          shell: true,
+          windowsHide: true,
+        })
+        child.unref()
+      } catch (err) {
+        console.warn('[relaunch] dev restart failed:', err)
+      }
+    }, 2000)
+    app.exit(0)
+    return
+  }
   app.relaunch()
   app.exit(0)
 })
@@ -2170,8 +2199,35 @@ ipcMain.on('sync-hotkeys', (_event, payload: unknown) => {
   }
 })
 
-app.on('will-quit', () => {
-  globalShortcut.unregisterAll()
+// Flush pending localStorage writes to disk before the process exits.
+// Chromium batches localStorage writes and flushes asynchronously; a
+// hard kill (Ctrl+C in dev, app.exit(0), the tray Quit path) discards
+// any pending writes. Without this, a user who creates a shortcut and
+// closes the app within a few seconds loses the shortcut. Verified:
+// reproduced on 2026-10-15 — the "Fhuu" duplication session.
+app.on('will-quit', async (event) => {
+  if (win?.webContents) {
+    event.preventDefault()
+    try {
+      await win.webContents.session.flushStorageData()
+    } catch (err) {
+      console.warn('[shutdown] storage flush failed:', err)
+    }
+    globalShortcut.unregisterAll()
+    app.exit(0)
+  } else {
+    globalShortcut.unregisterAll()
+  }
+})
+
+// Dev-only: Ctrl+C sends SIGINT. Electron ignores SIGINT by default, but
+// the vite-plugin-electron wrapper will SIGTERM our child on shutdown.
+// Catch SIGTERM so we get a chance to flush before the process dies.
+process.on('SIGTERM', async () => {
+  try {
+    await win?.webContents?.session.flushStorageData()
+  } catch { /* best effort */ }
+  app.exit(0)
 })
 
 app.on('window-all-closed', () => {

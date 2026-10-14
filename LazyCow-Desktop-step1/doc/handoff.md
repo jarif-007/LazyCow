@@ -1,8 +1,8 @@
 # LazyCow — Handoff
 
 Last updated: 2026-10-15
-Last commit: df96317
-Working tree: clean after commit. Session 13 = motion pilot + HW accel toggle (this commit).
+Last commit: 2568539
+Working tree: clean.
 
 ## §1 Current Focus
 Session 13 completed the **Design polish Phase 1 pilot** — the motion
@@ -165,7 +165,16 @@ Recent commits (most recent first):
 - `5af414d` perf(renderer): cap splash-screen wait at 1.5s to survive slow/offline font loads
 
 ### §5-PENDING (in flight — cleared on confirmation)
-- (nothing pending — Session 13 motion pilot + HW accel toggle verified end-to-end and committed.)
+- **Data-loss fix** — Chromium's async localStorage writes were lost on
+  hard-kill (Ctrl+C in dev, `app.exit(0)`, tray quit). Reproduced
+  2026-10-15: duplicated shortcuts, killed dev server, all shortcuts gone.
+  Fix: `session.flushStorageData()` before every exit path (`will-quit`,
+  `SIGTERM`, `relaunch-app`); dev-mode `relaunch-app` now spawns a
+  detached `npm run dev` and flushes before exiting. Files:
+  `electron/main.ts`.
+- Design polish Phase 1, Surface 2 — Library grid entrance stagger
+  (paused until shortcuts are re-created after the 2026-10-15 incident).
+  Files: `src/pages/Library.tsx`, `src/components/ShortcutCard.tsx`.
 
 ## §6 Bootstrap order
 1. electron/main.ts, electron/preload.ts, electron/electron-env.d.ts, electron/windowLayout.ts
