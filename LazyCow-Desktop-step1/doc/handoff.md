@@ -1,27 +1,34 @@
 # LazyCow — Handoff
 
 Last updated: 2026-10-15
-Last commit: <PASTE-HEAD-HASH-AFTER-COMMIT>
+Last commit: df96317
 Working tree: clean after commit. Session 13 = motion pilot + HW accel toggle (this commit).
 
 ## §1 Current Focus
-Session 12 built the App Drawer — the "Select App" modal for `launch_app`
-actions. This replaced the old Browse-to-.exe picker with an installed-apps
-grid: icons, live search, alphabet strip, custom apps, hide/unhide,
-backdrop setting.
+Session 13 completed the **Design polish Phase 1 pilot** — the motion
+layer's first surface — and, as a prerequisite, made **hardware
+acceleration** user-configurable.
 
-Status: **committed**. Seven commits landed:
-- `e30c497` feat(electron): app drawer backend
-- `bdce23d` feat(builder): app drawer — modal, hide/custom management, backdrop setting
-- `9f196fe` docs: checkpoint — Session 12 app drawer + design direction
-- `e2675e9` docs: update handoff header to post-Session-12 state
-- `fa993de` docs: fill journal stubs for Session 12 commits
-- `ee94f9a` docs: reconcile handoff §1 and §5 with post-Session-12 state
-- `bf5bcbb` docs(onboarding): add handoff reconciliation sign-off rule + stale-handoff false-positive note
+Status: **committed** at `df96317`. Working tree clean.
 
-Next arc: **Design polish Phase 1 (motion layer)** — springs on modals,
-cards, and drawer cells; anchored modal origins; reduced-motion respect.
-See `missions.md`.
+What landed:
+- `motion` v14 installed. App Drawer entrance is a backdrop fade + 8px
+  `translateY` slide (spring bounce 0, 300ms in / 200ms out). Chose
+  `translateY` over `scale` — scale resamples the modal layer every
+  frame under software rendering and looked choppy.
+- Reduced-motion support via `usePrefersReducedMotion`. Springs swap to
+  120ms opacity cross-fades when `prefers-reduced-motion: reduce`.
+- Hardware acceleration is now a user toggle (Settings → General).
+  Default OFF, matching the app's historical behaviour. `preferences.json`
+  in `userData`, read synchronously before `app.whenReady()`.
+- Dev-mode relaunch fixed — dev path spawns a detached `npm run dev`
+  instead of `app.relaunch()` (which killed the Vite server and left a
+  blank window).
+
+Next arc: **Design polish Phase 1, Surface 2**. Recommended target —
+Library grid entrance stagger (fade + slide-in with ~30ms per card).
+Alternative candidates listed in the discussion below the pilot's
+checkpoint. Decision pending.
 
 Other open candidates in `missions.md`:
 1. Manual runtime verification of Sessions 8, 10, 11 (still not done).
