@@ -39,6 +39,20 @@ interface ShortcutProgressEvent {
   stepIndex: number
 }
 
+interface InstalledAppForIPC {
+  name: string
+  path: string
+  /**
+   * 'exe'   — regular file path.
+   * 'uwp'   — `shell:AppsFolder\<AUMID>`.
+   * 'shell' — `shell:<folder>` or `shell:AppsFolder\<AUMID>` (shell folders).
+   */
+  kind: 'exe' | 'uwp' | 'shell'
+  iconDataUrl: string | null
+  /** True for system components (redistributables, runtimes, SDKs). Auto-hidden. */
+  system: boolean
+}
+
 interface Window {
   electronAPI?: {
     getSystemAccent: () => Promise<string>
@@ -50,6 +64,10 @@ interface Window {
     getZoomFactor: () => Promise<number>
     setZoomFactor: (factor: number) => Promise<number>
     onZoomChanged: (callback: (factor: number) => void) => () => void
+    // ── App Drawer ──
+    listInstalledApps: () => Promise<InstalledAppForIPC[]>
+    refreshInstalledApps: () => Promise<InstalledAppForIPC[]>
+    testLaunchApp: (path: string) => Promise<{ ok: boolean; error?: string }>
     checkPathExists: (path: string) => Promise<boolean>
     selectPath: (type: 'app' | 'file' | 'folder') => Promise<string | null>
     // ── Real execution + global hotkeys. Each `on*` returns an unsubscribe function. ──

@@ -44,6 +44,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   testHotkeyCheck: () => ipcRenderer.invoke('test-hotkey-check'),
   testHotkeyStop: () => ipcRenderer.invoke('test-hotkey-stop'),
 
+  // ── App Drawer ──
+  listInstalledApps: () => ipcRenderer.invoke('list-installed-apps'),
+  refreshInstalledApps: () => ipcRenderer.invoke('refresh-installed-apps'),
+  testLaunchApp: (path: string) => ipcRenderer.invoke('test-launch-app', path),
+
   // ── Zoom ──
   getZoomFactor: () => ipcRenderer.invoke('get-zoom-factor'),
   setZoomFactor: (factor: number) => ipcRenderer.invoke('set-zoom-factor', factor),

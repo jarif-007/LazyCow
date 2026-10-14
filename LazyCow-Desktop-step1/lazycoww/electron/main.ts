@@ -3,11 +3,12 @@ import { app, BrowserWindow, ipcMain, nativeTheme, shell, globalShortcut, Tray, 
 // Workaround for GPU driver incompatibilities causing visual glitches on some laptops.
 // Forces Chromium to use CPU rendering instead of the Direct3D backend.
 app.disableHardwareAcceleration()
-import { exec } from 'child_process'
+import { exec, execFile } from 'child_process'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs'
+import crypto from 'node:crypto'
 import { z } from 'zod'
 import contextMenu from 'electron-context-menu'
 import { arrangeWindows, snapshotHandles, type Placement, type PlacementResult } from './windowLayout'
@@ -48,6 +49,37 @@ if (process.platform !== 'win32') {
 
 const execAsync = promisify(exec)
 
+// ── Zoom limits ──
+// Used by the before-input-event handler in createWindow to clamp
+// Ctrl +/- zoom between 50% and 200%.
+const ZOOM_MIN = 0.5
+const ZOOM_MAX = 2.0
+
+// Format-only URL check — scheme http/https + host present.
+function isValidUrlFormat(value: string): boolean {
+  try {
+    const u = new URL(value)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false
+    if (!u.hostname) return false
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Opens a URL in the default browser for a quick preview — does NOT run a shortcut.
+ipcMain.handle('test-url', async (_event, url: string) => {
+  if (typeof url !== 'string' || !isValidUrlFormat(url)) {
+    return { ok: false, error: 'Invalid URL' }
+  }
+  try {
+    await shell.openExternal(url)
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 process.env.APP_ROOT = path.join(__dirname, '..')
@@ -64,6 +96,22 @@ let keepInTray = true
 let isQuitting = false
 let lastAccentColor = '#0078D4'
 let executionNotifications = true
+
+// ── Zoom IPC ──
+// Settings.tsx calls setZoomFactor on mount to restore the user's saved
+// zoom. get-zoom-factor lets the renderer read the current value. The
+// before-input-event handler (see createWindow) broadcasts 'zoom-changed'
+// whenever Ctrl +/-/0 fires.
+ipcMain.handle('get-zoom-factor', () => {
+  return win?.webContents.getZoomFactor() ?? 1
+})
+
+ipcMain.handle('set-zoom-factor', (_event, factor: unknown) => {
+  const n = typeof factor === 'number' && Number.isFinite(factor) ? factor : 1
+  const clamped = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, n))
+  win?.webContents.setZoomFactor(clamped)
+  return clamped
+})
 
 app.on('before-quit', () => {
   isQuitting = true
@@ -247,110 +295,819 @@ ipcMain.handle('get-system-accent', async () => {
   return await getWindowsAccentColor()
 })
 
-// ── Zoom ──
-// Chromium's default zoom keyboard shortcuts (Ctrl + +/-/0) are unreliable
-// across keyboard layouts — the +/-/= keys shift differently on US, UK,
-// Bengali, etc. We intercept them by physical key code in before-input-event
-// (see createWindow) and drive webContents.setZoomFactor directly. This is
-// the only layout-agnostic path.
-const ZOOM_MIN = 0.5
-const ZOOM_MAX = 2.0
+// ──────────────────────────────────────────────
+// APP DRAWER — Installed apps discovery
+// ──────────────────────────────────────────────
+// Three sources combined, because no single one is complete:
+//
+//   1. Get-StartApps — everything Windows shows in the Start menu,
+//      including UWP apps. Names come from here (cleaner than .lnk names).
+//   2. Start Menu .lnk files — resolve a Start-Menu entry to its target .exe.
+//   3. App Paths registry — resolve an exe name (e.g. "Code.exe") to its
+//      absolute path. VS Code User install registers here but its Start Menu
+//      shortcut sometimes fails shell.readShortcutLink, so this is the fix.
+//
+// UWP apps are stored with a "shell:AppsFolder\" prefix. At launch time,
+// we branch on that prefix and use shell.openExternal instead of openPath.
 
-ipcMain.handle('get-zoom-factor', () => {
-  return win?.webContents.getZoomFactor() ?? 1
-})
+interface InstalledApp {
+  name: string
+  path: string
+  /**
+   * 'exe'   — regular .exe, launched via shell.openPath
+   * 'uwp'   — Windows Store app, path is `shell:AppsFolder\<AUMID>`
+   * 'shell' — Windows shell folder (This PC, Recycle Bin, Control Panel,
+   *           File Explorer, Settings, Network). path is `shell:<folder>`
+   *           or `shell:AppsFolder\<AUMID>`. Launched via explorer.exe.
+   */
+  kind: 'exe' | 'uwp' | 'shell'
+  iconDataUrl: string | null
+  /**
+   * True for system components — VC++ redistributables, .NET runtimes,
+   * Windows SDKs, WebView2, Java runtimes, and similar packages that exist
+   * for other apps to consume. The drawer auto-hides these on first run;
+   * users can unhide via the manage-hidden modal.
+   */
+  system: boolean
+}
 
-ipcMain.handle('set-zoom-factor', (_event, factor: unknown) => {
-  const n = typeof factor === 'number' && Number.isFinite(factor) ? factor : 1
-  const clamped = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, n))
-  win?.webContents.setZoomFactor(clamped)
-  return clamped
-})
+const startMenuFolders = (): string[] => {
+  const programData = process.env.ProgramData || 'C:\\ProgramData'
+  return [
+    path.join(programData, 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
+    path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
+  ]
+}
 
-// Format-only URL check — scheme http/https + host present.
-// DNS verification is done separately in check-url-resolves.
-function isValidUrlFormat(value: string): boolean {
+function findShortcutFiles(dir: string, acc: string[] = []): string[] {
   try {
-    const u = new URL(value)
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false
-    if (!u.hostname) return false
-    return true
+    const entries = fs.readdirSync(dir, { withFileTypes: true })
+    for (const e of entries) {
+      const full = path.join(dir, e.name)
+      if (e.isDirectory()) findShortcutFiles(full, acc)
+      else if (e.isFile() && e.name.toLowerCase().endsWith('.lnk')) acc.push(full)
+    }
+  } catch { /* skip inaccessible */ }
+  return acc
+}
+
+function looksLikeUninstaller(name: string): boolean {
+  return /(uninstall|remove|updater|update\b|readme|read me|\bhelp\b)/i.test(name)
+}
+
+/**
+ * True for system components that exist to support other apps — not for
+ * users to launch. These auto-hide on first run. Every pattern here has
+ * been chosen to avoid false positives on real user apps:
+ *   - "Microsoft Visual Studio Code"   does NOT match (needs `c++`)
+ *   - "Microsoft Visual Studio 2022"   does NOT match (needs `c++`)
+ *   - "Microsoft Edge"                 does NOT match (needs WebView2)
+ *   - "Microsoft Teams"                does NOT match
+ *   - "Microsoft 365"                  does NOT match
+ *   - "Magnifier", "Microsoft Outlook", "Notepad" — none match
+ */
+function isLikelySystemComponent(name: string): boolean {
+  return (
+    /microsoft visual c\+\+\s*\d{4}.*(redistributable|runtime)/i.test(name) ||
+    /^microsoft \.net\b/i.test(name) ||
+    /^microsoft asp\.net/i.test(name) ||
+    /^microsoft windows (desktop )?runtime/i.test(name) ||
+    /^microsoft windows sdk/i.test(name) ||
+    /^microsoft windows desktop runtime/i.test(name) ||
+    /^microsoft directx/i.test(name) ||
+    /^microsoft xna/i.test(name) ||
+    /^microsoft silverlight/i.test(name) ||
+    /^microsoft edge webview2 runtime/i.test(name) ||
+    /^java(se)?\s*(runtime|update)/i.test(name) ||
+    /^oracle java/i.test(name) ||
+    /\badditional runtime\b/i.test(name) ||
+    /\bminimum runtime\b/i.test(name) ||
+    /^windows sdk/i.test(name) ||
+    /^microsoft update for/i.test(name) ||
+    /^update for microsoft/i.test(name)
+  )
+}
+
+/**
+ * Windows shell folders the user expects to see in the drawer. These
+ * aren't regular apps — they're shell namespaces launched via `explorer.exe
+ * shell:<folder>`. We add them as virtual entries with kind: 'shell'.
+ */
+const VIRTUAL_SHELL_APPS: Array<{ name: string; uri: string }> = [
+  { name: 'File Explorer', uri: 'shell:MyComputerFolder' },
+  { name: 'This PC', uri: 'shell:MyComputerFolder' },
+  { name: 'Recycle Bin', uri: 'shell:RecycleBinFolder' },
+  { name: 'Control Panel', uri: 'shell:ControlPanelFolder' },
+  { name: 'Settings', uri: 'shell:AppsFolder\\windows.immersivecontrolpanel_cw5n1h2txyewy!microsoft.windows.immersivecontrolpanel' },
+  { name: 'Network', uri: 'shell:NetworkPlacesFolder' },
+]
+
+/**
+ * Extract the real Windows shell folder icons via SHGetFileInfo (P/Invoke).
+ * Shell folders have no `.exe`, so `app.getFileIcon` can't extract anything.
+ * These are the exact icons Windows itself draws in the Start Menu and
+ * taskbar. Cached for the process lifetime — they never change.
+ *
+ * Settings is deliberately not in the map — it's a UWP app, not a classic
+ * CSIDL folder, and has no icon we can extract this way. The drawer keeps
+ * its Material Symbols fallback for it.
+ */
+const shellFolderIconsCache = new Map<string, string | null>()
+let shellFolderIconsLoaded = false
+
+async function loadShellFolderIcons(): Promise<Map<string, string | null>> {
+  if (shellFolderIconsLoaded) return shellFolderIconsCache
+
+  const script = `
+    Add-Type -AssemblyName System.Drawing
+    $code = @"
+using System;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.IO;
+using System.Runtime.InteropServices;
+
+public class ShellIconExtractor {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct SHFILEINFO {
+        public IntPtr hIcon;
+        public int iIcon;
+        public uint dwAttributes;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string szDisplayName;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 80)]
+        public string szTypeName;
+    }
+
+    [DllImport("shell32.dll")]
+    public static extern int SHGetFolderLocation(IntPtr hwndOwner, int nFolder, IntPtr hToken, uint dwReserved, out IntPtr ppidl);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr SHGetFileInfo(IntPtr pidl, uint dwFileAttributes, ref SHFILEINFO psfi, uint cbFileInfo, uint uFlags);
+
+    [DllImport("user32.dll")]
+    public static extern bool DestroyIcon(IntPtr hIcon);
+
+    public static string GetIconBase64(int csidl) {
+        IntPtr pidl;
+        int hr = SHGetFolderLocation(IntPtr.Zero, csidl, IntPtr.Zero, 0, out pidl);
+        if (hr != 0 || pidl == IntPtr.Zero) return null;
+        SHFILEINFO shfi = new SHFILEINFO();
+        const uint SHGFI_ICON = 0x100;
+        const uint SHGFI_PIDL = 0x008;
+        IntPtr r = SHGetFileInfo(pidl, 0, ref shfi, (uint)Marshal.SizeOf(shfi), SHGFI_ICON | SHGFI_PIDL);
+        if (r == IntPtr.Zero || shfi.hIcon == IntPtr.Zero) return null;
+        try {
+            using (Icon icon = Icon.FromHandle(shfi.hIcon)) {
+                using (Bitmap srcBmp = icon.ToBitmap()) {
+                    using (Bitmap bmp = new Bitmap(64, 64)) {
+                        using (Graphics g = Graphics.FromImage(bmp)) {
+                            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                            g.DrawImage(srcBmp, 0, 0, 64, 64);
+                        }
+                        using (MemoryStream ms = new MemoryStream()) {
+                            bmp.Save(ms, ImageFormat.Png);
+                            return Convert.ToBase64String(ms.ToArray());
+                        }
+                    }
+                }
+            }
+        } finally {
+            DestroyIcon(shfi.hIcon);
+        }
+    }
+}
+"@
+    Add-Type -TypeDefinition $code -ReferencedAssemblies System.Drawing
+    $result = @{}
+    $result['File Explorer'] = [ShellIconExtractor]::GetIconBase64(0x05)
+    $result['This PC']       = [ShellIconExtractor]::GetIconBase64(0x11)
+    $result['Recycle Bin']   = [ShellIconExtractor]::GetIconBase64(0x0a)
+    $result['Control Panel'] = [ShellIconExtractor]::GetIconBase64(0x03)
+    $result['Network']       = [ShellIconExtractor]::GetIconBase64(0x12)
+    $result | ConvertTo-Json -Compress
+  `
+  const raw = await runPowerShellJson(script, 20000)
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw)) {
+      shellFolderIconsCache.set(k, typeof v === 'string' ? v : null)
+    }
+  }
+  for (const vs of VIRTUAL_SHELL_APPS) {
+    if (!shellFolderIconsCache.has(vs.name)) shellFolderIconsCache.set(vs.name, null)
+  }
+  const okCount = [...shellFolderIconsCache.values()].filter(Boolean).length
+  console.log(`[app-drawer] shell folder icons: ${okCount}/${VIRTUAL_SHELL_APPS.length}`)
+  shellFolderIconsLoaded = true
+  return shellFolderIconsCache
+}
+
+/**
+ * Extract UWP app icons via IShellItemImageFactory. UWP apps have no
+ * `.exe` for `app.getFileIcon` to extract from — their icon lives behind
+ * a shell namespace path (`shell:AppsFolder\<AUMID>`). This asks Windows
+ * for the exact bitmap it draws in the Start Menu.
+ *
+ * Batched: one PowerShell process handles every AUMID and returns a JSON
+ * map of AUMID → base64 PNG (or null on failure).
+ */
+const uwpIconCache = new Map<string, string | null>()
+
+async function loadUwpIcons(aumids: string[]): Promise<Map<string, string | null>> {
+  // Return cached entries; collect only the ones we haven't seen.
+  const missing: string[] = []
+  for (const id of aumids) {
+    if (!uwpIconCache.has(id)) missing.push(id)
+  }
+  if (missing.length === 0) return uwpIconCache
+
+  // AUMIDs are safe to pass in a -split string; escape single quotes just
+  // in case (they don't appear in real AUMIDs, but defensive).
+  const aumidList = missing.join('|').replace(/'/g, "''")
+
+  const script = `
+    Add-Type -AssemblyName System.Drawing
+    $code = @"
+using System;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.IO;
+using System.Runtime.InteropServices;
+
+[StructLayout(LayoutKind.Sequential)]
+public struct SIZE { public int cx; public int cy; }
+
+[ComImport, Guid("bcc18b79-ba16-442f-80c4-8a59c30c463b"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IShellItemImageFactory {
+    [PreserveSig]
+    int GetImage(SIZE size, uint flags, out IntPtr phbm);
+}
+
+public class UwpIconExtractor {
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
+    static extern void SHCreateItemFromParsingName(string pszPath, IntPtr pbc, ref Guid riid, [MarshalAs(UnmanagedType.Interface)] out object ppv);
+
+    [DllImport("gdi32.dll")]
+    static extern bool DeleteObject(IntPtr hObject);
+
+    const uint SIIGBF_RESIZETOFIT   = 0x00;
+    const uint SIIGBF_BIGGERSIZEOK  = 0x01;
+
+    public static string GetIcon(string shellPath) {
+        try {
+            Guid iid = new Guid("bcc18b79-ba16-442f-80c4-8a59c30c463b");
+            object obj;
+            SHCreateItemFromParsingName(shellPath, IntPtr.Zero, ref iid, out obj);
+            IShellItemImageFactory factory = (IShellItemImageFactory)obj;
+            SIZE size = new SIZE { cx = 64, cy = 64 };
+            IntPtr hbmp;
+            int hr = factory.GetImage(size, SIIGBF_RESIZETOFIT | SIIGBF_BIGGERSIZEOK, out hbmp);
+            if (hr != 0 || hbmp == IntPtr.Zero) return null;
+            try {
+                using (Bitmap bmp = Image.FromHbitmap(hbmp)) {
+                    using (MemoryStream ms = new MemoryStream()) {
+                        bmp.Save(ms, ImageFormat.Png);
+                        return Convert.ToBase64String(ms.ToArray());
+                    }
+                }
+            } finally {
+                DeleteObject(hbmp);
+            }
+        } catch {
+            return null;
+        }
+    }
+}
+"@
+    Add-Type -TypeDefinition $code -ReferencedAssemblies System.Drawing
+    $aumids = '${aumidList}' -split '\\|'
+    $result = @{}
+    foreach ($aumid in $aumids) {
+      if (-not $aumid) { continue }
+      $result[$aumid] = [UwpIconExtractor]::GetIcon("shell:AppsFolder\\$aumid")
+    }
+    $result | ConvertTo-Json -Compress
+  `
+
+  const raw = await runPowerShellJson(script, 30000)
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw)) {
+      uwpIconCache.set(k, typeof v === 'string' ? v : null)
+    }
+  }
+  for (const id of missing) {
+    if (!uwpIconCache.has(id)) uwpIconCache.set(id, null)
+  }
+  const okCount = missing.filter((id) => uwpIconCache.get(id)).length
+  console.log(`[app-drawer] UWP icons extracted: ${okCount}/${missing.length}`)
+  return uwpIconCache
+}
+
+function iconCacheKeyFor(exePath: string): string {
+  return crypto.createHash('md5').update(exePath.toLowerCase()).digest('hex').slice(0, 16)
+}
+
+async function getOrBuildIcon(exePath: string): Promise<string | null> {
+  const cacheDir = path.join(app.getPath('userData'), 'app-icons')
+  const cachePath = path.join(cacheDir, `${iconCacheKeyFor(exePath)}.png`)
+
+  // Cache hit: PNG newer than exe
+  try {
+    const cacheStat = fs.statSync(cachePath)
+    const exeStat = fs.statSync(exePath)
+    if (cacheStat.mtimeMs >= exeStat.mtimeMs) {
+      const buf = fs.readFileSync(cachePath)
+      return `data:image/png;base64,${buf.toString('base64')}`
+    }
+  } catch { /* miss */ }
+
+  // Cache miss: extract via Electron's file-icon API
+  try {
+    const img = await app.getFileIcon(exePath, { size: 'large' })
+    if (img.isEmpty()) return null
+    const resized = img.resize({ width: 64, height: 64, quality: 'good' })
+    const png = resized.toPNG()
+    fs.mkdirSync(cacheDir, { recursive: true })
+    fs.writeFileSync(cachePath, png)
+    return `data:image/png;base64,${png.toString('base64')}`
   } catch {
-    return false
+    return null
   }
 }
 
-// Opens a URL in the default browser for a quick preview — does NOT run a shortcut.
-ipcMain.handle('test-url', async (_event, url: string) => {
-  if (typeof url !== 'string' || !isValidUrlFormat(url)) {
-    return { ok: false, error: 'Invalid URL' }
+/** Run a small PowerShell script and parse its JSON output. */
+function runPowerShellJson(script: string, timeoutMs = 15000): Promise<unknown> {
+  const encoded = Buffer.from(script, 'utf16le').toString('base64')
+  return new Promise((resolve) => {
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded],
+      { windowsHide: true, maxBuffer: 8 * 1024 * 1024, timeout: timeoutMs },
+      (err, stdout) => {
+        if (err || !stdout) { resolve(null); return }
+        try {
+          const trimmed = stdout.trim()
+          if (!trimmed) { resolve(null); return }
+          resolve(JSON.parse(trimmed))
+        } catch { resolve(null) }
+      }
+    )
+  })
+}
+
+/** Get the Windows Start menu app list (name + AppID). Includes UWP. */
+async function runGetStartApps(): Promise<Array<{ Name: string; AppID: string }>> {
+  const script = `
+    $ErrorActionPreference = 'SilentlyContinue'
+    Get-StartApps | Select-Object Name, AppID | ConvertTo-Json -Compress
+  `
+  const raw = await runPowerShellJson(script)
+  if (!raw) return []
+  const arr = Array.isArray(raw) ? raw : [raw]
+  return arr.filter((item): item is { Name: string; AppID: string } =>
+    item !== null &&
+    typeof item === 'object' &&
+    typeof (item as { Name?: unknown }).Name === 'string' &&
+    typeof (item as { AppID?: unknown }).AppID === 'string'
+  )
+}
+
+/** Cached App Paths lookup — populated lazily on first use. */
+const appPathsCache = new Map<string, string>()
+let appPathsLoaded = false
+
+async function ensureAppPathsLoaded(): Promise<void> {
+  if (appPathsLoaded) return
+  const script = `
+    $ErrorActionPreference = 'SilentlyContinue'
+    $results = @{}
+    $keys = @(
+      'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths',
+      'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\App Paths',
+      'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths'
+    )
+    foreach ($key in $keys) {
+      Get-ChildItem $key -ErrorAction SilentlyContinue | ForEach-Object {
+        $exeName = $_.PSChildName
+        $exePath = (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).'(default)'
+        if ($exePath -and (Test-Path $exePath)) {
+          $lower = $exeName.ToLower()
+          if (-not $results.ContainsKey($lower)) {
+            $results[$lower] = $exePath
+          }
+        }
+      }
+    }
+    $results | ConvertTo-Json -Compress
+  `
+  const raw = await runPowerShellJson(script)
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw)) {
+      if (typeof v === 'string') appPathsCache.set(k.toLowerCase(), v)
+    }
   }
+  appPathsLoaded = true
+  console.log(`[app-drawer] loaded ${appPathsCache.size} App Paths entries`)
+}
+
+async function resolveAppPath(exeName: string): Promise<string | null> {
+  await ensureAppPathsLoaded()
+  return appPathsCache.get(exeName.toLowerCase()) || null
+}
+
+/**
+ * Scan the Windows Uninstall registry (the same source Control Panel uses)
+ * and return one entry per app whose `DisplayIcon` points at a real,
+ * launchable .exe. This is the fix for VS Code User install — it registers
+ * here but its Start Menu shortcut often resolves to an empty target via
+ * shell.readShortcutLink.
+ *
+ * Filtering is strict: uninstallers, updaters, and entries with no valid
+ * DisplayIcon are dropped. Redistributables (VC++ runtimes etc.) don't
+ * have a launchable icon and are naturally excluded.
+ */
+interface UninstallRegistryEntry { Name: string; ExePath: string }
+
+let uninstallRegistryCache: UninstallRegistryEntry[] | null = null
+
+async function loadUninstallRegistry(): Promise<UninstallRegistryEntry[]> {
+  if (uninstallRegistryCache) return uninstallRegistryCache
+  const script = `
+    $ErrorActionPreference = 'SilentlyContinue'
+    $results = @()
+    $keys = @(
+      'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+      'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+      'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall'
+    )
+    foreach ($key in $keys) {
+      Get-ChildItem $key -ErrorAction SilentlyContinue | ForEach-Object {
+        $props = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+        if (-not $props) { return }
+        $name = $props.DisplayName
+        $icon = $props.DisplayIcon
+        if (-not $name -or -not $icon) { return }
+        # DisplayIcon is "path,index" or just "path" — strip trailing ,N and quotes
+        $exePath = ($icon -replace ',\\d+$', '').Trim('"').Trim()
+        if (-not $exePath) { return }
+        if ($exePath -notmatch '\\.exe$') { return }
+        if (-not (Test-Path $exePath)) { return }
+        $base = [System.IO.Path]::GetFileNameWithoutExtension($exePath)
+        if ($base -match '(?i)^unins|^uninstall|updater|^update') { return }
+        $results += [PSCustomObject]@{ Name = $name; ExePath = $exePath }
+      }
+    }
+    $results | ConvertTo-Json -Compress
+  `
+  const raw = await runPowerShellJson(script, 20000)
+  const entries: UninstallRegistryEntry[] = []
+  if (raw) {
+    const arr = Array.isArray(raw) ? raw : [raw]
+    for (const item of arr) {
+      if (
+        item !== null &&
+        typeof item === 'object' &&
+        typeof (item as { Name?: unknown }).Name === 'string' &&
+        typeof (item as { ExePath?: unknown }).ExePath === 'string'
+      ) {
+        entries.push({ Name: (item as { Name: string }).Name, ExePath: (item as { ExePath: string }).ExePath })
+      }
+    }
+  }
+  uninstallRegistryCache = entries
+  console.log(`[app-drawer] Uninstall registry: ${entries.length} launchable entries`)
+  return entries
+}
+
+/** Find a .lnk file by basename within the Start Menu folders. */
+function findShortcutByName(lnkName: string): string | null {
+  const wanted = lnkName.toLowerCase()
+  for (const dir of startMenuFolders()) {
+    const lnks = findShortcutFiles(dir)
+    const found = lnks.find((f) => path.basename(f).toLowerCase() === wanted)
+    if (found) return found
+  }
+  return null
+}
+
+/** Resolve a Get-StartApps AppID to a launchable path + kind. */
+async function resolveStartApp(appId: string): Promise<{ path: string; kind: 'exe' | 'uwp' } | null> {
+  const id = appId.trim()
+  if (!id) return null
+
+  // UWP — AppID contains "!" (e.g. Microsoft.WindowsCalculator_8wekyb3d8bbwe!App)
+  if (id.includes('!') && !id.includes('\\') && !id.includes('/')) {
+    return { path: `shell:AppsFolder\\${id}`, kind: 'uwp' }
+  }
+
+  // Start Menu .lnk reference
+  if (id.toLowerCase().endsWith('.lnk')) {
+    const lnkPath = findShortcutByName(id)
+    if (!lnkPath) return null
+    try {
+      const details = shell.readShortcutLink(lnkPath)
+      let target = details.target || ''
+      // Expand any %VAR% that wasn't resolved
+      target = target.replace(/%([^%]+)%/g, (_, name) => process.env[name] || `%${name}%`)
+      if (!target) return null
+      if (!target.toLowerCase().endsWith('.exe')) return null
+      if (!fs.existsSync(target)) return null
+      return { path: target, kind: 'exe' }
+    } catch { return null }
+  }
+
+  // App Paths reference — Get-StartApps returns these in three shapes:
+  //   - Absolute path:          "D:\Protect\...\app.exe"
+  //   - Bare exe name:          "Code.exe"
+  //   - KNOWNFOLDERID-prefixed: "{GUID}\System32\cmd.exe"
+  // Try in that order: on-disk check → App Paths cache → basename lookup
+  // → manual KNOWNFOLDERID expansion.
+  if (id.toLowerCase().endsWith('.exe')) {
+    // Absolute path — check disk directly.
+    if (/^[a-z]:\\/i.test(id) && fs.existsSync(id)) {
+      return { path: id, kind: 'exe' }
+    }
+
+    const exact = await resolveAppPath(id)
+    if (exact) return { path: exact, kind: 'exe' }
+
+    const base = path.basename(id)
+    if (base !== id) {
+      const viaBase = await resolveAppPath(base)
+      if (viaBase) return { path: viaBase, kind: 'exe' }
+    }
+
+    // Manual KNOWNFOLDERID expansion for the Windows folder GUIDs that
+    // Get-StartApps emits. Expanding all KNOWNFOLDERIDs would need
+    // SHGetKnownFolderPath; these five cover every case we've seen.
+    //   {1AC14E77-...} = FOLDERID_System              → C:\Windows\System32
+    //   {6D809377-...} = FOLDERID_ProgramFilesX64     → C:\Program Files
+    //   {7C5A40EF-...} = FOLDERID_ProgramFilesX86     → C:\Program Files (x86)
+    //   {905e63b6-...} = FOLDERID_ProgramFiles        → C:\Program Files
+    //   {F38BF404-...} = FOLDERID_Windows             → C:\Windows
+    const systemRoot = process.env.SystemRoot || 'C:\\Windows'
+    const knownFolders: Record<string, string> = {
+      '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}': path.join(systemRoot, 'System32'),
+      '{6D809377-6AF0-444B-8957-A3773F02200E}': process.env.ProgramFiles || 'C:\\Program Files',
+      '{7C5A40EF-A0FB-4BFC-874A-C0F2E0B9FA8E}': process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)',
+      '{905e63b6-c1bf-494e-b29c-65b732d3d21a}': process.env.ProgramFiles || 'C:\\Program Files',
+      '{F38BF404-1D43-42F2-9305-67DE0B28FC23}': systemRoot,
+    }
+    for (const [guid, folder] of Object.entries(knownFolders)) {
+      if (id.startsWith(guid + '\\')) {
+        const candidate = path.join(folder, id.slice(guid.length + 1))
+        if (fs.existsSync(candidate)) return { path: candidate, kind: 'exe' }
+      }
+    }
+
+    return null
+  }
+
+  return null
+}
+
+let installedAppsCache: InstalledApp[] | null = null
+// Tracks an in-flight scan so a second caller (the drawer opening while
+// the eager startup scan is still running) awaits the same promise
+// instead of kicking off a duplicate scan.
+let installedAppsInFlight: Promise<InstalledApp[]> | null = null
+
+async function discoverInstalledApps(forceRefresh = false): Promise<InstalledApp[]> {
+  if (installedAppsCache && !forceRefresh) return installedAppsCache
+  if (installedAppsInFlight && !forceRefresh) return installedAppsInFlight
+  installedAppsInFlight = runDiscovery()
   try {
-    await shell.openExternal(url)
+    return await installedAppsInFlight
+  } finally {
+    installedAppsInFlight = null
+  }
+}
+
+async function runDiscovery(): Promise<InstalledApp[]> {
+
+  const results: InstalledApp[] = []
+  const seenPaths = new Set<string>()
+
+  // ── Source 1: Start Menu .lnk scan ──
+  // Primary source. Proven on the test machine to find 46+ apps with icons.
+  // Runs before Get-StartApps because Get-StartApps alone drops entries
+  // whose AppID is a KNOWNFOLDERID path (see resolveStartApp).
+  for (const folder of startMenuFolders()) {
+    const lnks = findShortcutFiles(folder)
+    for (const lnk of lnks) {
+      const displayName = path.basename(lnk, '.lnk')
+      if (looksLikeUninstaller(displayName)) continue
+
+      let target = ''
+      try {
+        const details = shell.readShortcutLink(lnk)
+        target = details.target || ''
+      } catch { continue }
+
+      // Expand %VAR% that shell.readShortcutLink left unresolved
+      target = target.replace(/%([^%]+)%/g, (_, name) => process.env[name] || `%${name}%`)
+      if (!target) continue
+      if (!target.toLowerCase().endsWith('.exe')) continue
+      if (!fs.existsSync(target)) continue
+
+      const key = target.toLowerCase()
+      if (seenPaths.has(key)) continue
+      seenPaths.add(key)
+
+      const iconDataUrl = await getOrBuildIcon(target)
+      results.push({
+        name: displayName,
+        path: target,
+        kind: 'exe',
+        iconDataUrl,
+        system: isLikelySystemComponent(displayName),
+      })
+    }
+  }
+
+  const fromStartMenu = results.length
+  console.log(`[app-drawer] Start Menu scan: ${fromStartMenu} apps`)
+
+  // ── Source 2: Get-StartApps ──
+  // Supplementary — adds UWP apps and any Win32 apps whose Start Menu
+  // shortcut the .lnk scan missed. Entries already in `seenPaths` are
+  // skipped, so no duplicates.
+  const startApps = await runGetStartApps()
+  console.log(`[app-drawer] Get-StartApps returned ${startApps.length} entries`)
+
+  const unresolvedAppIds: string[] = []
+  for (const sa of startApps) {
+    const name = (sa.Name || '').trim()
+    const appId = (sa.AppID || '').trim()
+    if (!name || !appId) continue
+    if (looksLikeUninstaller(name)) continue
+
+    const resolved = await resolveStartApp(appId)
+    if (!resolved) {
+      unresolvedAppIds.push(`${name} → ${appId}`)
+      continue
+    }
+
+    const key = resolved.path.toLowerCase()
+    if (seenPaths.has(key)) continue
+    seenPaths.add(key)
+
+    const iconDataUrl = resolved.kind === 'uwp' ? null : await getOrBuildIcon(resolved.path)
+    results.push({
+      name,
+      path: resolved.path,
+      kind: resolved.kind,
+      iconDataUrl,
+      system: isLikelySystemComponent(name),
+    })
+  }
+
+  const fromStartApps = results.length - fromStartMenu
+
+  // ── Source 3: Uninstall registry ──
+  // Catches apps (like VS Code User) that are registered with Control
+  // Panel but whose Start Menu shortcut doesn't resolve via
+  // shell.readShortcutLink. The `system` flag then auto-hides
+  // redistributables discovered here.
+  const uninstallEntries = await loadUninstallRegistry()
+  for (const entry of uninstallEntries) {
+    const name = entry.Name.trim()
+    if (looksLikeUninstaller(name)) continue
+
+    const key = entry.ExePath.toLowerCase()
+    if (seenPaths.has(key)) continue
+    seenPaths.add(key)
+
+    const iconDataUrl = await getOrBuildIcon(entry.ExePath)
+    results.push({
+      name,
+      path: entry.ExePath,
+      kind: 'exe',
+      iconDataUrl,
+      system: isLikelySystemComponent(name),
+    })
+  }
+
+  // ── Source 3b: UWP icons ──
+  // UWP apps got iconDataUrl: null above — extract real icons now, in one
+  // batch. Runs after every other source so we know the full AUMID list.
+  const uwpIds = results
+    .filter((r) => r.kind === 'uwp')
+    .map((r) => r.path.replace(/^shell:AppsFolder\\/i, ''))
+  if (uwpIds.length > 0) {
+    const uwpIcons = await loadUwpIcons(uwpIds)
+    for (const r of results) {
+      if (r.kind !== 'uwp') continue
+      const aumid = r.path.replace(/^shell:AppsFolder\\/i, '')
+      const base64 = uwpIcons.get(aumid)
+      if (base64) r.iconDataUrl = `data:image/png;base64,${base64}`
+    }
+  }
+
+  const fromUninstall = results.length - fromStartMenu - fromStartApps
+
+  // ── Source 4: Virtual shell entries ──
+  // Windows shell folders the user expects to see. Deduped by NAME, not
+  // URI — "File Explorer" and "This PC" share the same `shell:MyComputerFolder`
+  // URI but are distinct entries the user wants to see.
+  const shellIcons = await loadShellFolderIcons()
+  const beforeShell = results.length
+  for (const vs of VIRTUAL_SHELL_APPS) {
+    const key = `virtual:${vs.name.toLowerCase()}`
+    if (seenPaths.has(key)) continue
+    seenPaths.add(key)
+    const base64 = shellIcons.get(vs.name)
+    results.push({
+      name: vs.name,
+      path: vs.uri,
+      kind: 'shell',
+      iconDataUrl: base64 ? `data:image/png;base64,${base64}` : null,
+      system: false,
+    })
+  }
+  const fromShell = results.length - beforeShell
+
+  // ── Dedup by name ──
+  // Windows registers some apps (Settings, File Explorer, Control Panel)
+  // in multiple sources under different paths — Start Menu shortcut,
+  // Get-StartApps AUMID, virtual shell entry. The path-based dedup above
+  // doesn't catch them. This pass keeps the first occurrence.
+  // Order matters: Start Menu (real) beats Get-StartApps beats Uninstall
+  // beats virtual, so the real entry always wins.
+  const seenNames = new Set<string>()
+  const deduped: InstalledApp[] = []
+  for (const app of results) {
+    const nameKey = app.name.trim().toLowerCase()
+    if (seenNames.has(nameKey)) continue
+    seenNames.add(nameKey)
+    deduped.push(app)
+  }
+
+  const uwpCount = deduped.filter((r) => r.kind === 'uwp').length
+  const systemCount = deduped.filter((r) => r.system).length
+  const sorted = deduped.sort((a, b) => a.name.localeCompare(b.name))
+  installedAppsCache = sorted
+
+  console.log(
+    `[app-drawer] discovered ${sorted.length} apps (${fromStartMenu} Start Menu, ${fromStartApps} Get-StartApps, ${fromUninstall} Uninstall reg, ${fromShell} shell, ${uwpCount} UWP, ${systemCount} system) [${results.length - deduped.length} dup names removed]`
+  )
+  if (unresolvedAppIds.length > 0) {
+    console.log(`[app-drawer] ${unresolvedAppIds.length} Get-StartApps entries unresolved (first 10):`)
+    unresolvedAppIds.slice(0, 10).forEach((s) => console.log(`  ${s}`))
+  }
+  return sorted
+}
+
+ipcMain.handle('list-installed-apps', async () => {
+  // Cache-first, no-race. If the eager startup scan is still running,
+  // await it — never kick off a second scan.
+  try { return await discoverInstalledApps(false) }
+  catch (err) { console.error('[app-drawer] list failed:', err); return [] }
+})
+
+ipcMain.handle('refresh-installed-apps', async () => {
+  // Manual refresh forces a rescan even if a scan is already in flight.
+  // Callers (the drawer's refresh button) want fresh data.
+  try { return await discoverInstalledApps(true) }
+  catch (err) { console.error('[app-drawer] refresh failed:', err); return [] }
+})
+
+// ──────────────────────────────────────────────
+// TEST LAUNCH — used by the Test button on launch_app cards
+// ──────────────────────────────────────────────
+ipcMain.handle('test-launch-app', async (_event, target: unknown) => {
+  if (typeof target !== 'string' || !target) return { ok: false, error: 'No path set' }
+
+  // UWP apps
+  if (target.startsWith('shell:AppsFolder\\')) {
+    try {
+      await shell.openExternal(target)
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  // Shell folders (This PC, Recycle Bin, Control Panel, Network, etc.)
+  // explorer.exe returns a non-zero exit code even on success, so we
+  // fire-and-forget: spawn succeeding is the only signal we can trust.
+  if (target.startsWith('shell:')) {
+    const child = execFile('explorer.exe', [target])
+    child.on('error', () => { /* explorer.exe is always present on Windows */ })
+    return { ok: true }
+  }
+
+  // Regular exe
+  try {
+    const stat = fs.statSync(target)
+    if (stat.isDirectory()) return { ok: false, error: 'Path is a directory, not an executable' }
+    const ext = path.extname(target).toLowerCase()
+    if (ext !== '.exe') return { ok: false, error: 'Only .exe files are supported' }
+    const err = await shell.openPath(target)
+    if (err) return { ok: false, error: err }
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
-  }
-})
-
-// ──────────────────────────────────────────────
-// WINDOW LAYOUT RUNTIME
-// ──────────────────────────────────────────────
-// Positions shortcut-launched windows into a fixed layout after the
-// action sequence completes. Placement rules are documented in
-// electron/windowLayout.ts.
-
-const WindowLayoutRequestSchema = z.object({
-  shortcutName: z.string().max(200),
-  layoutId: z.enum([
-    'split_50',
-    'split_67_33',
-    'split_33_67',
-    'thirds',
-    'main_left',
-    'main_right',
-    'quad',
-  ]),
-  placements: z
-    .array(
-      z.object({
-        zoneId: z.string().max(50),
-        zoneLabel: z.string().max(100),
-        zone: z.object({
-          x: z.number(),
-          y: z.number(),
-          w: z.number(),
-          h: z.number(),
-        }),
-        actionType: z.string().max(50),
-        actionValue: z.string().max(8192),
-        actionTitle: z.string().max(200),
-        isUnassigned: z.boolean().optional().default(false),
-      })
-    )
-    .max(10),
-})
-
-ipcMain.handle('arrange-windows-shortcut', async (_event, rawRequest: unknown) => {
-  try {
-    const req = WindowLayoutRequestSchema.parse(rawRequest)
-    const placements: Placement[] = req.placements.map((p) => ({
-      zoneId: p.zoneId,
-      zoneLabel: p.zoneLabel,
-      zone: p.zone,
-      actionType: p.actionType,
-      actionValue: p.actionValue,
-      actionTitle: p.actionTitle,
-      isUnassigned: p.isUnassigned,
-    }))
-
-    const results = await arrangeWindows(placements)
-    console.log('[arrange-windows-shortcut] results:', JSON.stringify(results, null, 2))
-    return results
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    console.error('[arrange-windows-shortcut] failed:', message)
-    return []
   }
 })
 
@@ -568,6 +1325,27 @@ function isShortcutRunning(shortcutId: string): boolean {
 async function runAction(action: ShortcutActionData): Promise<void> {
   switch (action.type) {
     case 'launch_app': {
+      // UWP apps (Calculator, Photos, Settings) launch via shell:AppsFolder,
+      // not via a file path.
+      if (action.value.startsWith('shell:AppsFolder\\')) {
+        try {
+          await shell.openExternal(action.value)
+        } catch (err) {
+          throw new Error(err instanceof Error ? err.message : 'Failed to launch UWP app')
+        }
+        return
+      }
+
+      // Shell folders (This PC, Recycle Bin, Control Panel, Network, etc.)
+      // launch via explorer.exe with the shell: URI as its argument.
+      // explorer.exe returns a non-zero exit code even on success, so we
+      // fire-and-forget: spawn succeeding is the only signal we can trust.
+      if (action.value.startsWith('shell:')) {
+        const child = execFile('explorer.exe', [action.value])
+        child.on('error', () => { /* explorer.exe is always present on Windows */ })
+        return
+      }
+
       let stat
       try { stat = fs.statSync(action.value) } catch { throw new Error('Path does not exist or is inaccessible') }
       if (stat.isDirectory()) {
@@ -1144,6 +1922,11 @@ function findFirstBrokenPath(shortcut: ShortcutData): { title: string; value: st
     if (a.type !== 'launch_app' && a.type !== 'open_file' && a.type !== 'open_folder') continue
     const val = (a.value || '').trim()
     if (!val) return { title: a.title || a.type, value: '(empty)' }
+    // UWP apps and shell folders use the `shell:` URI scheme — no real
+    // file path, no existence check applies. (Mirrors isUwpPath in
+    // src/types/actions.ts; main can't import from src/ due to the
+    // bundle split.)
+    if (a.type === 'launch_app' && val.startsWith('shell:')) continue
     try {
       fs.statSync(val)
     } catch {
@@ -1365,6 +2148,14 @@ app.on('window-all-closed', () => {
 })
 
 app.whenReady().then(() => {
+  // Kick off the app-drawer scan FIRST — before window and tray creation —
+  // so the scan runs concurrently with Chromium's boot. On a slow machine
+  // the scan takes 1–3s (Start Menu walk + Get-StartApps + App Paths +
+  // Uninstall registry + icon extraction). By the time the user opens the
+  // drawer, the cache is warm and no spinner shows.
+  void discoverInstalledApps().catch((err) => {
+    console.error('[app-drawer] background scan failed:', err)
+  })
   createWindow()
   createTray()
 })
