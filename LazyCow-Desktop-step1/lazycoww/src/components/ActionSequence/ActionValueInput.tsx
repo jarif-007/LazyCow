@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { AnimatePresence } from 'motion/react';
 import { ActionItem } from '../../types/actions';
 import { UrlInput } from './UrlInput';
 import { AppDrawerModal } from '../AppDrawerModal';
@@ -138,16 +139,18 @@ export const ActionValueInput: React.FC<ActionValueInputProps> = ({ card, hasErr
           </div>
         )}
 
-        {drawerOpen && (
-          <AppDrawerModal
-            currentPath={card.value}
-            onSelect={(path) => {
-              onUpdateValue(card.id, path);
-              setDrawerOpen(false);
-            }}
-            onCancel={() => setDrawerOpen(false)}
-          />
-        )}
+        <AnimatePresence>
+          {drawerOpen && (
+            <AppDrawerModal
+              currentPath={card.value}
+              onSelect={(path) => {
+                onUpdateValue(card.id, path);
+                setDrawerOpen(false);
+              }}
+              onCancel={() => setDrawerOpen(false)}
+            />
+          )}
+        </AnimatePresence>
       </>
     );
   }

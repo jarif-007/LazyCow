@@ -255,7 +255,21 @@ Status: NOT STARTED (next session)
 - [ ] `prefers-reduced-motion` — springs become 120ms cross-fades, transforms disable.
 - [ ] **Renderer-only.** No changes to `main.ts`, `windowLayout.ts`, or execution logic.
 - [ ] **Rationale:** rigidity is the single biggest reason the app feels "dead". See `decisions.md` — Design direction.
-
+## Mission: Design polish Phase 1 — motion layer
+Status: IN PROGRESS (pilot complete; surfaces 2+ queued)
+- [x] Install `motion` (v14).
+- [x] `usePrefersReducedMotion` hook + `src/utils/motion.ts` constants.
+- [x] AppDrawerModal entrance — backdrop fade + translateY slide,
+      spring bounce 0 (300ms in / 200ms out), reduced-motion 120ms fade.
+- [x] Hardware acceleration toggle — required to feel the motion at all
+      (software rendering made scale-based animations choppy).
+- [ ] Surface 2 — TBD (see discussion below).
+- [ ] Surface 3 — drawer cell stagger.
+- [ ] Progress ring spring settle.
+- [ ] Modal exits for DeleteModal / ConfirmDeleteModal / ConfirmSecuredModal.
+- [ ] Small-popover trigger-origin anchoring (PositionDropdown, HiddenApps
+      from eye icon) — deferred from pilot; only worth it for small surfaces.
+      
 ## Mission: Design polish Phases 2–6
 Status: NOT STARTED (after Phase 1)
 - [ ] Phase 2 — visual reset on the three main surfaces. Flat card backgrounds (no gradients), two-layer Windows 11 shadow, one Acrylic translucent overlay, radius rhythm (chip 6 / card 8 / modal 12 / button pill), icon scale (14/18/20/24).

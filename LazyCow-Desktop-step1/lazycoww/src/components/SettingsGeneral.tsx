@@ -16,9 +16,19 @@ interface SettingsGeneralProps {
   };
   onUpdate: (key: string, value: boolean | Shade | number) => void;
   customColorMode: boolean;
+  // ── Hardware acceleration ──
+  hardwareAcceleration: boolean;
+  hardwareAccelerationBoot: boolean;
+  hardwareAccelerationSaving: boolean;
+  onHardwareAccelerationChange: (enabled: boolean) => void;
+  onRestartApp: () => void;
 }
 
-export const SettingsGeneral: React.FC<SettingsGeneralProps> = ({ settings, onUpdate, customColorMode }) => {
+export const SettingsGeneral: React.FC<SettingsGeneralProps> = ({
+  settings, onUpdate, customColorMode,
+  hardwareAcceleration, hardwareAccelerationBoot, hardwareAccelerationSaving,
+  onHardwareAccelerationChange, onRestartApp,
+}) => {
   const [menuOpen, setMenuOpen] = useState(false);
 
   const shadeClasses: Record<Shade, string> = {
@@ -101,6 +111,40 @@ export const SettingsGeneral: React.FC<SettingsGeneralProps> = ({ settings, onUp
             }}
             className="w-20 bg-background/80 border border-border rounded-lg px-3 py-2 font-body-sm text-foreground text-right focus:ring-primary focus:border-primary focus:outline-none"
           />
+        </div>
+
+        {/* ── Hardware acceleration ── */}
+        <div className="p-4 flex items-start justify-between gap-4">
+          <div className="flex-1 min-w-0">
+            <h3 className="font-body-md font-medium">Hardware Acceleration</h3>
+            <p className="text-body-sm opacity-80">
+              Uses the GPU for rendering — smoother animations and scrolling. Turn off if you see visual glitches (frozen regions, colour tints, broken text). Requires a restart.
+            </p>
+            {hardwareAcceleration !== hardwareAccelerationBoot && (
+              <div className="mt-2 flex items-center gap-3 flex-wrap">
+                <span className="inline-flex items-center gap-1 text-[11px] text-amber-500 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-full">
+                  <span className="material-symbols-outlined text-[13px]">warning</span>
+                  Restart required
+                </span>
+                <button
+                  onClick={onRestartApp}
+                  className="text-[11px] font-medium text-primary hover:underline underline-offset-2"
+                >
+                  Restart Now
+                </button>
+              </div>
+            )}
+          </div>
+          <label className={`relative inline-flex items-center shrink-0 ${hardwareAccelerationSaving ? 'opacity-60 cursor-wait' : 'cursor-pointer'}`}>
+            <input
+              type="checkbox"
+              className="sr-only peer"
+              checked={hardwareAcceleration}
+              disabled={hardwareAccelerationSaving}
+              onChange={(e) => onHardwareAccelerationChange(e.target.checked)}
+            />
+            <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all" />
+          </label>
         </div>
 
         {/* ── Auto-scroll speed ── */}

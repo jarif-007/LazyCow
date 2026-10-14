@@ -51,6 +51,31 @@ interface SettingsProps {
 
 export default function Settings({ themeMode, onThemeModeChange, customColorMode, onCustomColorModeChange, customTheme, onCustomThemeChange }: SettingsProps) {
   const [settings, setSettings] = useState<LocalSettings>(DEFAULT_SETTINGS);
+  // Hardware acceleration lives in main-process preferences.json, not in
+  // lazycow_settings — see electron/preferences.ts. `boot` is what was
+  // applied at launch; `current` is what's on disk now. They differ →
+  // the toggle shows a "Restart required" banner.
+  const [hwAccel, setHwAccel] = useState<{ current: boolean; boot: boolean } | null>(null);
+  const [hwAccelSaving, setHwAccelSaving] = useState(false);
+
+  useEffect(() => {
+    window.electronAPI?.getHardwareAcceleration().then(setHwAccel).catch(() => {});
+  }, []);
+
+  const handleHwAccelChange = async (enabled: boolean) => {
+    setHwAccelSaving(true);
+    try {
+      await window.electronAPI?.setHardwareAcceleration(enabled);
+      const fresh = await window.electronAPI?.getHardwareAcceleration();
+      if (fresh) setHwAccel(fresh);
+    } finally {
+      setHwAccelSaving(false);
+    }
+  };
+
+  const handleRestartApp = () => {
+    window.electronAPI?.relaunchApp();
+  };
 
   useEffect(() => {
     const stored = localStorage.getItem('lazycow_settings');
@@ -118,7 +143,16 @@ export default function Settings({ themeMode, onThemeModeChange, customColorMode
           appDrawerBackdrop={settings.appDrawerBackdrop}
           onAppDrawerBackdropChange={(v) => updateSetting('appDrawerBackdrop', v)}
         />
-        <SettingsGeneral settings={settings} onUpdate={updateSetting} customColorMode={customColorMode} />
+        <SettingsGeneral
+          settings={settings}
+          onUpdate={updateSetting}
+          customColorMode={customColorMode}
+          hardwareAcceleration={hwAccel?.current ?? false}
+          hardwareAccelerationBoot={hwAccel?.boot ?? false}
+          hardwareAccelerationSaving={hwAccelSaving}
+          onHardwareAccelerationChange={handleHwAccelChange}
+          onRestartApp={handleRestartApp}
+        />
         <SettingsBlockedTriggers customColorMode={customColorMode} />
         <SettingsDangerZone />
         <SettingsFooter />

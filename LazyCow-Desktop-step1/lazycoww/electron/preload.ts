@@ -58,6 +58,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('zoom-changed', listener)
   },
 
+  // ── Hardware acceleration ──
+  getHardwareAcceleration: () => ipcRenderer.invoke('get-hardware-acceleration'),
+  setHardwareAcceleration: (enabled: boolean) => ipcRenderer.invoke('set-hardware-acceleration', enabled),
+  relaunchApp: () => ipcRenderer.invoke('relaunch-app'),
+
   // ── General settings ──
   updateGeneralSettings: (settings: { startAtLogin?: boolean; keepInTray?: boolean }) => {
     ipcRenderer.send('update-general-settings', settings)

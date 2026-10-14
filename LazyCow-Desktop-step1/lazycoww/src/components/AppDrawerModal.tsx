@@ -1,5 +1,13 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { motion } from 'motion/react';
+import { usePrefersReducedMotion } from '../hooks/usePrefersReducedMotion';
+import {
+    SPRING_ENTER,
+    FADE_ENTER,
+    BACKDROP_ENTER,
+    MODAL_OFFSET_Y,
+} from '../utils/motion';
 import { recordAppUsage, getFrequentlyUsedApps } from '../utils/appUsage';
 import {
     readHiddenSet,
@@ -64,6 +72,7 @@ export const AppDrawerModal: React.FC<AppDrawerModalProps> = ({
 
     const scrollRef = useRef<HTMLDivElement>(null);
     const backdrop = readBackdrop();
+    const reducedMotion = usePrefersReducedMotion();
 
     // Effective hidden check: an explicit hidden entry wins; an explicit
     // visible entry wins; otherwise the app's `system` flag decides.
@@ -276,10 +285,23 @@ export const AppDrawerModal: React.FC<AppDrawerModalProps> = ({
     return createPortal(
         <div className="fixed inset-0 z-[300] flex items-center justify-center">
             {/* Backdrop */}
-            <div className={`absolute inset-0 ${backdropClass}`} onClick={onCancel} />
+            <motion.div
+                className={`absolute inset-0 ${backdropClass}`}
+                onClick={onCancel}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={reducedMotion ? FADE_ENTER : BACKDROP_ENTER}
+            />
 
             {/* Modal */}
-            <div className="relative bg-card border border-border rounded-2xl shadow-2xl w-full max-w-[900px] mx-4 h-[600px] max-h-[85vh] flex flex-col overflow-hidden">
+            <motion.div
+                className="relative bg-card border border-border rounded-2xl shadow-2xl w-full max-w-[900px] mx-4 h-[600px] max-h-[85vh] flex flex-col overflow-hidden"
+                initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: MODAL_OFFSET_Y }}
+                animate={reducedMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+                exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: MODAL_OFFSET_Y }}
+                transition={reducedMotion ? FADE_ENTER : SPRING_ENTER}
+            >
                 {/* Header — search, refresh, close */}
                 <div className="p-4 border-b border-border flex items-center gap-2 shrink-0">
                     <div className="relative flex-1">
@@ -480,7 +502,7 @@ export const AppDrawerModal: React.FC<AppDrawerModalProps> = ({
                         </>
                     )}
                 </div>
-            </div>
+            </motion.div>
 
             {showHidden && apps !== null && (
                 <HiddenAppsModal

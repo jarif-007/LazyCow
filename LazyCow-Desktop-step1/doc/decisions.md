@@ -400,4 +400,33 @@ Append-only. Never delete. Each entry: date, decision, alternatives, why, conseq
   - The rule from the Apple file we're adopting: no bounce on dialogs, menus, or informational surfaces. Bounce only on (a) drag-release, (b) explicit success celebration, (c) the hover lift on ShortcutCard where momentum is the user's own cursor arriving.
   - We do NOT adopt Apple's material system, fonts, or vibrational text-over-blur practices. Windows Fluent has its own answers; use those.
 - **Status:** active
-  
+
+## 2026-10-15 — Modal entrance uses translateY, not scale
+- **Decision:** The motion layer's modal entrance is an 8px upward slide (`y: 8 → 0`) plus opacity fade. Not a scale-in from 0.96.
+- **Alternatives:**
+  - `scale: 0.96 → 1` (the original Phase 1 plan). Tried; produced visibly choppy animations when hardware acceleration was OFF. Scale forces Chromium to resample the entire modal layer every frame under software rendering; translate is a cheap blit.
+  - `scale` only when HW accel is on, `translateY` when off. Rejected — branches the animation primitive on a runtime setting, doubles the testing surface, and forces `usePrefersReducedMotion` and `useHardwareAcceleration` to be read in every animated surface. Not worth the complexity when translateY works well in both.
+  - Opacity-only (no transform). Rejected as the default — motion is one of Phase 1's goals and pure fade loses the "arrived" feel. Kept as the reduced-motion fallback.
+- **Why:** The visual difference between a 4% scale and an 8px translate is imperceptible to users at modal size. The performance difference under software rendering is large — scale is the more expensive primitive and it showed. Picking the cheaper primitive that feels identical is the correct trade.
+- **Consequence:**
+  - `MODAL_SCALE_FROM = 0.96` in `src/utils/motion.ts` replaced by `MODAL_OFFSET_Y = 8`.
+  - AppDrawerModal's `initial` / `animate` / `exit` use `y` instead of `scale`.
+  - This is now the default modal entrance primitive for all Phase 1 surfaces. Small popovers (PositionDropdown, HiddenAppsModal) may still use scale where the origin effect matters — that's a follow-up decision, not decided here.
+- **Status:** active
+
+## 2026-10-15 — Hardware acceleration is a user toggle, default OFF
+- **Decision:** `app.disableHardwareAcceleration()` is no longer called unconditionally. A `preferences.json` in `userData` carries `hardwareAcceleration` (default `false`). The renderer exposes the toggle in Settings → General. Changing it requires an app restart — the value is read synchronously at module load, before `app.whenReady()`, and applied via `app.disableHardwareAcceleration()` only when the preference is `false`.
+- **Supersedes:** The 2026-10-06 unconditional `disableHardwareAcceleration()` call. That decision is not undone; it's been promoted from hardcoded policy to a user preference.
+- **Alternatives:**
+  - Keep it unconditional (per `context.md` rule 12's letter). Rejected — rule 12 explicitly allows a user-facing toggle. The affected GPU class (frozen regions, colour tints, broken ClearType) is real but not universal. Making everyone pay the software-rendering tax to help one GPU class is the wrong default.
+  - Default ON, users opt out. Tried this session; choppy UI on the affected machine. The "get the smooth default" instinct is correct in the abstract, but on a Windows-only app targeting a real hardware class, the affected machines are the ones that benefit most from the safe default. Default OFF matches the app's historical behaviour and its user base.
+  - Apply without restart. Rejected — `disableHardwareAcceleration()` must be called before `app.whenReady()`; Chromium has already initialised its compositor by the time the setting could reach the renderer. A restart is a genuine hard requirement, not a shortcut.
+- **Why:** The design goal is "an app that doesn't frustrate the user." Software rendering makes lists, cards, and scrolling perfectly smooth (they're already CSS-transition-based, no per-frame resampling); it only hurts animations using the expensive scale primitive. Flipping the default OFF and switching modal entrances to translateY gives us the best of both — smooth everywhere, no toggle dance, GPU users can opt in.
+- **Consequence:**
+  - `electron/preferences.ts` (new) — synchronous read/write helpers for `userData/preferences.json`.
+  - `electron/main.ts` — reads preferences at module load; calls `app.disableHardwareAcceleration()` only when the preference is `false`. IPC: `get-hardware-acceleration`, `set-hardware-acceleration`, `relaunch-app`.
+  - `electron/preload.ts` + `electron/electron-env.d.ts` — three new bridges.
+  - `src/pages/Settings.tsx` + `src/components/SettingsGeneral.tsx` — new toggle + "Restart required" banner when `current !== boot`.
+  - Dev-mode relaunch was broken — `app.relaunch()` kills the Electron binary, `vite-plugin-electron` sees the child exit and shuts down the Vite server, and the new Electron process loads a dead URL. Fix: in dev, spawn a detached `npm run dev` after a 2s port-release delay and `app.exit(0)`. Production keeps `app.relaunch()`.
+  - `context.md` rule 12 should be amended at the next doc-sync — the "user-facing toggle" it references now exists; the "never remove the GPU workaround" instruction is satisfied by keeping it as the default-off state.
+- **Status:** active

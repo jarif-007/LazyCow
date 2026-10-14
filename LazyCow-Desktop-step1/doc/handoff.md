@@ -1,8 +1,8 @@
 # LazyCow — Handoff
 
 Last updated: 2026-10-15
-Last commit: fa993de
-Working tree: clean. Session 12 App Drawer committed in five commits (`e30c497` backend, `bdce23d` frontend, `9f196fe` docs checkpoint, `e2675e9` handoff header, `fa993de` journal stubs).
+Last commit: <PASTE-HEAD-HASH-AFTER-COMMIT>
+Working tree: clean after commit. Session 13 = motion pilot + HW accel toggle (this commit).
 
 ## §1 Current Focus
 Session 12 built the App Drawer — the "Select App" modal for `launch_app`
@@ -54,6 +54,25 @@ Other open candidates in `missions.md`:
   in `AppDrawerModal` (localStorage is persistence only). Backdrop setting
   in Settings → Appearance. UWP skip in `useActionValidation` and
   `Library` pre-flight. `scrollbar-thin-alpha` utility.
+
+### Done & verified this session (Session 13)
+- **Design polish Phase 1 pilot** — `motion` installed (v14). AppDrawerModal
+  entrance animation: backdrop fade + 8px upward slide (`translateY`, not
+  `scale` — scale resamples the layer every frame and looked choppy under
+  software rendering). Spring bounce 0, 300ms enter / 200ms exit. Reduced-
+  motion cross-fade via `usePrefersReducedMotion`. `AnimatePresence` in
+  `ActionValueInput.tsx` owns the mount/unmount so exit plays. Verified
+  end-to-end with HW accel off.
+- **Hardware acceleration toggle** — `preferences.json` in `userData`, read
+  synchronously at module load (before `app.whenReady()`). Default OFF,
+  matching the app's historical behaviour and the affected GPU class. IPC
+  trio: `get-hardware-acceleration` (returns `{ current, boot }`),
+  `set-hardware-acceleration`, `relaunch-app`. UI in Settings → General with
+  a "Restart required" banner + Restart Now link.
+- **Dev-mode relaunch fix** — `app.relaunch()` alone killed the Vite dev
+  server and left a blank Electron window. Dev path now spawns a detached
+  `npm run dev` after a 2s delay and exits the current process. Production
+  path keeps `app.relaunch()`.
 
 ### Done in code — manual runtime verification pending
 - Full hotkey flow (Session 11).
@@ -139,7 +158,7 @@ Recent commits (most recent first):
 - `5af414d` perf(renderer): cap splash-screen wait at 1.5s to survive slow/offline font loads
 
 ### §5-PENDING (in flight — cleared on confirmation)
-- (nothing pending — Session 12 is committed. Design polish Phase 1 is the next session's scope, tracked in `missions.md`.)
+- (nothing pending — Session 13 motion pilot + HW accel toggle verified end-to-end and committed.)
 
 ## §6 Bootstrap order
 1. electron/main.ts, electron/preload.ts, electron/electron-env.d.ts, electron/windowLayout.ts

@@ -1,8 +1,19 @@
 import { app, BrowserWindow, ipcMain, nativeTheme, shell, globalShortcut, Tray, Menu, nativeImage, systemPreferences, dialog, Notification } from 'electron'
 
-// Workaround for GPU driver incompatibilities causing visual glitches on some laptops.
-// Forces Chromium to use CPU rendering instead of the Direct3D backend.
-app.disableHardwareAcceleration()
+// ── Hardware acceleration (user-configurable) ──
+// Historically we always called app.disableHardwareAcceleration() to fix
+// Chromium's Direct3D rendering on a class of laptops with incompatible
+// integrated GPUs. The cost: software rendering makes animations (the
+// Design polish Phase 1 motion layer) visibly choppy on capable machines.
+//
+// Now it's a user-facing toggle (context.md rule 12). Default true. Read
+// SYNCHRONOUSLY here — this is the only point in the process lifecycle
+// where hardware acceleration can still be disabled. Requires restart.
+const bootPreferences = readPreferencesSync()
+const hardwareAccelerationEnabled = bootPreferences.hardwareAcceleration ?? false
+if (!hardwareAccelerationEnabled) {
+    app.disableHardwareAcceleration()
+}
 import { exec, execFile } from 'child_process'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
@@ -12,6 +23,7 @@ import crypto from 'node:crypto'
 import { z } from 'zod'
 import contextMenu from 'electron-context-menu'
 import { arrangeWindows, snapshotHandles, type Placement, type PlacementResult } from './windowLayout'
+import { readPreferencesSync, writePreferences } from './preferences'
 
 // ── Native right-click context menu (copy / paste / cut / select all) ──
 // Without this, Electron shows nothing on right-click — which breaks a
@@ -111,6 +123,26 @@ ipcMain.handle('set-zoom-factor', (_event, factor: unknown) => {
   const clamped = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, n))
   win?.webContents.setZoomFactor(clamped)
   return clamped
+})
+
+// ── Hardware acceleration IPC ──
+// `boot` is what was actually applied this session (read at module load,
+// above). `current` is what's on disk right now. The renderer compares
+// them to decide whether to show "Restart required".
+ipcMain.handle('get-hardware-acceleration', () => {
+  const current = readPreferencesSync().hardwareAcceleration ?? false
+  return { current, boot: hardwareAccelerationEnabled }
+})
+
+ipcMain.handle('set-hardware-acceleration', (_event, enabled: unknown) => {
+  if (typeof enabled !== 'boolean') return { ok: false }
+  writePreferences({ hardwareAcceleration: enabled })
+  return { ok: true }
+})
+
+ipcMain.handle('relaunch-app', () => {
+  app.relaunch()
+  app.exit(0)
 })
 
 app.on('before-quit', () => {

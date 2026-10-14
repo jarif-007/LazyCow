@@ -64,6 +64,10 @@ interface Window {
     getZoomFactor: () => Promise<number>
     setZoomFactor: (factor: number) => Promise<number>
     onZoomChanged: (callback: (factor: number) => void) => () => void
+    // ── Hardware acceleration ──
+    getHardwareAcceleration: () => Promise<{ current: boolean; boot: boolean }>
+    setHardwareAcceleration: (enabled: boolean) => Promise<{ ok: boolean }>
+    relaunchApp: () => Promise<void>
     // ── App Drawer ──
     listInstalledApps: () => Promise<InstalledAppForIPC[]>
     refreshInstalledApps: () => Promise<InstalledAppForIPC[]>
