@@ -1,8 +1,8 @@
 # LazyCow — Handoff
 
 Last updated: 2026-10-14
-Last commit: a3ece59
-Working tree: Session 12 App Drawer, uncommitted. Two commits pending — backend then frontend.
+Last commit: 9f196fe
+Working tree: clean. Session 12 App Drawer committed in three commits (`e30c497` backend, `bdce23d` frontend, `9f196fe` docs).
 
 ## §1 Current Focus
 Session 12 built the App Drawer — the "Select App" modal for `launch_app`
