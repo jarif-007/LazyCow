@@ -10,12 +10,14 @@ actions. This replaced the old Browse-to-.exe picker with an installed-apps
 grid: icons, live search, alphabet strip, custom apps, hide/unhide,
 backdrop setting.
 
-Status: **committed**. Five commits landed:
+Status: **committed**. Seven commits landed:
 - `e30c497` feat(electron): app drawer backend
 - `bdce23d` feat(builder): app drawer — modal, hide/custom management, backdrop setting
 - `9f196fe` docs: checkpoint — Session 12 app drawer + design direction
 - `e2675e9` docs: update handoff header to post-Session-12 state
 - `fa993de` docs: fill journal stubs for Session 12 commits
+- `ee94f9a` docs: reconcile handoff §1 and §5 with post-Session-12 state
+- `bf5bcbb` docs(onboarding): add handoff reconciliation sign-off rule + stale-handoff false-positive note
 
 Next arc: **Design polish Phase 1 (motion layer)** — springs on modals,
 cards, and drawer cells; anchored modal origins; reduced-motion respect.
@@ -123,6 +125,8 @@ Previously verified (still hold):
 Working tree: clean. Nothing uncommitted.
 
 Recent commits (most recent first):
+- `bf5bcbb` docs(onboarding): add handoff reconciliation sign-off rule + stale-handoff false-positive note
+- `ee94f9a` docs: reconcile handoff §1 and §5 with post-Session-12 state
 - `fa993de` docs: fill journal stubs for Session 12 commits (e30c497, bdce23d)
 - `e2675e9` docs: update handoff header to post-Session-12 state
 - `9f196fe` docs: checkpoint — Session 12 app drawer + design direction
