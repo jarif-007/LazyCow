@@ -1,7 +1,7 @@
 # LazyCow — Handoff
 
 Last updated: 2026-10-15
-Last commit: <BUMP-AFTER-COMMIT>
+Last commit: d87af72
 Working tree: ready to commit Surface 2 motion work.
 
 ## §1 Current Focus
