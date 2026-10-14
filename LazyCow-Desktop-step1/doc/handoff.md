@@ -1,34 +1,72 @@
 # LazyCow — Handoff
 
 Last updated: 2026-10-15
-Last commit: 2568539
-Working tree: clean.
+Last commit: <BUMP-AFTER-COMMIT>
+Working tree: ready to commit Surface 2 motion work.
 
 ## §1 Current Focus
-Session 13 completed the **Design polish Phase 1 pilot** — the motion
-layer's first surface — and, as a prerequisite, made **hardware
-acceleration** user-configurable.
+Session 14 covered three areas: a **data-loss fix** (storage durability
+under hard-kill), **Design polish Phase 1, Surface 2** (Library grid
+entrance stagger), and a **StrictMode removal** needed to make motion
+work at all in dev.
 
-Status: **committed** at `df96317`. Working tree clean.
+Status: storage fix committed at `1e38363`. Surface 2 motion work is
+about to land in the next commit.
 
 What landed:
-- `motion` v14 installed. App Drawer entrance is a backdrop fade + 8px
-  `translateY` slide (spring bounce 0, 300ms in / 200ms out). Chose
-  `translateY` over `scale` — scale resamples the modal layer every
-  frame under software rendering and looked choppy.
-- Reduced-motion support via `usePrefersReducedMotion`. Springs swap to
-  120ms opacity cross-fades when `prefers-reduced-motion: reduce`.
-- Hardware acceleration is now a user toggle (Settings → General).
-  Default OFF, matching the app's historical behaviour. `preferences.json`
-  in `userData`, read synchronously before `app.whenReady()`.
-- Dev-mode relaunch fixed — dev path spawns a detached `npm run dev`
-  instead of `app.relaunch()` (which killed the Vite server and left a
-  blank window).
+- **Data-loss fix** — Chromium's async `localStorage` writes could be
+  lost on a hard kill (Ctrl+C in dev, `taskkill /f`, power loss within
+  the ~1–5s flush window). Reproduced twice: create + Ctrl+C immediately
+  → lost; create + wait 3s + Ctrl+C → survived. Fix: mirror every
+  shortcut write to `userData/shortcuts.json` via a synchronous IPC call
+  (`fs.writeFileSync`). On Library mount, if `localStorage` is empty but
+  the disk file has data, we restore. Files: `electron/main.ts` (2 IPC
+  handlers), `electron/preload.ts` (2 bridges), `electron/electron-env.d.ts`
+  (2 declarations), `src/utils/shortcutStorage.ts` (new),
+  `src/pages/Library.tsx`, `src/pages/Builder.tsx`.
+- **Design polish Phase 1, Surface 2** — Library grid entrance stagger.
+  Each card fades (0→1) + slides (y: 8→0) on mount. Values:
+  `duration: 0.5, delay: (Math.min(index, 8)) * 0.15` per card. Reduced
+  motion drops the delay and swaps to a 120ms fade. Files:
+  `src/pages/Library.tsx`, `src/components/ShortcutCard.tsx`. Verified:
+  cards appear one after another on Library mount; delete does not
+  re-trigger; search does not re-trigger; reduced-motion cross-fade
+  works under DevTools emulation.
+- **React.StrictMode removed** — `src/main.tsx`. React 18's dev-mode
+  double-mount eats motion's entrance animations: the first mount starts
+  the animation, the synthetic remount sees the element at final state
+  and doesn't replay. Removing StrictMode makes dev behave like prod.
 
-Next arc: **Design polish Phase 1, Surface 2**. Recommended target —
-Library grid entrance stagger (fade + slide-in with ~30ms per card).
-Alternative candidates listed in the discussion below the pilot's
-checkpoint. Decision pending.
+Also confirmed earlier this session:
+- `will-quit` handler reverted to its pre-incident simple form. The
+  earlier `event.preventDefault() + flushStorageData() + app.exit(0)`
+  version was an anti-pattern that skipped Chromium's own flush. Never
+  reintroduce it.
+- `relaunch-app` uses `app.quit()`, not `app.exit(0)` — the latter is a
+  hard kill that skips the flush.
+- Hard-kill shutdown handlers can't be relied on in dev at all —
+  `vite-plugin-electron` force-kills the Electron child on Ctrl+C. The
+  disk mirror is the only mechanism that closes this class of bug.
+
+**Pitfall recorded (motion):** `motion`'s parent-driven `staggerChildren`
+is bypassed when a child declares its own `animate` prop. The delay must
+live inside the child's variant `transition`, not on the grid container.
+The pilot's initial Surface 2 patch had this wrong and the stagger
+silently did nothing.
+
+Next arc options:
+1. **Surface 3** — App Drawer cell stagger (generalizes Surface 2's
+   pattern to the drawer's app grid).
+2. **Progress ring spring settle** — when a shortcut completes, the
+   progress ring arrives at 100% with a spring. No bounce (informational
+   surface).
+3. **Modal exits** — currently only AppDrawerModal has an exit animation.
+   DeleteModal / ConfirmDeleteModal / ConfirmSecuredModal appear and
+   disappear instantly.
+4. **Small-popover trigger-origin anchoring** — deferred from the pilot.
+   PositionDropdown, HiddenAppsModal from the eye icon, Confirm Delete
+   from the trash. Only worth it for small surfaces.
+5. Storage polish / cleanups listed in `missions.md`.
 
 Other open candidates in `missions.md`:
 1. Manual runtime verification of Sessions 8, 10, 11 (still not done).
@@ -62,7 +100,7 @@ Other open candidates in `missions.md`:
   in Settings → Appearance. UWP skip in `useActionValidation` and
   `Library` pre-flight. `scrollbar-thin-alpha` utility.
 
-### Done & verified this session (Session 13)
+### Done & verified (Session 13)
 - **Design polish Phase 1 pilot** — `motion` installed (v14). AppDrawerModal
   entrance animation: backdrop fade + 8px upward slide (`translateY`, not
   `scale` — scale resamples the layer every frame and looked choppy under
@@ -81,6 +119,31 @@ Other open candidates in `missions.md`:
   `npm run dev` after a 2s delay and exits the current process. Production
   path keeps `app.relaunch()`.
 
+### Done & verified (Session 14)
+- **Data-loss fix (disk mirror)** — `src/utils/shortcutStorage.ts` (new)
+  with `persistShortcuts` / `readShortcuts` / `recoverShortcutsFromDiskIfEmpty`.
+  Two new IPC handlers in `main.ts` (`read-shortcuts-from-disk`,
+  `write-shortcuts-to-disk`) with `fs.writeFileSync`. Preload + type
+  declarations added. All six shortcut-write call sites swapped from
+  `localStorage.setItem` to `persistShortcuts`. Library mount runs
+  `recoverShortcutsFromDiskIfEmpty` before `refreshShortcuts`.
+  **Verified:** create shortcut → Ctrl+C immediately → restart → shortcut
+  present. Reproduced the failure twice before the fix, confirmed fixed
+  after.
+- **`will-quit` reverted** — back to `globalShortcut.unregisterAll()`
+  only. The prior version (with `event.preventDefault()` +
+  `flushStorageData()` + `app.exit(0)`) broke Chromium's own flush and
+  caused a data-loss incident. Do not reintroduce.
+- **`relaunch-app` uses `app.quit()`** — `app.exit(0)` was a hard kill
+  that skipped the graceful shutdown path.
+- **Surface 2 (Library grid entrance stagger)** — cards fade + slide in
+  on mount. Values: `duration: 0.5`, `delay: min(index, 8) * 0.15`.
+  Reduced motion swaps to a 120ms fade with no delay.
+  **Verified manually:** visible stagger, delete does not re-trigger,
+  search does not re-trigger, reduced-motion cross-fade confirmed.
+- **`React.StrictMode` removed** from `src/main.tsx`. Required for motion
+  to fire entrance animations in dev.
+
 ### Done in code — manual runtime verification pending
 - Full hotkey flow (Session 11).
 - Blocked Triggers polish (Session 11).
@@ -90,8 +153,8 @@ Other open candidates in `missions.md`:
   no formal end-to-end test matrix captured yet.
 
 ### Not started
-- **Design polish Phase 1** — motion layer (springs, anchored modal
-  origins, interruptibility, reduced-motion). Next session's focus.
+- Design polish Phase 1, surfaces 3+ — drawer cell stagger, progress
+  ring settle, modal exits, small-popover trigger-origin anchoring.
 - Design polish Phases 2–6 — visual reset, typography, hero theme,
   micro-interactions, copy pass.
 - Canonical key module refactor.
@@ -119,12 +182,14 @@ Other open candidates in `missions.md`:
   windowLayout C# block. Source is correct; built artifact is not.
 
 ## §3 Last Verified Test
-Session 12 — `npx tsc --noEmit` clean. App drawer verified interactively:
-discovery returns 80 apps across all four sources; UWP apps (Calculator,
-Command Palette) launch and show icons; shell folders (This PC, Recycle
-Bin, Control Panel, File Explorer, Settings, Network) launch; hide /
-unhide / add custom / remove custom all work; frequently-used row updates
-on hide; backdrop setting switches to blur.
+Session 14 — `npx tsc --noEmit` clean. Surface 2 verified manually:
+cards appear one after another with a visible stagger on Library mount;
+reduced-motion emulation (DevTools → Rendering → prefers-reduced-motion)
+collapses to a shared 120ms fade with no slide; delete removes a card
+instantly without re-triggering the stagger on remaining cards; search
+filters without replaying; tab switch back to Library replays the reveal.
+Storage fix re-verified: create → Ctrl+C immediately → restart → shortcut
+present.
 
 Previously verified (still hold):
 - Engine + claim-the-zone on 1920×1080 @ 125% — 4-app quad grid ✅
@@ -132,6 +197,8 @@ Previously verified (still hold):
 - Broken Path Fix UX — Fix Paths lands on the broken action ✅
 - Chromium multi-URL layout — pre-snapshot + title matching ✅
 - Cold-start diagnostic closed — not reproduced on warm restart ✅
+- HW accel toggle round-trips through Settings → General; motion feels
+  smooth with HW accel off (software rendering + translateY primitive) ✅
 
 ## §4 Open Questions
 - **`Builder.handleSave` classification.** Should it use the shared
@@ -145,12 +212,30 @@ Previously verified (still hold):
 - **Design polish — hero theme.** Confirm Windows Fluent (system accent)
   as the identity; Coffee / Ocean / Forest become user options, not
   co-equal designs. Needs a decision before Phase 2.
+- **Migration to `electron-store`?** Considered and rejected for now —
+  our hand-rolled `shortcutStorage.ts` + IPC is ~60 lines total (not the
+  ~40 I initially estimated), and electron-store wouldn't eliminate the
+  IPC layer or the recovery logic. The library's atomic-write protection
+  is real but not needed for our failure mode. Revisit only if the
+  hand-rolled version grows. Do **not** do this in a dedicated commit
+  unless the hand-rolled version becomes painful.
 
 ## §5 Uncommitted (mirrors git status)
 
-Working tree: clean. Nothing uncommitted.
+Working tree: **dirty** — ready to commit Surface 2.
+
+Modified:
+- `src/pages/Library.tsx`
+- `src/components/ShortcutCard.tsx`
+- `src/main.tsx`
+- `doc/handoff.md`
 
 Recent commits (most recent first):
+- `1e38363` fix(storage): mirror shortcuts to disk — survives hard kills
+- `feb8473` fix(electron): flush localStorage on relaunch; reconcile handoff
+- `2568539` docs: fill journal stub for Session 13 pilot; reconcile handoff
+- `df96317` feat(motion): Phase 1 pilot + hardware acceleration toggle
+- `2cc36ba` docs: reconcile handoff with post-onboarding-checkpoint state
 - `bf5bcbb` docs(onboarding): add handoff reconciliation sign-off rule + stale-handoff false-positive note
 - `ee94f9a` docs: reconcile handoff §1 and §5 with post-Session-12 state
 - `fa993de` docs: fill journal stubs for Session 12 commits (e30c497, bdce23d)
@@ -158,23 +243,11 @@ Recent commits (most recent first):
 - `9f196fe` docs: checkpoint — Session 12 app drawer + design direction
 - `bdce23d` feat(builder): app drawer — modal, hide/custom management, backdrop setting
 - `e30c497` feat(electron): app drawer backend — discovery, UWP, shell folders, test-launch
-- `a3ece59` docs: checkpoint — Session 11 hotkey UX + blocked triggers + zoom
-- `9e0cf2a` feat(settings): blocked triggers polish + page zoom
-- `ba8e6cd` feat(hotkeys): Test Hotkey redesign — user-paced Verify flow
-- `ab8fdba` feat(hotkeys): recorder rewrite + canonical key vocabulary
-- `5af414d` perf(renderer): cap splash-screen wait at 1.5s to survive slow/offline font loads
 
 ### §5-PENDING (in flight — cleared on confirmation)
-- **Data-loss fix** — Chromium's async localStorage writes were lost on
-  hard-kill (Ctrl+C in dev, `app.exit(0)`, tray quit). Reproduced
-  2026-10-15: duplicated shortcuts, killed dev server, all shortcuts gone.
-  Fix: `session.flushStorageData()` before every exit path (`will-quit`,
-  `SIGTERM`, `relaunch-app`); dev-mode `relaunch-app` now spawns a
-  detached `npm run dev` and flushes before exiting. Files:
-  `electron/main.ts`.
-- Design polish Phase 1, Surface 2 — Library grid entrance stagger
-  (paused until shortcuts are re-created after the 2026-10-15 incident).
-  Files: `src/pages/Library.tsx`, `src/components/ShortcutCard.tsx`.
+- Design polish Phase 1, Surface 2 — Library grid entrance stagger.
+  Verified end-to-end. About to commit. Files: `src/pages/Library.tsx`,
+  `src/components/ShortcutCard.tsx`, `src/main.tsx`.
 
 ## §6 Bootstrap order
 1. electron/main.ts, electron/preload.ts, electron/electron-env.d.ts, electron/windowLayout.ts
@@ -183,7 +256,7 @@ Recent commits (most recent first):
 4. src/components/ActionSequence.tsx, src/components/ActionSequence/SortableActionCard.tsx
 5. src/components/WindowLayout/WindowLayoutPanel.tsx, src/components/WindowLayout/PositionDropdown.tsx
 6. src/components/SettingsBlockedTriggers.tsx, src/components/BlockedTriggerList.tsx, src/components/ComboBuilder.tsx, src/hooks/useHotkeyRecorder.ts
-7. src/components/AppDrawerModal.tsx, src/components/HiddenAppsModal.tsx, src/utils/appVisibility.ts, src/utils/appUsage.ts (Session 12 additions)
+7. src/components/AppDrawerModal.tsx, src/components/HiddenAppsModal.tsx, src/utils/appVisibility.ts, src/utils/appUsage.ts, src/utils/shortcutStorage.ts (Session 12/14 additions)
 8. package.json, tsconfig.json, vite.config.ts (only if needed)
 
 ## §7 Update rules

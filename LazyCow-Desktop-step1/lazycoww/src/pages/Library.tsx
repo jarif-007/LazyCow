@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { motion } from 'motion/react';
 import { SavedShortcut, isUwpPath } from '../types/actions';
 import { ShortcutCard } from '../components/ShortcutCard';
 import { DeleteModal } from '../components/DeleteModal';
@@ -393,20 +392,12 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
         </div>
       )}
 
-      <motion.div
-        className={`grid grid-cols-1 gap-gutter ${gridCols === 2 ? 'md:grid-cols-2' : gridCols === 3 ? 'md:grid-cols-2 lg:grid-cols-3' : 'md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
-          }`}
-        initial="hidden"
-        animate="visible"
-        variants={{
-          hidden: {},
-          visible: {
-            transition: reducedMotion
-              ? { staggerChildren: 0, delayChildren: 0 }
-              : { staggerChildren: 0.03, delayChildren: 0.02 },
-          },
-        }}
-      >
+      {/* Cards animate themselves on mount (see ShortcutCard's entrance
+          variants). The parent is a plain div — motion's `staggerChildren`
+          can't cap the delay and would give card 30 a 900ms wait; each
+          card owns its own delay, capped at index 8. */}
+      <div className={`grid grid-cols-1 gap-gutter ${gridCols === 2 ? 'md:grid-cols-2' : gridCols === 3 ? 'md:grid-cols-2 lg:grid-cols-3' : 'md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
+        }`}>
         {filtered.map((card, index) => (
           <ShortcutCard
             key={card.id}
@@ -430,7 +421,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
             reducedMotion={reducedMotion}
           />
         ))}
-      </motion.div>
+      </div>
 
       {renameId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">

@@ -281,3 +281,10 @@ Format:
 - **Files:** (fill in)
 - **Verified:** (fill in)
 - **Commit:** feb8473
+
+## 2026-10-15 — fix(storage): mirror shortcuts to disk — survives hard kills
+- **Issue:** (fill in)
+- **Solution:** (fill in)
+- **Files:** (fill in)
+- **Verified:** (fill in)
+- **Commit:** 1e38363

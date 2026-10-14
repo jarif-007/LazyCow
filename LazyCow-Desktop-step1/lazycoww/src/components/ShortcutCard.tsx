@@ -58,15 +58,17 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
   const isRunning = execState.status === 'running';
   const showLog = execState.status === 'running' || execState.status === 'success' || execState.status === 'error' || execState.status === 'cancelled';
 
-  // Stagger is capped at index 8 — card #9 waits the same as #8. Prevents
-  // a 30-card library from taking 900ms to reveal. The variants are defined
-  // once per card so the parent's `staggerChildren` on the grid can drive
-  // them; `custom` carries the reduced-motion decision into the variant.
+  // Each card owns its own entrance delay — see Library.tsx for why the
+  // parent doesn't drive a stagger. Capped at index 8 so a 30-card Library
+  // finishes its reveal in ~240ms + the spring duration, not seconds.
+  // Reduced motion drops the delay and swaps the spring for a plain fade.
+  const cappedStaggerIndex = Math.min(staggerIndex, 8);
   const entranceVariants = {
     hidden: reducedMotion ? { opacity: 0 } : { opacity: 0, y: MODAL_OFFSET_Y },
-    visible: reducedMotion ? { opacity: 1 } : { opacity: 1, y: 0 },
+    visible: reducedMotion
+      ? { opacity: 1, transition: FADE_ENTER }
+      : { opacity: 1, y: 0, transition: { ...SPRING_ENTER, duration: 0.5, delay: cappedStaggerIndex * 0.15 } },
   };
-  const entranceTransition = reducedMotion ? FADE_ENTER : SPRING_ENTER;
 
   return (
     <motion.div
@@ -74,8 +76,6 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
       initial="hidden"
       animate="visible"
       variants={entranceVariants}
-      transition={entranceTransition}
-      custom={staggerIndex}
     >
       {/* Header */}
       <div className="flex justify-between items-start">
