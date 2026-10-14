@@ -430,3 +430,70 @@ Append-only. Never delete. Each entry: date, decision, alternatives, why, conseq
   - Dev-mode relaunch was broken — `app.relaunch()` kills the Electron binary, `vite-plugin-electron` sees the child exit and shuts down the Vite server, and the new Electron process loads a dead URL. Fix: in dev, spawn a detached `npm run dev` after a 2s port-release delay and `app.exit(0)`. Production keeps `app.relaunch()`.
   - `context.md` rule 12 should be amended at the next doc-sync — the "user-facing toggle" it references now exists; the "never remove the GPU workaround" instruction is satisfied by keeping it as the default-off state.
 - **Status:** active
+
+## 2026-10-15 — Shortcuts mirror to disk; localStorage is not durable storage
+- **Decision:** Every write to `lazycow-shortcuts` also writes the same list to `userData/shortcuts.json` via a synchronous IPC call (`fs.writeFileSync`). On Library mount, if `localStorage` is empty but the disk file has data, we restore from disk into `localStorage` and return the list. New module `src/utils/shortcutStorage.ts` owns this — `persistShortcuts` / `readShortcuts` / `recoverShortcutsFromDiskIfEmpty`. All six write call sites in `Library.tsx` and `Builder.tsx` route through `persistShortcuts`.
+- **Supersedes:** The implicit "localStorage is the storage" model that predated Session 14.
+- **Alternatives:**
+  - **Flush localStorage before exit.** Tried twice this session (`will-quit` handler with `event.preventDefault() + flushStorageData() + app.exit(0)`; then `flushStorageData()` before `app.exit(0)` in the relaunch handler). Both failed because vite-plugin-electron hard-kills the Electron child on Ctrl+C — no shutdown hook runs, `flushStorageData()` never fires. Then the "safe" version — `app.quit()` instead of `app.exit(0)` — fixed Ctrl+C but not `taskkill /f`, power loss, or antivirus force-quarantine. The class of bug can't be closed by shutdown handlers.
+  - **Migrate to `electron-store`.** Considered and rejected — the library wouldn't eliminate the IPC layer or the recovery logic (both are ours regardless), and it introduces a dependency on a package with a history of API changes across versions. The atomic-write protection it offers isn't the failure mode we hit.
+  - **Do nothing, accept the risk.** Rejected — reproduced twice in one session with cold-cache timing. That's not a rare bug, that's a bug that hits any user who creates a shortcut and closes the app quickly.
+- **Why:** `localStorage` is a browser cache, not a durable database. Chromium flushes it asynchronously (batched within a ~1–5s window). Any hard kill — Ctrl+C in dev, Task Manager force-quit, power loss, forced Windows Update — loses pending writes. User-authored data (shortcuts) can't sit on a mechanism that silently discards writes. `fs.writeFileSync` runs on the main process synchronously — the write either succeeds before the IPC reply goes back, or the process died before the call started. No middle ground.
+- **Consequence:**
+  - `electron/main.ts` — two new IPC handlers (`read-shortcuts-from-disk`, `write-shortcuts-to-disk`).
+  - `electron/preload.ts` + `electron/electron-env.d.ts` — two new bridges.
+  - `src/utils/shortcutStorage.ts` (new) — `persistShortcuts`, `readShortcuts`, `recoverShortcutsFromDiskIfEmpty`.
+  - `src/pages/Library.tsx` — six `localStorage.setItem('lazycow-shortcuts', ...)` calls replaced with `persistShortcuts(...)`; new mount-time effect calls `recoverShortcutsFromDiskIfEmpty()` before `refreshShortcuts`.
+  - `src/pages/Builder.tsx` — `handleSave` write replaced with `persistShortcuts(...)`.
+  - Other localStorage keys (settings, blocked triggers, app visibility, etc.) are **not** mirrored. They're all low-stakes — losing a theme preference or a hidden-app flag is annoying, not data loss. Only user-authored content gets the disk treatment.
+- **Status:** active
+
+## 2026-10-15 — Exit paths use `app.quit()`, never `app.exit(0)`
+- **Decision:** Every LazyCow-controlled shutdown path calls `app.quit()` and lets Chromium run its graceful shutdown sequence (which flushes `localStorage` on the way out). `app.exit(0)` is never called from any handler that could fire after user data might be pending.
+- **Supersedes:** The `app.exit(0)` in the original `relaunch-app` handler (introduced in the HW-accel work). That handler killed the process before Chromium could flush, which caused the 2026-10-15 data-loss incident when the user clicked "Restart Now" within seconds of creating shortcuts.
+- **Alternatives:**
+  - `app.exit(0)` — Electron's hard-kill API. Skips `before-quit`, `will-quit`, and Chromium's own storage flush entirely. Rejected after the incident.
+  - `app.exit(0)` with an explicit `flushStorageData()` first — tried; vite-plugin-electron can still yank the process mid-flush. Not reliable.
+  - `process.exit(0)` — even worse; skips Electron's lifecycle entirely.
+- **Why:** `app.quit()` is the graceful path. Chromium flushes pending writes, fires both quit events, and lets handlers clean up. `app.exit(0)` is the "I know what I'm doing" API — and we didn't. The disk mirror means `localStorage` flushing isn't load-bearing anymore, but the graceful path is still strictly better than the hard-kill path for anything else in the shutdown chain.
+- **Consequence:**
+  - `relaunch-app` in `electron/main.ts` — `app.quit()` at the end, not `app.exit(0)`. Dev path still spawns a detached `npm run dev` before quitting (so the Vite server is replaced cleanly), but the exit is graceful.
+  - Any future handler that needs to terminate the app should call `app.quit()` and, if it needs a specific exit code, use `app.exit(code)` only after confirming nothing is pending. Default to `app.quit()`.
+- **Status:** active
+
+## 2026-10-15 — `will-quit` handler stays simple
+- **Decision:** `app.on('will-quit', ...)` does exactly one thing: `globalShortcut.unregisterAll()`. No `event.preventDefault()`. No `flushStorageData()`. No `app.exit(0)`.
+- **Supersedes:** The `will-quit` handler briefly added during Session 14's HW-accel work, which did `event.preventDefault() + await flushStorageData() + globalShortcut.unregisterAll() + app.exit(0)`. That handler **replaced Chromium's reliable flush with our async flush we couldn't guarantee**, and was a contributing factor to the data-loss incident.
+- **Alternatives:**
+  - `event.preventDefault()` + async flush + `app.exit(0)` — tried; the async flush has no timeout, so a hung flush hangs the quit. And the handler never runs at all in dev (vite-plugin-electron force-kills Electron first), so the whole structure was dead code that gave false confidence.
+  - Full graceful `event.preventDefault()` + `await` + `app.quit()` on completion — arguably correct but adds a failure mode (hang on flush) for zero benefit given the disk mirror makes localStorage flushing non-load-bearing.
+- **Why:** Chromium's own shutdown path handles the flush. Our job is to not interfere with it. The only thing we actually need to do at `will-quit` is unregister global shortcuts before the process exits — a synchronous cleanup that has no business being wrapped in `preventDefault()`.
+- **Consequence:**
+  - `app.on('will-quit', () => { globalShortcut.unregisterAll() })` — three lines, no async, no preventDefault.
+  - Do not add to this handler without a specific reason. If a future feature needs a cleanup at shutdown that can't be done earlier, it belongs in `before-quit` with a matching `event.preventDefault()` + completion-check, not in `will-quit`.
+- **Status:** active
+
+## 2026-10-15 — `React.StrictMode` removed from main.tsx
+- **Decision:** `src/main.tsx` renders `<App />` directly — no `<React.StrictMode>` wrapper.
+- **Alternatives:**
+  - Keep StrictMode on — rejected. React 18's dev-mode StrictMode deliberately double-mounts every component (mount → unmount → remount) to surface unsafe patterns. That double-mount is fine for most code, but it silently eats `motion`'s entrance animations: the first mount starts the animation, then the synthetic remount sees the element at its `animate` final state and does not replay it. Every surface in Design polish Phase 1 animates on mount; StrictMode would make all of them invisible in dev.
+  - Keep StrictMode but work around the double-mount per animated surface — rejected as too invasive. Each surface would need its own `key` bump, its own `useEffect` to force `animate` on the second mount, or an `AnimatePresence` boundary. That's a lot of ceremony to preserve a dev-only check that's already served its purpose (catching unsafe patterns) over 13 prior sessions.
+- **Why:** The tradeoff is: StrictMode's dev-only safety checks vs. the entire motion layer being invisible during development. Motion is now a first-class feature of the app — its dev experience matters more than StrictMode's warnings about code we've already vetted.
+- **Consequence:**
+  - `src/main.tsx` — `ReactDOM.createRoot(...).render(<App />)`.
+  - Production was never affected by this — StrictMode's double-mount only happens in dev. Behaviour between dev and prod now matches, which is arguably a win in itself.
+  - If a future session wants StrictMode back, the honest answer is "first prove the motion layer works with the workarounds, then re-add." Not yet warranted.
+- **Status:** active
+
+## 2026-10-15 — Motion `staggerChildren` pitfall: put the delay on the child
+- **Decision:** When animating a grid or list where each child has its own entrance animation, the stagger **must** live on each child as `variants.{visible}.transition.delay`, computed per-index. Do not rely on the parent container's `transition.staggerChildren`.
+- **Alternatives:**
+  - Parent `staggerChildren` + `variants` on the parent, children with no `initial`/`animate` — works only if children are pure motion wrappers with no per-child animation logic. Not what our `ShortcutCard` is; it has its own dynamic classNames, hover behavior, and needs the reduced-motion decision at the child level.
+  - Parent `staggerChildren` + children with only `variants` (no `initial`/`animate`) — motion propagates the parent's variant name to children if the children declare `variants` without their own animation props. This *should* work per the docs, but our first attempt gave every child `initial="hidden"` + `animate="visible"` (which are the props that opt the child out of parent orchestration) and the stagger silently did nothing. The failure mode is invisible — no console warning, no error, just every card appearing at once.
+  - `useEffect` + `setTimeout` per index to fake the stagger — rejected; loses the spring physics of the sibling animation, and the timing is fragile.
+- **Why:** Motion's parent-driven orchestration is convenient but has a specific opt-out rule that's easy to violate without noticing. The per-child `delay` approach is more code (one extra line per child) but is explicit, is debuggable, and can be capped (`Math.min(index, 8)`) so a long grid doesn't take seconds to reveal.
+- **Consequence:**
+  - `src/components/ShortcutCard.tsx` — `cappedStaggerIndex = Math.min(staggerIndex, 8)`; the `visible` variant carries `transition: { ...SPRING_ENTER, delay: cappedStaggerIndex * 0.15 }`. The parent Library grid is a plain `<div>` — no motion orchestration.
+  - **For every future surface:** if a grid needs stagger, follow this pattern. Compute delay per child. Cap it. Reduce-motion reduces the delay to zero and swaps the spring for a fade. Do not put `staggerChildren` on the parent and hope it works.
+  - The visible stagger for a 3-card grid lands as ~450ms of animation + 0.5s spring settle per card — feels intentional without holding the user up.
+- **Status:** active
