@@ -74,6 +74,9 @@ interface Window {
     testLaunchApp: (path: string) => Promise<{ ok: boolean; error?: string }>
     checkPathExists: (path: string) => Promise<boolean>
     selectPath: (type: 'app' | 'file' | 'folder') => Promise<string | null>
+    // ── Shortcut persistence (disk mirror) ──
+    readShortcutsFromDisk: () => Promise<{ ok: boolean; data: unknown[] }>
+    writeShortcutsToDisk: (list: unknown[]) => Promise<{ ok: boolean }>
     // ── Real execution + global hotkeys. Each `on*` returns an unsubscribe function. ──
     runShortcut: (shortcut: ShortcutForIPC) => Promise<ActionResult[]>
     testUrl: (url: string) => Promise<{ ok: boolean; error?: string }>

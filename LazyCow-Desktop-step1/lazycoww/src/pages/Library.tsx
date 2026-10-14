@@ -6,6 +6,7 @@ import { DeleteModal } from '../components/DeleteModal';
 import { ConfirmSecuredModal } from '../components/ConfirmSecuredModal';
 import { migrateShortcutsSecured, readSecuredDoublePressSeconds } from '../utils/security';
 import { usePrefersReducedMotion } from '../hooks/usePrefersReducedMotion';
+import { persistShortcuts, recoverShortcutsFromDiskIfEmpty } from '../utils/shortcutStorage';
 
 interface LibraryProps {
   setActiveTab: (tab: string) => void;
@@ -20,6 +21,20 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
   const [shortcuts, setShortcuts] = useState<SavedShortcut[]>(() =>
     JSON.parse(localStorage.getItem('lazycow-shortcuts') || '[]')
   );
+
+  // On mount: if localStorage is empty but the disk mirror has data,
+  // restore from disk. Covers the dev-mode hard-kill data-loss case.
+  useEffect(() => {
+    void recoverShortcutsFromDiskIfEmpty().then((recovered) => {
+      if (recovered) {
+        setShortcuts(recovered);
+        window.electronAPI?.syncHotkeys({
+          shortcuts: recovered.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured, windowLayout: s.windowLayout })),
+          securedDoublePressSeconds: readSecuredDoublePressSeconds(),
+        });
+      }
+    });
+  }, []);
 
   const [failedHotkeys, setFailedHotkeys] = useState<Set<string>>(new Set());
   // Map of shortcut ID → first broken action's ID.
@@ -39,7 +54,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
     // have it yet. Idempotent — running again is a no-op.
     const { shortcuts: loaded, changed } = migrateShortcutsSecured(raw);
     if (changed) {
-      localStorage.setItem('lazycow-shortcuts', JSON.stringify(loaded));
+      persistShortcuts(loaded);
     }
     setShortcuts(loaded);
     setFailedHotkeys(new Set());
@@ -281,7 +296,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
     }
     const updated = shortcuts.map((s) => s.id === renameId ? { ...s, name: renameValue.trim() } : s);
     setShortcuts(updated);
-    localStorage.setItem('lazycow-shortcuts', JSON.stringify(updated));
+    persistShortcuts(updated);
     setRenameId(null);
     setRenameError('');
   };
@@ -291,7 +306,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
     if (deleteId) {
       const updated = shortcuts.filter((s) => s.id !== deleteId);
       setShortcuts(updated);
-      localStorage.setItem('lazycow-shortcuts', JSON.stringify(updated));
+      persistShortcuts(updated);
       window.electronAPI?.syncHotkeys({
         shortcuts: updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured, windowLayout: s.windowLayout })),
         securedDoublePressSeconds: readSecuredDoublePressSeconds(),
@@ -317,7 +332,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
     };
     const updated = [duplicated, ...shortcuts];
     setShortcuts(updated);
-    localStorage.setItem('lazycow-shortcuts', JSON.stringify(updated));
+    persistShortcuts(updated);
     window.electronAPI?.syncHotkeys({
       shortcuts: updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured, windowLayout: s.windowLayout })),
       securedDoublePressSeconds: readSecuredDoublePressSeconds(),
@@ -332,7 +347,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
       s.id === id ? { ...s, secured: !s.secured } : s
     );
     setShortcuts(updated);
-    localStorage.setItem('lazycow-shortcuts', JSON.stringify(updated));
+    persistShortcuts(updated);
     window.electronAPI?.syncHotkeys({
       shortcuts: updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured, windowLayout: s.windowLayout })),
       securedDoublePressSeconds: readSecuredDoublePressSeconds(),
@@ -446,7 +461,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
             // secured=false flip from the all-safe prompt.
             const persisted = shortcuts.map((s) => s.id === updated.id ? updated : s);
             setShortcuts(persisted);
-            localStorage.setItem('lazycow-shortcuts', JSON.stringify(persisted));
+            persistShortcuts(persisted);
             window.electronAPI?.syncHotkeys({
               shortcuts: persisted.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured, windowLayout: s.windowLayout })),
               securedDoublePressSeconds: readSecuredDoublePressSeconds(),

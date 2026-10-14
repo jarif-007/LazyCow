@@ -140,18 +140,18 @@ ipcMain.handle('set-hardware-acceleration', (_event, enabled: unknown) => {
   return { ok: true }
 })
 
-ipcMain.handle('relaunch-app', async () => {
-  // Flush pending localStorage before killing the process. Chromium
-  // batches writes; app.exit(0) is a hard kill and would discard them.
-  // Same rationale as the will-quit handler below.
-  try {
-    await win?.webContents.session.flushStorageData()
-  } catch (err) {
-    console.warn('[relaunch] storage flush failed:', err)
-  }
-  // In dev, app.relaunch() alone kills the Vite server and leaves a
-  // blank window. Spawn a detached dev server instead.
+ipcMain.handle('relaunch-app', () => {
+  // Two rules for not losing localStorage on restart:
+  //   1. app.relaunch() schedules the new process — but ONLY in production,
+  //      because in dev the fresh electron would try to load a Vite server
+  //      we're about to kill.
+  //   2. app.quit() — NOT app.exit(0). app.exit is a hard kill that skips
+  //      will-quit AND Chromium's own storage flush, discarding any
+  //      localStorage writes that hadn't landed yet. app.quit() runs the
+  //      normal shutdown path, which flushes storage. This was the root
+  //      cause of the 2026-10-15 data-loss incident.
   if (process.env.VITE_DEV_SERVER_URL) {
+    // Dev mode: spawn a fresh dev pipeline that survives our exit.
     const cwd = process.env.APP_ROOT || process.cwd()
     setTimeout(() => {
       try {
@@ -167,11 +167,10 @@ ipcMain.handle('relaunch-app', async () => {
         console.warn('[relaunch] dev restart failed:', err)
       }
     }, 2000)
-    app.exit(0)
-    return
+  } else {
+    app.relaunch()
   }
-  app.relaunch()
-  app.exit(0)
+  app.quit()
 })
 
 app.on('before-quit', () => {
@@ -1907,10 +1906,36 @@ ipcMain.handle('select-path', async (_event, type: 'app' | 'file' | 'folder') =>
   return null
 })
 
-// The old `shortcutHasScript` / `DANGEROUS_EXTENSIONS` helpers were replaced
-// by the per-shortcut `secured` flag. The dangerous/extension logic now
-// lives in the renderer (`src/utils/danger.ts`) and is not consulted by
-// the main process at hotkey-fire time.
+// ──────────────────────────────────────────────
+// SHORTCUT PERSISTENCE (disk mirror)
+// ──────────────────────────────────────────────
+// Chromium's localStorage writes are async and can be lost on a hard kill
+// (Ctrl+C in dev mode hard-kills Electron via vite-plugin-electron). This
+// caused a real data-loss incident on 2026-10-15. The renderer mirrors
+// every shortcut write to a disk file synchronously via IPC; on startup,
+// if localStorage is empty but the file has data, we restore from it.
+const shortcutsFilePath = () => path.join(app.getPath('userData'), 'shortcuts.json')
+
+ipcMain.handle('read-shortcuts-from-disk', () => {
+  try {
+    const raw = fs.readFileSync(shortcutsFilePath(), 'utf8')
+    const parsed = JSON.parse(raw)
+    return { ok: true, data: Array.isArray(parsed) ? parsed : [] }
+  } catch {
+    return { ok: true, data: [] }
+  }
+})
+
+ipcMain.handle('write-shortcuts-to-disk', (_event, list: unknown) => {
+  try {
+    if (!Array.isArray(list)) return { ok: false }
+    fs.writeFileSync(shortcutsFilePath(), JSON.stringify(list, null, 2), 'utf8')
+    return { ok: true }
+  } catch (err) {
+    console.warn('[shortcuts-persistence] write failed:', err)
+    return { ok: false }
+  }
+})
 
 // ──────────────────────────────────────────────
 // GLOBAL HOTKEYS
@@ -2199,35 +2224,13 @@ ipcMain.on('sync-hotkeys', (_event, payload: unknown) => {
   }
 })
 
-// Flush pending localStorage writes to disk before the process exits.
-// Chromium batches localStorage writes and flushes asynchronously; a
-// hard kill (Ctrl+C in dev, app.exit(0), the tray Quit path) discards
-// any pending writes. Without this, a user who creates a shortcut and
-// closes the app within a few seconds loses the shortcut. Verified:
-// reproduced on 2026-10-15 — the "Fhuu" duplication session.
-app.on('will-quit', async (event) => {
-  if (win?.webContents) {
-    event.preventDefault()
-    try {
-      await win.webContents.session.flushStorageData()
-    } catch (err) {
-      console.warn('[shutdown] storage flush failed:', err)
-    }
-    globalShortcut.unregisterAll()
-    app.exit(0)
-  } else {
-    globalShortcut.unregisterAll()
-  }
-})
-
-// Dev-only: Ctrl+C sends SIGINT. Electron ignores SIGINT by default, but
-// the vite-plugin-electron wrapper will SIGTERM our child on shutdown.
-// Catch SIGTERM so we get a chance to flush before the process dies.
-process.on('SIGTERM', async () => {
-  try {
-    await win?.webContents?.session.flushStorageData()
-  } catch { /* best effort */ }
-  app.exit(0)
+// Chromium flushes localStorage as part of its own graceful shutdown
+// sequence — triggered by app.quit(). Do NOT preventDefault here, and do
+// NOT hard-kill. The previous version of this handler did both, replacing
+// Chromium's reliable shutdown with an async flush we couldn't guarantee,
+// and it caused a real data-loss incident on 2026-10-15. Keep this simple.
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll()
 })
 
 app.on('window-all-closed', () => {

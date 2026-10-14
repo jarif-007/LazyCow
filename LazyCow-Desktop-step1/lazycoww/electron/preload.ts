@@ -71,6 +71,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkPathExists: (path: string) => ipcRenderer.invoke('check-path-exists', path),
   selectPath: (type: 'app' | 'file' | 'folder') => ipcRenderer.invoke('select-path', type),
 
+  // ── Shortcut persistence (disk mirror) ──
+  readShortcutsFromDisk: () => ipcRenderer.invoke('read-shortcuts-from-disk'),
+  writeShortcutsToDisk: (list: unknown[]) => ipcRenderer.invoke('write-shortcuts-to-disk', list),
+
   // Each `on*` returns an unsubscribe function — call it from a useEffect cleanup.
   onShortcutProgress: (callback: (e: { shortcutId: string; stepIndex: number }) => void) => {
     const listener = (_event: unknown, data: { shortcutId: string; stepIndex: number }) => callback(data)

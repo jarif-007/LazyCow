@@ -7,6 +7,7 @@ import { WindowLayoutPanel } from '../components/WindowLayout/WindowLayoutPanel'
 import { useHotkeyRecorder } from '../hooks/useHotkeyRecorder';
 import { useActionValidation } from '../hooks/useActionValidation';
 import { readSecuredShortcutsDefault } from '../utils/security';
+import { persistShortcuts } from '../utils/shortcutStorage';
 
 interface BuilderProps {
   editData?: SavedShortcut | null;
@@ -631,7 +632,7 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
       if (index !== -1) existing[index] = shortcut;
     } else { existing.push(shortcut); }
 
-    localStorage.setItem('lazycow-shortcuts', JSON.stringify(existing));
+    persistShortcuts(existing);
     setShortcutName(''); setShortcutDesc(''); setSequence([]); clearCombo();
     setWindowLayout({ enabled: false, layoutId: null, assignments: {} });
     setNameError(false); setDescError(false); setHotkeyError(''); setNameErrorMessage('');

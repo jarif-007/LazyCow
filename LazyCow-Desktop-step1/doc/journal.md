@@ -274,3 +274,10 @@ Format:
   - `doc/handoff.md`, `doc/decisions.md`, `doc/missions.md` — updated for the session (decisions logged: translateY over scale; HW accel default flipped to off).
 - **Verified:** `npx tsc --noEmit` clean. Pilot verified end-to-end: App Drawer entrance feels smooth with HW accel off (backdrop fade, modal translateY + opacity, spring bounce 0); exit reverses smoothly; toggle round-trips through Settings → General; dev-mode Restart Now respawns the app cleanly. Manual test of the full six-step verification matrix (reduced-motion emulation, Hidden Apps modal unaffected, drawer internals) is partially done — reduced-motion cross-fade confirmed working.
 - **Commit:** df96317
+
+## 2026-10-15 — fix(electron): flush localStorage on relaunch; reconcile handoff
+- **Issue:** (fill in)
+- **Solution:** (fill in)
+- **Files:** (fill in)
+- **Verified:** (fill in)
+- **Commit:** feb8473
