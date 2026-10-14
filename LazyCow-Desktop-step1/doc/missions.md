@@ -231,6 +231,39 @@ Status: NOT STARTED
 - [ ] **Test additions to verify:** recorder round-trips every key in `KEY_GROUPS`; every default trigger name is pickable in ComboBuilder.
 - [ ] **Rationale:** We've now fixed the same class of bug three times in this session (`Del`, numpad, shifted symbols). Each fix was surgical and worked, but the root cause — no single source of truth — remains.
 
+## Mission: Session 12 — App Drawer
+Status: COMPLETE (uncommitted — two commits pending)
+- [x] Backend: OS app discovery combining Get-StartApps + Start Menu `.lnk` + App Paths + Uninstall registry + six virtual shell entries.
+- [x] Icon extraction with disk cache; UWP icons via `IShellItemImageFactory`; shell folder icons via `SHGetFileInfo` P/Invoke.
+- [x] `list-installed-apps` / `refresh-installed-apps` / `test-launch-app` IPC. Name dedup. Non-racing cache. Eager background scan.
+- [x] `isLikelySystemComponent` heuristic auto-hides redistributables (VC++ redists, .NET runtimes, SDKs, WebView2, Java).
+- [x] `launch_app` UWP + `shell:` launch branches; `shell:` accepted in `findFirstBrokenPath`, `useActionValidation`, `Library` pre-flight.
+- [x] Frontend: `AppDrawerModal` — grid, icons, alphabet strip, live search, frequently-used row, Add app popover.
+- [x] `HiddenAppsModal` — hidden list, unhide, remove permanently, right-click menu.
+- [x] `appUsage.ts` — localStorage usage counter for the frequently-used row.
+- [x] `appVisibility.ts` — persistence helpers; state lives in `AppDrawerModal`.
+- [x] Settings → Appearance → App Drawer backdrop (Solid / Blur).
+- [x] `scrollbar-thin-alpha` utility for the alphabet strip.
+- [x] **Verified:** `npx tsc --noEmit` clean; interactive runtime check passed (80 apps, all kinds, hide/unhide/custom/remove all work).
+
+## Mission: Design polish Phase 1 — motion layer
+Status: NOT STARTED (next session)
+- [ ] Install `motion` (Framer Motion v11).
+- [ ] Modal springs from trigger origin — App Drawer from Select App button; Hidden Apps from eye icon; Confirm Delete from trash; Settings panels from nav.
+- [ ] ShortcutCard hover spring lift; drawer cell stagger on open.
+- [ ] Progress ring spring settle; success state scale-pop.
+- [ ] `prefers-reduced-motion` — springs become 120ms cross-fades, transforms disable.
+- [ ] **Renderer-only.** No changes to `main.ts`, `windowLayout.ts`, or execution logic.
+- [ ] **Rationale:** rigidity is the single biggest reason the app feels "dead". See `decisions.md` — Design direction.
+
+## Mission: Design polish Phases 2–6
+Status: NOT STARTED (after Phase 1)
+- [ ] Phase 2 — visual reset on the three main surfaces. Flat card backgrounds (no gradients), two-layer Windows 11 shadow, one Acrylic translucent overlay, radius rhythm (chip 6 / card 8 / modal 12 / button pill), icon scale (14/18/20/24).
+- [ ] Phase 3 — typography pass. Kill 80% of `label-caps`; weight-driven hierarchy; Segoe UI Variable Display for display sizes; negative tracking on display.
+- [ ] Phase 4 — hero theme. Windows Fluent (system accent) is the identity; Coffee/Ocean/Forest become user options, not co-equal designs.
+- [ ] Phase 5 — micro-interactions. Delete with undo, warm empty-state copy with an SVG cow variant, spring entrance for splash mark.
+- [ ] Phase 6 — copy pass. Transactional errors → explanatory errors. Specific modal titles. Warmer empty states.
+
 ## Mission: Doc hygiene (recurring)
 Status: ONGOING
 - [ ] Archive journal.md when it exceeds ~500 lines → journal-archive.md

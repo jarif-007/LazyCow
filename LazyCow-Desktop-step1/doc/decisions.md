@@ -353,3 +353,51 @@ Append-only. Never delete. Each entry: date, decision, alternatives, why, conseq
   - Zoom factor is applied on app mount via `Settings.tsx`, read from `lazycow_settings.zoomFactor`.
   - Does not affect the window layout engine — that uses physical pixel coordinates from `windowLayout.ts`, independent of renderer zoom.
 - **Status:** active
+
+## 2026-10-14 — App Drawer uses OS discovery, not the file picker
+- **Decision:** The `launch_app` action's "Select App" opens the App Drawer — a grid of every launchable app the OS exposes. Discovery merges five sources (Start Menu `.lnk`, Get-StartApps, App Paths registry, Uninstall registry, six virtual shell entries). File-picker fallback moves to "Add app → Add to drawer / Use once".
+- **Alternatives:**
+  - Keep the old Browse-to-.exe picker — rejected. Non-technical users don't know where their apps live; navigating Program Files is hostile. Every comparable tool (Raycast, PowerToys Run, Steam) shows installed apps, not a file browser.
+  - Get-StartApps only — rejected. It misses ~93 of 103 entries on the test machine because AppIDs come in shapes we can't resolve without extra work. Start Menu `.lnk` scan is more reliable as the primary source.
+  - Registry-only (Uninstall key) — rejected. It includes redistributables and MSI entries that aren't launchable.
+  - File picker only, no drawer — rejected. It's what we had; it's the problem.
+- **Why:** A user picking an app expects to see their apps. That's the mental model. Any discovery mechanism that ships fewer than "everything Windows shows in the Start menu" fails that expectation.
+- **Consequence:**
+  - Five source scan runs on app start in the background and caches for the session.
+  - Icons extracted to `%APPDATA%\LazyCow\app-icons\`; extraction is the slow part (1–3s first run), caching makes it instant after.
+  - `kind: 'exe' | 'uwp' | 'shell'` — three launch paths in `runAction`.
+  - Three validators must skip `shell:`-prefixed values.
+  - File picker still exists for portable apps, but only reachable via the "Add app" menu.
+- **Status:** active
+
+## 2026-10-14 — System components auto-hide by default
+- **Decision:** `isLikelySystemComponent(name)` marks VC++ redistributables, .NET runtimes, Windows SDKs, DirectX, XNA, Silverlight, WebView2 runtime, Java runtimes, and "Additional/Minimum Runtime" entries with `system: true`. These are hidden by default on first run. The user can unhide any of them from the hidden-apps modal.
+- **Alternatives:**
+  - Show everything — rejected. The test machine exposes ten VC++ redistributables and multiple .NET runtimes. Shown alongside Chrome and VS Code, they dominate the grid. Non-technical users see a wall of noise and cannot find their browser.
+  - Filter them out entirely — rejected. A power user debugging a runtime issue may genuinely want to launch `wmic` or a specific redistributable-installed tool. Hiding keeps the door open.
+  - Ask the user on first launch — rejected. Adds a modal at the worst moment (first-run setup). The heuristic is safe enough to be quiet.
+  - Let the user check a box during install — rejected. Same reason as above, and there's no installer step in dev.
+- **Why:** A user picking an app to launch a shortcut is thinking about their tools, not their dependencies. A redistributable exists to support another app; it is not something a normal user opens. Hiding them by default respects the user's attention budget — Apple's "Purpose" principle, Windows Fluent's "show the common path first."
+- **Consequence:**
+  - Heuristic matching is name-based, deliberately narrow. "Microsoft Visual Studio" and "Microsoft Edge" must not match; the patterns are tested against the current Start Menu list before shipping.
+  - `system: true` apps start in the hidden state unless the user explicitly unhides them (tracked in `visibleSet`).
+  - The badge in the hidden modal labels them **System** so the user understands why they were hidden.
+  - Adding a new pattern later is safe as long as it doesn't false-positive on a real user app. Rule of thumb: if you'd want to see the entry in a shortcut you're building, don't match it.
+- **Status:** active
+
+## 2026-10-14 — Design direction: Windows Fluent, with an Apple-grade motion layer
+- **Decision:** The app's visual identity is Windows 11 Fluent, done well. Coffee / Ocean / Forest remain as user themes but are no longer designed as co-equal first-class options — the defaults are Fluent with the system accent. On top of this, we add a motion layer built on `motion` (Framer Motion v11), using springs, interruptible transitions, momentum projection, and anchored modal origins. Motion is renderer-only — no changes to `main.ts`, `windowLayout.ts`, or execution logic.
+- **Alternatives:**
+  - Keep the current look-and-feel — rejected. The app reads as "a competent tool with no personality." Cards with gradients, `label-caps` everywhere, dead hover feedback, zero motion. Useful but not loved.
+  - Adopt Apple's visual vocabulary wholesale — rejected. The Apple Design skill file is a strong reference for behavior (springs, interruptibility, spatial consistency) and a poor fit for visuals on a Windows-only app. Translucent Mica-like materials and vibrancy-over-blur text tricks are Apple's answer to a problem Windows already solved differently (Fluent elevation, Acrylic for overlays). Using Apple's visuals on Windows reads as cosplay, not quality.
+  - Four co-equal themes, each fully designed — rejected. Four equally-considered themes means none of them is the identity. Users can't build a mental model of "what LazyCow looks like."
+  - Motion-lite (CSS transitions with better easing) — rejected. CSS transitions can't be interrupted mid-flight; springs can. The whole point of the motion layer is that the app feels alive, and that requires physics, not curves.
+- **Why:** The Apple file's own diagnostic criteria apply: an interface is fluid when motion starts from the current on-screen value, inherits velocity, projects momentum, and can be grabbed mid-flight. LazyCow has none of these. The visual language is a separate question, and Windows Fluent is the right answer for a Windows app — it's what users already know, it matches the OS, and it's our target platform.
+- **Consequence:**
+  - Phase 1 (motion layer) is the next session's scope: modal springs from trigger origin, hover spring lift on ShortcutCard, staggered drawer cells, progress ring settle, `prefers-reduced-motion` respect.
+  - Phase 2 (visual reset): flat card backgrounds, Windows 11 two-layer shadow, one Acrylic overlay, radius + icon scale rhythm.
+  - Phases 3–6 (typography, hero theme, micro-interactions, copy) are queued as a single mission after Phase 1 verifies the motion approach.
+  - The rule from the Apple file we're adopting: no bounce on dialogs, menus, or informational surfaces. Bounce only on (a) drag-release, (b) explicit success celebration, (c) the hover lift on ShortcutCard where momentum is the user's own cursor arriving.
+  - We do NOT adopt Apple's material system, fonts, or vibrational text-over-blur practices. Windows Fluent has its own answers; use those.
+- **Status:** active
+  

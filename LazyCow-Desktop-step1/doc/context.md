@@ -45,10 +45,13 @@ The application is structured to support:
   - `lazycow-shortcuts` — Array of saved `SavedShortcut` objects. Each shortcut carries `secured?: boolean` (per-shortcut runtime confirmation gate) and each action carries `safetyOverride?: 'dangerous' | 'safe'` (user-locked label).
   - `lazycow-blocked-triggers` — Blocked hotkey trigger strings.
   - `lazycow-os-critical-triggers` — OS-critical protected triggers.
-  - `lazycow_settings` — General desktop settings (`startAtLogin`, `keepInTray`, `executionNotifications`, `securedShortcutsEnabled`, `securedDoublePressSeconds`, `autoScrollSpeed`, `generalShade`, `dataShade`).
+  - `lazycow_settings` — General desktop settings (`startAtLogin`, `keepInTray`, `executionNotifications`, `securedShortcutsEnabled`, `securedDoublePressSeconds`, `autoScrollSpeed`, `zoomFactor`, `appDrawerBackdrop`, `generalShade`, `dataShade`).
     - `securedShortcutsEnabled` (default `true`) — controls whether *newly created* shortcuts with dangerous actions default to `secured`. Does **not** retroactively change existing shortcuts.
     - `securedDoublePressSeconds` (default `5`, range 5–30) — window in seconds for the double-press confirmation on a minimized window.
     - Legacy `showDangerWarnings` key (from commit `7ed280c`) is **silently migrated** to `securedShortcutsEnabled` on first `Settings.tsx` load and deleted. Do not re-read the old key.
+  - `lazycow-app-usage` — `Record<lowercasedPath, count>`. Drives the App Drawer's "Frequently used" row. Incremented on every drawer pick (including "Use once" picks).
+  - `lazycow-custom-apps` — `InstalledAppForIPC[]`. Apps added by the user via "Add app → Add to drawer". Survive action deletion. Removed via the hidden-apps modal or right-click → Remove permanently.
+  - `lazycow-app-visibility` — `{ hidden: string[]; visible: string[] }`. Both keyed by lowercased absolute path. `hidden` = user explicitly hid; `visible` = user explicitly unhid a system app. Effective hidden = `hidden.has(path) || (app.system && !visible.has(path))`.
   - `lazycow-theme-mode` — `'system' | 'light' | 'dark'`.
   - `lazycow-custom-color-mode` — Boolean toggle for custom color themes.
   - `lazycow-custom-theme` — `'coffee' | 'ocean' | 'forest'`.
@@ -84,9 +87,13 @@ LazyCow/
 │           │   ├── useHotkeyRecorder.ts # Reusable global keyboard capture hook (records e.code, not e.key)
 │           │   └── useActionValidation.ts # Shared validation for action sequences (sync + debounced path checks)
 │           ├── utils/
+│           │   ├── appUsage.ts        # localStorage usage counter for the App Drawer's frequently-used row
+│           │   ├── appVisibility.ts   # Persistence for hiddenSet / visibleSet / customApps (state lives in AppDrawerModal)
 │           │   ├── danger.ts          # DANGEROUS_EXTENSIONS + hasDangerousExtension + isDangerousAction + override-aware getActionLabel / hasDangerousActions
 │           │   └── security.ts        # migrateShortcutsSecured + readSecuredShortcutsDefault + readSecuredDoublePressSeconds
 │           ├── components/
+│           │   ├── AppDrawerModal.tsx # Installed-apps picker for launch_app actions. Grid + icons + alphabet strip + live search + frequently-used row + Add app popover + hide/context-menu.
+│           │   ├── HiddenAppsModal.tsx # Hidden apps list with unhide / remove-permanently, right-click menu.
 │           │   ├── ActionSequence.tsx # Orchestrator: DnD, selection mode, auto-scroll, drop zone
 │           │   ├── ActionSequence/    # Sub-components for the action list
 │           │   │   ├── SortableActionCard.tsx # Single card with useSortable + selection checkbox
@@ -170,7 +177,7 @@ LazyCow/
   - **Secured shortcut, window focused** → emit `hotkey-needs-confirm`; the renderer shows `ConfirmSecuredModal`. Also records a pending timestamp in `securedPendingFires`.
   - **Secured shortcut, window minimized/hidden** → native Windows toast ("Press `<hotkey>` again, or click to open LazyCow") and record the pending timestamp.
   - **Second press of a secured hotkey within `cachedSecuredDoublePressMs`** → run directly (the pending entry is consumed).
-- **`test-hotkey` IPC:** Snapshots every registered shortcut, `globalShortcut.unregisterAll()`, registers only the candidate, races a 4-second fire-promise against a timeout, restores the snapshot, returns `{ fired: boolean, reason?: 'invalid' | 'registration-rejected' | 'timeout' }`. This is the only reliable way to know a combo will actually fire on a given Windows + keyboard-layout combination — `globalShortcut.register()` returning `true` is not proof (see §6 rule 23).
+- **`test-hotkey-*` IPC (3-call lifecycle):** `test-hotkey-start` snapshots every registered shortcut, `globalShortcut.unregisterAll()`, registers only the candidate. `test-hotkey-check` reads the fired flag. `test-hotkey-stop` restores the snapshot. No timer — the renderer drives the flow (Test → Verify → Verified), and the user presses the combo at their own pace. This is the only reliable way to know a combo will actually fire on a given Windows + keyboard-layout combination — `globalShortcut.register()` returning `true` is not proof (see §6 rule 23 and rule 32).
 - **Test-run identification.** Shortcuts whose id starts with `test-` (synthetic ids `test-layout-<ts>` / `test-flow-<ts>` from the Builder) skip the OS notification dispatch entirely. The user is already looking at the app during a test; the toast is pure noise.
 - **Cancellable layout engine.** Per-shortcut `AbortController`s are held in `layoutAbortControllers: Map<string, AbortController>`. The `cancel-shortcut` IPC handler aborts the controller in addition to setting `cancelRequests`. `arrangeWindows` accepts an `AbortSignal` and passes it through to `runPowerShellScript`'s `execFile` call — the signal kills the child PowerShell process, so a poll that never finds a window (browser tab reuse is the common case) exits immediately instead of waiting the full budget. `runningShortcuts.delete()` runs *after* the layout wait, not before, so cancel requests arriving mid-wait are accepted.
 - **`set-hotkey-recording` IPC:** Toggles an `isRecordingHotkey` flag in main. Every global hotkey callback returns early when set, so pressing an already-assigned combo while recording a new one doesn't fire the existing shortcut.
@@ -182,6 +189,37 @@ LazyCow/
   - **User-judge via unassignment.** An action assigned to no zone still launches with the shortcut, but the layout engine skips it. This is the primary control for "this app shouldn't be auto-arranged" — implemented via the Position dropdown's "Not arranged" option.
   - **UWP fallback.** UWP windows detected via `IsImmersiveProcess` are centered at native size instead of stretched. This handles the "user assigned Calculator by mistake" case gracefully — the window stays usable instead of being visually stretched.
 
+#### 1b. App Drawer (Session 12)
+
+The App Drawer is the picker for `launch_app` actions. Clicking **Select App** on a launch_app card opens `AppDrawerModal` — a grid of every launchable app the OS knows about, with icons, live search, an alphabet strip, a frequently-used row, custom apps, and a hide/unhide surface.
+
+**Discovery pipeline (`discoverInstalledApps` in `main.ts`).** Five sources merged, then deduped by name:
+
+1. **Start Menu `.lnk` scan** (primary). Recurses `%ProgramData%\Microsoft\Windows\Start Menu\Programs` and `%APPDATA%\Microsoft\Windows\Start Menu\Programs`. Each `.lnk` is resolved via `shell.readShortcutLink`; `%VAR%` residues are expanded; `.exe`-only; existence-checked. Real Start Menu names come from here.
+2. **Get-StartApps** (PowerShell). Everything Windows shows in the Start menu, including UWP apps. AppIDs come in three shapes — bare `.exe`, `{GUID}\...\app.exe` (KNOWNFOLDERID-prefixed), and UWP AUMIDs (`pkg!app`). All three are resolved: bare → App Paths lookup, GUID-prefixed → expanded against five known folder IDs (`System`, `ProgramFilesX64`, `ProgramFilesX86`, `ProgramFiles`, `Windows`), AUMID → `shell:AppsFolder\<AUMID>`.
+3. **App Paths registry** (`HKLM`+`WOW6432Node`+`HKCU`). Resolves exe names to full paths — this is how VS Code User install gets caught even when its Start Menu shortcut fails.
+4. **Uninstall registry** (`HKLM`+`WOW6432Node`+`HKCU`). Same source Control Panel uses. Kept because it catches apps with a broken Start Menu shortcut. `DisplayIcon` is parsed to extract the launchable `.exe`. Redistributables are dropped here and again by the system heuristic.
+5. **Virtual shell entries** — six fixed entries (`File Explorer`, `This PC`, `Recycle Bin`, `Control Panel`, `Settings`, `Network`). Deduped by name (not URI — File Explorer and This PC share `shell:MyComputerFolder`).
+
+**Icon extraction.** Disk-cached under `%APPDATA%\LazyCow\app-icons\<md5-16>.png` (or `Electron` in dev). Cache invalidated when the exe's mtime is newer than the cached PNG. Three extractors:
+- `.exe` → `app.getFileIcon` → resize to 64×64 → PNG → base64.
+- UWP AUMID → `IShellItemImageFactory` P/Invoke (PowerShell batched per open) → 64×64 PNG → base64.
+- Shell folder → `SHGetFileInfo` P/Invoke against CSIDL (`0x05` File Explorer, `0x11` This PC, `0x0a` Recycle Bin, `0x03` Control Panel, `0x12` Network) → 64×64 PNG → base64. `Settings` has no CSIDL and falls back to the Material Symbols gear.
+
+**System-component heuristic.** `isLikelySystemComponent(name)` matches VC++ redistributables, .NET runtimes, Windows Desktop Runtime, Windows SDK, ASP.NET, DirectX, XNA, Silverlight, Edge WebView2 Runtime, Java runtimes, Oracle Java, "Additional Runtime", "Minimum Runtime". Matched apps are marked `system: true` and auto-hidden on first run — the user unhides them explicitly if they want. Chosen deliberately: a non-technical user does not want to see ten `Microsoft Visual C++ 20XX Redistributable` cards when picking their browser. The name patterns avoid false positives — "Microsoft Visual Studio Code" and "Microsoft Visual Studio 2022" do not match.
+
+**Runtime data model (`InstalledAppForIPC`).**
+
+~~~ts
+{
+  name: string
+  path: string                                     // .exe path, shell:AppsFolder\<AUMID>, or shell:<folder>
+  kind: 'exe' | 'uwp' | 'shell'
+  iconDataUrl: string | null                       // 64×64 PNG data URL, or null for Settings
+  system: boolean                                  // auto-hidden; see heuristic above
+}
+~~~
+
 #### 2. `electron/preload.ts` & `electron/electron-env.d.ts`
 - Securely exposes `window.electronAPI`:
   - `getSystemAccent(): Promise<string>`
@@ -191,8 +229,12 @@ LazyCow/
   - `cancelShortcut(shortcutId)` — Graceful cancel of a running shortcut
   - `syncHotkeys(payload: ShortcutForIPC[] | { shortcuts: ShortcutForIPC[]; securedDoublePressSeconds: number })` — Per-shortcut payload includes `secured?: boolean`. Legacy bare-array shape still accepted.
   - `setHotkeyRecording(value: boolean)` — suppress global hotkey callbacks during recorder capture
-  - `testHotkey(combo: string): Promise<{ fired: boolean; reason?: string }>` — temporarily unregisters all shortcuts, tests one candidate for 4s
+  - `testHotkeyStart(combo)` / `testHotkeyCheck()` / `testHotkeyStop()` — 3-call user-paced lifecycle
   - `updateGeneralSettings(settings: { startAtLogin?: boolean; keepInTray?: boolean; executionNotifications?: boolean })`
+  - `listInstalledApps(): Promise<InstalledAppForIPC[]>`
+  - `refreshInstalledApps(): Promise<InstalledAppForIPC[]>`
+  - `testLaunchApp(path): Promise<{ ok: boolean; error?: string }>`
+  - `getZoomFactor(): Promise<number>` / `setZoomFactor(factor): Promise<number>` / `onZoomChanged(callback)`
   - `checkPathExists(path): Promise<boolean>`
   - `selectPath(type: 'app' | 'file' | 'folder'): Promise<string | null>`
   - `onShortcutProgress(callback)` / `onShortcutComplete(callback)` (with `durationMs`, `cancelled`, `lastActionTitle`, `layoutResults` fields)
@@ -323,7 +365,7 @@ npm run build
 20. **Floating Dropdowns Use Portals:** Any custom dropdown or popover that must escape an overflow-clipped parent (like the Position dropdown inside a card) renders via `createPortal(..., document.body)` with fixed coordinates from `getBoundingClientRect()`. Same reasoning as rule 9 — a parent `transform` or `overflow: hidden` traps absolutely-positioned children.
 21. **User-Judge via Unassignment:** An action not assigned to any zone still launches with the shortcut, but the layout engine skips it. This is the primary mechanism for "this app shouldn't be auto-arranged" — do not add a separate per-action `skipLayout` flag, and do not reintroduce a separate opt-out UI. `buildPlacementsFromShortcut` already filters on `assignments`; that's the whole control surface.
 22. **UWP Heuristic is a Fallback Only:** `Place-Window` centers UWP windows (`IsImmersiveProcess`) at native size instead of stretching them. This runs *after* user assignment — if the user didn't assign a UWP app to a zone, the heuristic never fires (the app is skipped entirely). Do not remove the heuristic — it's the graceful default for users who assign UWP apps by mistake. But do not treat it as the primary arrangement strategy either; user-judge (rule 21) is.
-23. **`globalShortcut.register()` Success ≠ Working Hotkey:** On UK and Bengali keyboard layouts, `Ctrl + Alt + <digit>` and `Ctrl + Shift + <digit>` register successfully but never fire. Those layouts treat the digit row as a character composition layer — the OS delivers the keystroke to the IME, not to `RegisterHotKey`. There is no API to detect this. Never build UX that relies on "the hotkey registered, so it works." The `test-hotkey` IPC exists specifically to make the user try the combo before Save enables — do not remove that gate.
+23. **`globalShortcut.register()` Success ≠ Working Hotkey:** On UK and Bengali keyboard layouts, `Ctrl + Alt + <digit>` and `Ctrl + Shift + <digit>` register successfully but never fire. Those layouts treat the digit row as a character composition layer — the OS delivers the keystroke to the IME, not to `RegisterHotKey`. There is no API to detect this. Never build UX that relies on "the hotkey registered, so it works." The `test-hotkey-start` / `test-hotkey-check` / `test-hotkey-stop` IPC lifecycle exists specifically to make the user try the combo before Save enables — do not remove that gate.
 24. **`useHotkeyRecorder` Records `e.code`, Never `e.key`:** `e.key` is layout-dependent (Shift+5 → `%` on US, `Clear` on UK) and `globalShortcut.register()` silently refuses combos containing those strings. `e.code` is the physical key and is what the OS shortcut layer actually matches on. If you ever see `e.key` in the recorder, it's a regression.
 25. **Secured Is Per-Shortcut, Not Global:** The runtime confirmation gate lives on `SavedShortcut.secured`. The global `securedShortcutsEnabled` setting only controls the *default* value for new shortcuts — never retroactively change existing ones. Do not reintroduce a global "warn on everything" toggle; that was the design that `dc34b3c` replaced.
 26. **ComboBuilder Is Controlled:** `ComboBuilder` has no internal state and no Set/Clear buttons. Its `value` prop is the same `recordedCombo` state the recorder writes to — a single source of truth. Any change calls `onChange` and applies immediately. Do not add an internal draft state, do not add an explicit commit step, and keep the key list in sync with what the recorder can emit (any key the recorder can save must be selectable in the dropdown — otherwise the user can record something they can't rebuild).
@@ -334,13 +376,16 @@ npm run build
 31. **Pre-Snapshot Must Run in Node, Before the Action Loop:** The layout engine needs to know which windows existed *before* the shortcut fired, so it can classify shortcut-opened windows as "new" and refuse to place pre-existing ones (particularly browser windows for `open_url`). The snapshot must be taken by `snapshotHandles()` in Node, awaited by `runShortcutActions` **before** the first action fires, and passed through `arrangeWindows` → `buildScript` as a CSV. An in-script snapshot loses the ~400ms race with PowerShell's own startup — by the time it runs, the shortcut's own browser windows are on screen and get misclassified as "old".
 32. **Test Hotkey Is User-Paced, Not Timed:** The Verify flow is three-step: click Test → press combo → click Verify. No timer, no auto-verify, no "Listening..." state. Do not reintroduce a race — it removes the user's ability to try the combo at their own pace, which was the entire point of the redesign. Failure paths must distinguish wrong-combo / OS-swallowed / nothing-pressed with three distinct messages. Windows-rejected combos auto-add to `lazycow-blocked-triggers` (see rule 33) so the user finds out why in a durable place.
 33. **Windows-Rejected Combos Go Into Blocked Triggers:** When `globalShortcut.register()` returns false during a Test Hotkey run, the combo is added to `lazycow-blocked-triggers` and the error message explains how to remove it (in case the user has remapped the key at the OS level). Do not hardcode a list of "Windows-reserved combos" — we can't enumerate them reliably across Windows versions, keyboard layouts, and user remappings. Use the OS itself as the source of truth.
+34. **`shell:` Values Are Pseudo-Paths — Three Validators Must Skip Them:** `launch_app` values that start with `shell:` (UWP AUMIDs and shell folders) have no file on disk. `fs.statSync` fails, `.endsWith('.exe')` fails. The three validators that must short-circuit before doing either check are: `findFirstBrokenPath` in `main.ts`, the `launch_app` case in `useActionValidation.ts`, and the broken-path pre-flight in `Library.tsx`. `isUwpPath` in `src/types/actions.ts` is the single source of truth for the check. If you add a new validator that walks `launch_app` values, use the same helper — do not re-implement the prefix check inline.
+35. **System-Component Heuristic Is a Name Match, Not a Category:** `isLikelySystemComponent` matches redistributable names. It deliberately does not match "Microsoft Visual Studio" or "Microsoft Edge" — those are real user apps. Every pattern added must be checked against a false-positive list first. If in doubt, do not add it — a user can always hide an app; they cannot unsee a wall of VC++ redistributables.
 
 ---
 
 ## 7. CURRENT PROJECT STATUS & FEATURE ROADMAP
 
 ### A. Fully Implemented & Verified Features
-* **10 Action Types:** Launch App (`.exe` only), Open URL, Open Folder, Open File, Set Volume (WASAPI COM), Toggle DND (Focus Assist), Toggle Night Light, Set Brightness (WMI/CIM/DDC-CI), Wait / Delay (0.25s–10s slider), Run Terminal Script.
+* **10 Action Types:** Launch App (`.exe` only — `.exe`, `shell:AppsFolder\<AUMID>` for UWP, `shell:<folder>` for shell folders), Open URL, Open Folder, Open File, Set Volume (WASAPI COM), Toggle DND (Focus Assist), Toggle Night Light, Set Brightness (WMI/CIM/DDC-CI), Wait / Delay (0.25s–10s slider), Run Terminal Script.
+* **App Drawer (Session 12):** Installed-apps picker for `launch_app`. Five-source OS discovery (Start Menu `.lnk`, Get-StartApps, App Paths, Uninstall registry, six virtual shell entries) with name dedup and disk-cached icon extraction — `.exe` via `app.getFileIcon`, UWP via `IShellItemImageFactory`, shell folders via `SHGetFileInfo`. Grid + icons + alphabet strip + live search + frequently-used row. Hide/unhide + custom apps (`Add to drawer` / `Use once`) + right-click menu. `isLikelySystemComponent` auto-hides redistributables. Full details in §4 1b.
 * **Shortcut-Level Window Layout (complete):** A toggle in the Builder enables arrangement. Users pick from 7 layouts (Windows' 6 + quad), assign eligible actions to zones via per-card Position dropdowns, and see a live preview in the layout thumbnail. The engine fires in parallel with the action loop, uses a per-shortcut time budget, polls each placement independently, claims the assigned zone unconditionally, and reports layout results in the completion toast and on the card's success log. Unassigned actions still launch — they're just not arranged (user-judge mechanism). UWP apps assigned by mistake are centered at native size rather than stretched.
 * **Broken Path Pre-flight:** `Library.tsx` scans all path-based actions on mount, on `shortcuts` change, and on window focus. Any shortcut with a missing file/folder gets a "Broken Path" badge and its Run button becomes "Fix Paths" (routes to Builder). Hotkey-triggered runs are refused with a native toast naming the first broken action.
 * **Test Layout Button:** In the Window Layout panel. Runs only the launch-type actions (no scripts, no delays) and applies the layout — fast preview without side effects.
@@ -368,6 +413,11 @@ npm run build
 5. **Scheduled / Automatic Triggers:** Time-based shortcut execution (e.g., Run "Work Setup" every weekday at 9:00 AM) using node-cron or Windows Task Scheduler.
 
 ### C. Recently Completed
+
+**Session 12 (App Drawer — commits pending):**
+- Backend: five-source OS discovery (Start Menu `.lnk`, Get-StartApps, App Paths, Uninstall registry, virtual shell entries), name dedup, non-racing cache, eager startup scan. Icon extraction with disk cache; UWP icons via `IShellItemImageFactory`; shell folder icons via `SHGetFileInfo`. `isLikelySystemComponent` auto-hides redistributables. `test-launch-app` IPC. UWP and `shell:` launch branches in `runAction`. `shell:` skipped in `findFirstBrokenPath`. Zoom IPC re-added.
+- Frontend: `AppDrawerModal` (grid, icons, alphabet strip, live search, frequently-used row, Add app popover with Add-to-drawer / Use-once), `HiddenAppsModal` (unhide, remove permanently, right-click), `appUsage.ts`, `appVisibility.ts`, state-driven visibility with `hiddenSet` + `visibleSet`, Add app menu, backdrop setting in Settings → Appearance. UWP skip in `useActionValidation` and `Library` pre-flight. `isUwpPath` helper in `types/actions.ts`.
+- Full details in `context.md` §4 1b and `missions.md`.
 
 **Session 11 (Hotkey UX overhaul — commits `ab8fdba` + `ba8e6cd` + `9e0cf2a`):**
 - **Recorder rewrite.** `useHotkeyRecorder` now emits canonical key names from `e.code` — physical keys, not produced characters. Shifted symbols store the base key. Single-main-key enforcement replaces extra keys with a 3-second amber notice. Accepts `initialMods` so ComboBuilder chips seed a live recording. A `useEffect` mirrors `recordedCombo` back into `keysRef` so chip edits made during recording survive subsequent keystrokes.
@@ -473,24 +523,24 @@ npm run build
 **Window Layout Overlay Animation (Batch 3):**
 - Transparent frameless BrowserWindow overlay appears for ~600ms during arrangement. Fades in zone outlines, animates each app's icon flying to its zone, then fades out as the real windows are placed. Uses the user's chosen theme color.
 
-**Phase 4 — Keyboard Shortcuts:**
+**NFR Phase 4 — Keyboard Shortcuts:**
 - Ctrl+N (new shortcut), Ctrl+, (settings), Escape (close modal), Ctrl+S (save in Builder), Ctrl+1/2/3 (tab switch).
 
-**Phase 5 — Motion Polish:**
-- Install `motion` (Framer Motion v11). Modal open/close, page transitions, card appear stagger.
-- Only uses `transform` + `opacity`.
+**NFR Phase 5 — Motion Polish:**
+- Superseded by **Design polish Phase 1** in `missions.md`. Motion now follows the Windows Fluent + Apple-grade motion direction in `decisions.md` (2026-10-14).
 
-**Phase 6 — Perceived Performance:**
+**NFR Phase 6 — Perceived Performance:**
 - Startup timing audit, loading indicators for anything >200ms, optimistic UI for Run and Save, focus traps on modals.
 
 **Pending decisions:**
-- Test button for `launch_app` / `open_folder` / `open_file` (same pattern as URL Test) — not yet confirmed.
+- Test button for `open_folder` / `open_file` (same pattern as URL Test and the `launch_app` Test button added in Session 12) — not yet confirmed.
 - Auto-delete vs flag for orphaned actions from older shortcuts — current decision is *flag, do not delete*.
 
 ### E. Known Issues / Pending Polish
 
 - **Vestigial `showDangerWarnings` prop in `Builder.tsx`:** `Builder.readShowDangerWarnings()` reads `lazycow_settings.showDangerWarnings`, but `Settings.tsx` migrates the key to `securedShortcutsEnabled` and deletes it on first load. After migration, `Builder` always reads `true`. Not user-observable (there's no UI to toggle the old key), but the prop is dead. Recommended: delete the read + prop entirely; the SafetyChip is now the interactive override picker, not a static badge. Tracked in `missions.md` under "Code hygiene."
 - **`onShortcutStarted` dead channel:** Subscribed in `Library.tsx`, exposed in `preload.ts`, declared in `electron-env.d.ts`, but no `webContents.send('shortcut-started', ...)` exists in `main.ts`. The channel was intended as a defensive modal-close; three other paths already cover it. Recommended: delete. Tracked in `missions.md` under "Code hygiene."
+- **`arrangeWindowsShortcut` dead bridge:** `preload.ts` exposes it, but `main.ts` has no `ipcMain.handle('arrange-windows-shortcut', ...)`. Nothing in the renderer calls it — the layout engine fires internally from `runShortcutActions`. Recommended: delete the bridge in the same cleanup commit as the `onShortcutStarted` channel. Tracked in `handoff.md` §2.
 - **`Builder.handleSave` reimplements `hasDangerousActions` inline** instead of using the shared helper — the inline version misses dangerous-extension `open_file`, so create-time and run-time classification can disagree. Tracked in `handoff.md` §4 open questions.
 - **README.md is stale:** markets an `open_vscode` action that doesn't exist, lists `.lnk/.bat/.cmd` as valid `launch_app` formats (only `.exe` is), describes an "Arrange Windows" action (moved to shortcut-level), and states `sandbox: false` (it's `true`). Needs a rewrite before public sharing.
 - **Unused dependencies:** `electron-store`, `react-router-dom`, `lucide-react`, and `uuid` are listed in `package.json` but never imported. Safe to remove in a dedicated cleanup commit.
