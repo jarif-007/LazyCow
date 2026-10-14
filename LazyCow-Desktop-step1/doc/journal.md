@@ -276,15 +276,29 @@ Format:
 - **Commit:** df96317
 
 ## 2026-10-15 — fix(electron): flush localStorage on relaunch; reconcile handoff
-- **Issue:** (fill in)
-- **Solution:** (fill in)
-- **Files:** (fill in)
-- **Verified:** (fill in)
+- **Issue:** While adding the hardware-acceleration toggle's "Restart Now" button, the `relaunch-app` handler shipped with `app.exit(0)` — a hard kill that skips Chromium's own storage flush and the `before-quit` / `will-quit` events entirely. Separately, the handoff header had drifted two commits behind HEAD (`fa993de` vs actual). This commit was the first attempt at fixing the relaunch path — it added `flushStorageData()` before the exit and reverted an earlier `will-quit` handler that had also been doing `event.preventDefault() + app.exit(0)`. **Both attempts were the wrong fix** and would be replaced in `1e38363` with the disk-mirror approach. Preserved in history because the intermediate reasoning matters.
+- **Solution:** Added `await win?.webContents.session.flushStorageData()` before `app.exit(0)` in the relaunch handler; documented the dev-mode spawn (detached `npm run dev`) that makes the blank-window restart work; reverted the `will-quit` handler to its simple `globalShortcut.unregisterAll()` form. Also bumped the handoff header to match HEAD and filled the previous session's journal stub.
+- **Files:** electron/main.ts (relaunch-app, will-quit revert); doc/handoff.md; doc/journal.md
+- **Verified:** tsc clean. Partial — the flush-before-exit approach was later abandoned in favour of the disk mirror, because vite-plugin-electron hard-kills the Electron child in dev before any shutdown hook runs, so the flush could never fire reliably.
 - **Commit:** feb8473
 
 ## 2026-10-15 — fix(storage): mirror shortcuts to disk — survives hard kills
-- **Issue:** (fill in)
-- **Solution:** (fill in)
-- **Files:** (fill in)
-- **Verified:** (fill in)
+- **Issue:** Chromium's `localStorage` writes are asynchronous — they're batched and flushed to disk on Chromium's own schedule, typically within a few seconds. On a **hard kill** (Ctrl+C in dev, where `vite-plugin-electron` force-kills the Electron child; `taskkill /f`; power loss within the flush window), anything not yet flushed is lost. Reproduced twice in one session with cold-cache timing: create shortcut → Ctrl+C immediately → restart → gone; create → wait 3 seconds → Ctrl+C → survives. The earlier `flushStorageData()`-before-`app.exit(0)` fix (feb8473) couldn't close this because no shutdown hook runs during a hard kill. Root cause: `localStorage` is a browser cache, not a durable database, and we were treating it as the primary storage for user-authored data.
+- **Solution:** Mirror every shortcut write to a synchronous disk file, and restore from it on startup when `localStorage` is empty.
+  1. New `src/utils/shortcutStorage.ts` — `persistShortcuts(list)` writes to both `localStorage` and (fire-and-forget) `window.electronAPI.writeShortcutsToDisk(list)`. `readShortcuts()` reads from `localStorage`. `recoverShortcutsFromDiskIfEmpty()` runs on Library mount; if `localStorage` is empty but the disk file has data, it syncs the disk data back into `localStorage` and returns it.
+  2. New `electron/main.ts` IPC handlers: `read-shortcuts-from-disk` (returns `{ ok, data }`; empty array on missing/corrupt file) and `write-shortcuts-to-disk` (`fs.writeFileSync` to `userData/shortcuts.json`, pretty-printed, errors logged not thrown). Synchronous write on the main process — cannot lose data on a kill.
+  3. `electron/preload.ts` + `electron/electron-env.d.ts` — bridge the two handlers.
+  4. Six call sites swapped from `localStorage.setItem` to `persistShortcuts`: `Library.tsx` (`refreshShortcuts` migration write, `confirmDelete`, `handleRenameSave`, `handleDuplicate`, `handleToggleSecured`, `ConfirmSecuredModal.onConfirm`) and `Builder.tsx` (`handleSave`). Plus a new mount-time recovery effect in `Library.tsx` that calls `recoverShortcutsFromDiskIfEmpty` before `refreshShortcuts` runs.
+- **Files:** electron/main.ts (2 IPC handlers); electron/preload.ts (2 bridges); electron/electron-env.d.ts (2 declarations); src/utils/shortcutStorage.ts (new); src/pages/Library.tsx (import, recovery effect, 6 persist writes); src/pages/Builder.tsx (import, persist write in handleSave).
+- **Verified:** tsc clean. Manual reproduction: create shortcut named `verify` → Ctrl+C immediately → `npm run dev` → shortcut present. Duplicated test also passes (multiple shortcuts created rapidly, all survive immediate Ctrl+C). Before the fix, the same test lost data on every rapid-kill attempt. **Root cause confirmed against the two-timing test** (3-second wait = survives, immediate = lost) which matched the async-flush window exactly.
 - **Commit:** 1e38363
+
+## 2026-10-15 — feat(motion): Surface 2 — Library grid entrance stagger
+- **Issue:** Design polish Phase 1's second surface — the Library grid should feel alive on mount. The pilot (AppDrawerModal, df96317) had proved `motion` + spring + reduced-motion. Surface 2 generalizes it to a grid of ShortcutCards.
+- **Solution:** Each `ShortcutCard` root became a `motion.div` with `hidden` / `visible` variants. Delay is computed per-card as `Math.min(index, 8) * 0.15` and embedded inside the `visible` variant's `transition` object (not on the grid container, not on a `transition` prop — see "Pitfalls" below). Duration 0.5s. Reduced motion swaps to a 120ms fade with no delay. `Library.tsx` grid stays a plain `<div>`; `reducedMotion` (from `usePrefersReducedMotion`) and `staggerIndex` (the card's index) are threaded through as props.
+  - **Pitfall 1 — parent-driven stagger doesn't work when children declare `animate`.** Initial patch put `staggerChildren: 0.03` on the grid's `motion.div` and relied on motion's automatic orchestration. But motion's `staggerChildren` is only applied to children that don't have their own `animate` prop — a child with `animate="visible"` opts out of parent orchestration. Every card appeared at the same instant. The fix is per-child delay, computed by the child from an index prop. Recorded in `handoff.md` §5-PENDING for future surfaces.
+  - **Pitfall 2 — `React.StrictMode` eats entrance animations in dev.** React 18's dev-mode double-mount (mount → unmount → remount) starts motion's entrance on the first mount, then the synthetic remount sees the element at final state and does not replay. Removing `<React.StrictMode>` from `src/main.tsx` was required for the animation to fire in dev at all. Production was never affected.
+  - **Tuning:** started at `duration: 0.8, delay * 0.4` (diagnostic — obviously visible), then `duration: 0.5, delay * 0.15` (final — still visible, doesn't hold the user up).
+- **Files:** src/pages/Library.tsx (plain div grid, `usePrefersReducedMotion`, `reducedMotion` + `staggerIndex` props); src/components/ShortcutCard.tsx (root `<div>` → `<motion.div>`, `cappedStaggerIndex`, `entranceVariants` with per-variant transition); src/main.tsx (`React.StrictMode` removed); doc/handoff.md (§5-PENDING updated with the pitfall note).
+- **Verified:** tsc clean. Manual: cards appear one after another with a visible stagger on Library mount; reduced-motion emulation (DevTools → Rendering → `prefers-reduced-motion: reduce`) collapses to a shared 120ms fade with no slide; delete removes a card instantly without re-triggering the stagger on remaining cards; search filters without replaying; tab switch back to Library replays the reveal.
+- **Commit:** d87af72
