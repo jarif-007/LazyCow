@@ -45,6 +45,8 @@ Say: "handoff.md appears stale — HEAD is X but handoff says Y.
 Shall I reconcile before proceeding?"
 Wait for the developer's instruction.
 
+**Known false positive:** `boot.mjs` compares the `Last commit:` line against `git rev-parse --short HEAD` with exact string equality. Any commit that touches `handoff.md` moves HEAD past the value in the file — including the very commit that fixes the staleness. So a warning can fire on a clean tree right after a handoff-update commit. Before raising this, check `git log --oneline -5` and confirm the mismatch is real. Tracked in `missions.md` under "Boot system — fix stale-handoff false positive."
+
 ## Step 6 — If a file the developer sends doesn't match what §5 Handoff describes
 Flag it clearly: "Handoff says <X> but the file shows <Y>.
 Which is correct?" Do not silently trust either source.
@@ -56,3 +58,15 @@ Which is correct?" Do not silently trust either source.
 - Never suggest a reverted alternative listed in decisions.md.
 - FIND/REPLACE only. Full files only on explicit "full replacement" request.
 - Verify with `npx tsc --noEmit` from lazycoww/ after each change.
+
+## Sign-off rule — handoff reconciliation after every commit series
+
+After a commit series lands, BEFORE moving on to new work, verify three things against `git log` and `git status`. If any of the three disagree, the next message OPENS WITH A FIX, not with new work.
+
+1. **Header** — `Last commit:` in `doc/handoff.md` matches `git rev-parse --short HEAD`.
+2. **§1 Current Focus** — the status line correctly reflects whether the work is committed or uncommitted, and names the commit hashes if committed.
+3. **§5 Uncommitted** — mirrors `git status --short` (empty if clean) and the recent-commits list names the actual latest commits.
+
+**Why:** §5 is titled "mirrors git status" — if it doesn't, the whole section is untrustworthy and the next AI session starts from a wrong mental model. §1's status line is what tells the next session whether to hunt for uncommitted work. The header is trivial; §1 and §5 are the ones that go wrong when a commit series lands and only the header gets updated.
+
+**Session 12 lesson:** five commits landed (backend, frontend, docs checkpoint, handoff header fix, journal stubs). The header was updated twice; §1 and §5 were left at "uncommitted, three commits pending" and the pre-commit file list. That's the exact drift pattern this rule prevents.
