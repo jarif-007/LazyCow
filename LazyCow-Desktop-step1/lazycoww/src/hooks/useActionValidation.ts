@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActionItem, actionCatalog } from '../types/actions';
+import { ActionItem, actionCatalog, isUwpPath } from '../types/actions';
 
 const CATALOG_TYPES = new Set(actionCatalog.map((a) => a.type as string));
 
@@ -145,6 +145,7 @@ export function useActionValidation(sequence: ActionItem[]): ValidationState {
 
           case 'launch_app':
             if (!v) nextErrors[card.id] = 'Application path is required';
+            else if (isUwpPath(v)) break; // UWP — launches via shell:AppsFolder, no path check
             else if (!v.toLowerCase().endsWith('.exe'))
               nextErrors[card.id] = 'Only .exe files are supported';
             else if (window.electronAPI?.checkPathExists) {

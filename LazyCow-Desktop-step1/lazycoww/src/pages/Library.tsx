@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { SavedShortcut } from '../types/actions';
+import { SavedShortcut, isUwpPath } from '../types/actions';
 import { ShortcutCard } from '../components/ShortcutCard';
 import { DeleteModal } from '../components/DeleteModal';
 import { ConfirmSecuredModal } from '../components/ConfirmSecuredModal';
@@ -66,6 +66,9 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
             a.type !== 'open_file' &&
             a.type !== 'open_folder'
           ) continue;
+
+          // UWP apps launch via shell:AppsFolder, not a real file path.
+          if (a.type === 'launch_app' && isUwpPath(a.value)) continue;
 
           const val = (a.value || '').trim();
           if (!val) {

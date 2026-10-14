@@ -13,6 +13,9 @@ interface SettingsAppearanceProps {
   /** Current zoom factor. 1 = 100%. */
   zoomFactor: number;
   onZoomChange: (factor: number) => void;
+  /** Backdrop style for the App Drawer (Select App) modal. */
+  appDrawerBackdrop: 'blur' | 'solid';
+  onAppDrawerBackdropChange: (value: 'blur' | 'solid') => void;
 }
 
 const customThemes: { name: ThemeName; label: string; icon: string; colorClass: string }[] = [
@@ -24,6 +27,7 @@ const customThemes: { name: ThemeName; label: string; icon: string; colorClass: 
 export const SettingsAppearance: React.FC<SettingsAppearanceProps> = ({
   themeMode, onThemeModeChange, customColorMode, onCustomColorModeChange, customTheme, onCustomThemeChange,
   zoomFactor, onZoomChange,
+  appDrawerBackdrop, onAppDrawerBackdropChange,
 }) => {
   return (
     <div>
@@ -61,6 +65,24 @@ export const SettingsAppearance: React.FC<SettingsAppearanceProps> = ({
             {[0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2].map((z) => (
               <option key={z} value={z}>{Math.round(z * 100)}%</option>
             ))}
+          </select>
+        </div>
+
+        {/* App Drawer backdrop */}
+        <div className="p-4 flex items-center justify-between">
+          <div>
+            <h3 className="font-body-md font-medium">App Drawer backdrop</h3>
+            <p className="text-body-sm opacity-80">
+              Background style when picking apps. Blur looks nicer but may stutter on older PCs.
+            </p>
+          </div>
+          <select
+            value={appDrawerBackdrop}
+            onChange={(e) => onAppDrawerBackdropChange(e.target.value as 'blur' | 'solid')}
+            className="bg-background/50 border border-border rounded-lg px-3 py-2 font-body-sm text-foreground focus:ring-1 focus:ring-primary focus:outline-none"
+          >
+            <option value="solid">Solid</option>
+            <option value="blur">Blur</option>
           </select>
         </div>
 

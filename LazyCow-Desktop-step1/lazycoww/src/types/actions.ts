@@ -191,7 +191,19 @@ export const ARRANGEABLE_ACTION_TYPES = new Set([
 ]);
 
 export function isArrangeable(action: ActionItem): boolean {
-  return ARRANGEABLE_ACTION_TYPES.has(action.type);
+  return ARRANGEABLE_ACTION_TYPES.has(action.type)
+}
+
+/**
+ * True when the value is a Windows shell URI — a UWP app
+ * (`shell:AppsFolder\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App`) or a
+ * shell folder (`shell:MyComputerFolder`, `shell:RecycleBinFolder`, etc.).
+ * These launch via `shell.openExternal` or `explorer.exe`, never via a
+ * file path — so the `.exe` extension check and the path-existence check
+ * do not apply. Single source of truth for "is this a shell action value".
+ */
+export function isUwpPath(value: string): boolean {
+  return typeof value === 'string' && value.startsWith('shell:')
 }
 
 // ──────────────────────────────────────────────

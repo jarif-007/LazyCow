@@ -308,3 +308,19 @@ h1, h2, h3, h4, h5, h6, p, span, a, label, button {
 ::-webkit-scrollbar-corner {
     background: transparent;
 }
+
+/* Alphabet strip in the app drawer — near-invisible scrollbar so the
+   A–Z list scrolls when the modal is short, without a visible track. */
+.scrollbar-thin-alpha::-webkit-scrollbar {
+    width: 2px;
+}
+.scrollbar-thin-alpha::-webkit-scrollbar-track {
+    background: transparent;
+}
+.scrollbar-thin-alpha::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 2px;
+}
+.scrollbar-thin-alpha::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.6);
+}

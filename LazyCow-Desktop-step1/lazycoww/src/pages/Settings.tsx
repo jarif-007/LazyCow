@@ -23,6 +23,8 @@ interface LocalSettings {
   autoScrollSpeed: number;
   /** Page zoom factor. 0.5 = 50%, 1.0 = 100% (default), 2.0 = 200%. */
   zoomFactor: number;
+  /** Backdrop style for the App Drawer modal. */
+  appDrawerBackdrop: 'blur' | 'solid';
 }
 
 const DEFAULT_SETTINGS: LocalSettings = {
@@ -35,6 +37,7 @@ const DEFAULT_SETTINGS: LocalSettings = {
   dataShade: 'light',
   autoScrollSpeed: 6,
   zoomFactor: 1,
+  appDrawerBackdrop: 'solid',
 };
 
 interface SettingsProps {
@@ -112,6 +115,8 @@ export default function Settings({ themeMode, onThemeModeChange, customColorMode
           onCustomThemeChange={onCustomThemeChange}
           zoomFactor={settings.zoomFactor}
           onZoomChange={(factor) => updateSetting('zoomFactor', factor)}
+          appDrawerBackdrop={settings.appDrawerBackdrop}
+          onAppDrawerBackdropChange={(v) => updateSetting('appDrawerBackdrop', v)}
         />
         <SettingsGeneral settings={settings} onUpdate={updateSetting} customColorMode={customColorMode} />
         <SettingsBlockedTriggers customColorMode={customColorMode} />
