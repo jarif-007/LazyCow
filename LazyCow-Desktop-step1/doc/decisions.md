@@ -497,3 +497,16 @@ Append-only. Never delete. Each entry: date, decision, alternatives, why, conseq
   - **For every future surface:** if a grid needs stagger, follow this pattern. Compute delay per child. Cap it. Reduce-motion reduces the delay to zero and swaps the spring for a fade. Do not put `staggerChildren` on the parent and hope it works.
   - The visible stagger for a 3-card grid lands as ~450ms of animation + 0.5s spring settle per card — feels intentional without holding the user up.
 - **Status:** active
+## 2026-10-19 — Typography switches to SF Pro / Segoe UI Variable
+- **Decision:** Replaced all default UI fonts with `-apple-system`, `BlinkMacSystemFont`, `SF Pro Text`, and `Segoe UI Variable Text`. Monospace is now reserved *exclusively* for code (`font-code-sm`).
+- **Alternatives:** Keep the old default system fonts. Rejected — the old `font-label-caps` was globally mapped to monospace, making buttons like "New Shortcut" look like terminal commands rather than native UI buttons.
+- **Why:** Apple's SF Pro and Microsoft's Segoe UI Variable are the gold standards for native apps. They provide clear weight hierarchies and superior legibility at small sizes compared to the previous default stack. 
+- **Consequence:** The app instantly feels more premium. Buttons and headers now use standard sans-serif weights instead of monospace.
+- **Status:** active
+
+## 2026-10-19 — SVG Inline Injection for Theme-Adaptive Branding
+- **Decision:** The Sidebar and Splash screen logos are injected directly as inline `<svg>` elements in React, rather than loaded via `<img src="...">`.
+- **Alternatives:** Use `<img>` tags with CSS filters (e.g., `dark:invert`). Rejected — CSS filters cannot accurately map to custom theme colors (like Ocean Cyan or Coffee Brown). 
+- **Why:** Inline SVGs can use `fill="currentColor"` or `fill="var(--splash-bar)"`. This allows the logo to dynamically adapt to Windows Dark Mode and all three Custom Themes without needing multiple asset files.
+- **Consequence:** The logo perfectly matches the theme accent. The `public/wordmark.svg` file is only used for marketing (README), not inside the app UI.
+- **Status:** active

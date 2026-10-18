@@ -31,7 +31,7 @@ The application is structured to support:
 * **Theme Architecture:**
   - **Windows Default Mode:** Follows Windows 11 Fluent Design (neutral white/dark grey palette). System accent color is read via Electron's `systemPreferences.getAccentColor()` in the main process and injected into `--primary` as HSL.
   - **Custom Color Mode:** User-toggleable in Settings (Coffee, Ocean, Forest themes with light/medium/dark shade gradients).
-* **Typography:** Segoe UI Variable Text (primary UI font) and JetBrains Mono (monospace/codes). Fonts preloaded in `index.html`.
+* **Typography:** `SF Pro` / `Segoe UI Variable` (primary UI font) and JetBrains Mono (monospace/codes). Headers use Playfair Display. Fonts preloaded in `index.html` and mapped via Tailwind.
 * **Windows ClearType & Hardware Scroll Stabilizer:**
   - `-webkit-font-smoothing: subpixel-antialiased` and `text-rendering: optimizeLegibility` applied globally.
   - Scroll containers use `transform: translateZ(0)` and `backface-visibility: hidden` to eliminate jitter.
@@ -58,6 +58,7 @@ The application is structured to support:
   - `lazycow-custom-color-mode` — Boolean toggle for custom color themes.
   - `lazycow-custom-theme` — `'coffee' | 'ocean' | 'forest'`.
   - `lazycow-dark` — Legacy flag kept in sync with dark mode state.
+  - `lazycow-system-accent` — Cached hex color of the user's Windows accent, used by the splash screen to prevent a color flash before React hydrates.
   - `lazycow-hide-modal-hints` — Boolean. When true, the multi-delete confirmation modal hides the small `Esc` / `Enter` badges.
 
 ---
@@ -76,6 +77,7 @@ LazyCow/
 │       ├── electron-builder.json5     # Windows-exclusive NSIS installer config
 │       ├── index.html                 # HTML entry with splash screen & preloaded fonts
 │       ├── .eslintrc.cjs              # ESLint configuration ignoring dist, dist-electron, release
+│       ├── public/                    # Static assets (icon.ico, wordmark.svg, icon-monogram.svg)
 │       ├── electron/
 │       │   ├── main.ts                # Main process: execution engine, IPC handlers, hotkeys, tray
 │       │   ├── preload.ts             # Context bridge: safe electronAPI exposure
@@ -193,6 +195,7 @@ LazyCow/
   - **Fires in parallel with the action loop.** `runShortcutActions` creates the `arrangeWindows` promise *before* iterating actions, so arrangement happens concurrently with the remaining launches. `estimateShortcutBudgetMs()` sizes the poll window per-shortcut (5s base + per-action estimates, capped at 60s) so shortcuts with long `delay` actions don't time out.
   - **Per-placement polling.** Each assigned app is polled independently — 15ms warmup for 800ms, then taper to a 200ms maximum. A window is snapped the moment it appears.
   - **Claim-the-zone.** Every placement is `placed` or `not_found`. No fallback, no shifting, no occupancy check (see decisions.md 2026-10-06).
+  - **Shell Launcher Mapping.** `control.exe` and `rundll32.exe` are mapped to `explorer.exe` in the TS layer before being sent to PowerShell, allowing the engine to find their windows correctly. The `TrimEnd('\\', '/')` bug that crashed the PowerShell script was fixed.
   - **User-judge via unassignment.** An action assigned to no zone still launches with the shortcut, but the layout engine skips it. This is the primary control for "this app shouldn't be auto-arranged" — implemented via the Position dropdown's "Not arranged" option.
   - **UWP fallback.** UWP windows detected via `IsImmersiveProcess` are centered at native size instead of stretched. This handles the "user assigned Calculator by mistake" case gracefully — the window stays usable instead of being visually stretched.
 

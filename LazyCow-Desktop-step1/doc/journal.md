@@ -316,3 +316,13 @@ Format:
 - **Files:** (fill in)
 - **Verified:** (fill in)
 - **Commit:** b5666d7
+
+## 2026-10-19 — feat(ui): complete app branding + fix layout engine bugs
+- **Issue:** (1) The `open_folder` and `control.exe` layout engine was failing due to a template literal escaping bug and process name mismatches. (2) The app's default fonts (monospace) and emoji branding felt unpolished. (3) Splash screen and sidebar colors didn't adapt to themes correctly.
+- **Solution:** 
+  - Layout: Fixed `TrimEnd('\', '/')` escaping bug in `windowLayout.ts`. Mapped shell launchers (`control`, `rundll32`) to `explorer` in `getExpectedProcessName`. Changed `SW_RESTORE` to `SW_SHOWNORMAL` for stubborn Explorer windows.
+  - Branding: Replaced default fonts with `-apple-system`, `SF Pro`, and `Segoe UI Variable`. Added `wordmark.svg` and `icon-monogram.svg` directly into React components for theme-adaptive coloring. Added custom `.ico` for the installer/taskbar.
+  - UI: Implemented Framer Motion `AnimatePresence` for sidebar collapse. Cached Windows accent color in localStorage to prevent splash screen color mismatch. Aligned Library header buttons to exact pixel heights.
+- **Files:** `electron/main.ts`, `electron/windowLayout.ts`, `electron-builder.json5`, `index.html`, `tailwind.config.js`, `src/App.tsx`, `src/components/Sidebar.tsx`, `src/components/SettingsFooter.tsx`, `src/pages/Library.tsx`, `src/pages/Builder.tsx`, `public/*`
+- **Verified:** yes — `tsc` clean. Layout engine successfully arranges folders and Control Panel. Splash screen, sidebar, and taskbar icons all render correctly in Light, Dark, and Custom themes.
+- **Commit:** 53bad70

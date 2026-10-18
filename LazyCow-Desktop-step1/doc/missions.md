@@ -1,5 +1,16 @@
 # LazyCow — Active Missions
-
+## Mission: Session 16 — Branding & Layout Engine Fixes
+Status: COMPLETE (Commit pending)
+- [x] Fix `open_folder` arrangement (`TrimEnd('\\', '/')` bug).
+- [x] Map shell launchers (`control.exe`) to `explorer` in `windowLayout.ts`.
+- [x] Change `SW_RESTORE` to `SW_SHOWNORMAL` for stubborn Explorer windows.
+- [x] Add `setAppUserModelId` to `main.ts` to fix taskbar icon.
+- [x] Add new branding assets (`icon.ico`, `wordmark.svg`, `icon-monogram.svg`).
+- [x] Implement SF Pro / Segoe UI Variable typography.
+- [x] Add Framer Motion `AnimatePresence` to Sidebar logo transitions.
+- [x] Cache system accent color in localStorage for splash screen.
+- [x] Standardize Library header button sizing.
+- [x] Track manual secured overrides via `isSecuredCustom`.
 ## Mission: Session 15 — UI Bugfixes & Library Multi-Select
 Status: COMPLETE (Commit `e01159a`)
 - [x] Wrap `DeleteModal`, Library rename modal, and App unsaved modal in `createPortal` to fix windowed-mode positioning.
