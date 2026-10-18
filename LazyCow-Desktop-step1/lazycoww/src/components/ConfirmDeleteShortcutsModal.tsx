@@ -1,9 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { motion, AnimatePresence } from 'motion/react';
+import { usePrefersReducedMotion } from '../hooks/usePrefersReducedMotion';
+import { SPRING_ENTER, FADE_ENTER, BACKDROP_ENTER, MODAL_OFFSET_Y } from '../utils/motion';
 
 const HINTS_STORAGE_KEY = 'lazycow-hide-modal-hints';
 
 interface ConfirmDeleteShortcutsModalProps {
+    isOpen: boolean;
     count: number;
     onConfirm: () => void;
     onCancel: () => void;
@@ -17,10 +21,12 @@ interface ConfirmDeleteShortcutsModalProps {
  * Rendered via createPortal so a parent transform never traps it.
  */
 export const ConfirmDeleteShortcutsModal: React.FC<ConfirmDeleteShortcutsModalProps> = ({
+    isOpen,
     count,
     onConfirm,
     onCancel,
 }) => {
+    const reducedMotion = usePrefersReducedMotion();
     const [hideHints, setHideHints] = useState<boolean>(() => {
         try {
             return localStorage.getItem(HINTS_STORAGE_KEY) === 'true';
@@ -37,6 +43,7 @@ export const ConfirmDeleteShortcutsModal: React.FC<ConfirmDeleteShortcutsModalPr
     };
 
     useEffect(() => {
+        if (!isOpen) return;
         const onKey = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
                 e.preventDefault();
@@ -52,9 +59,24 @@ export const ConfirmDeleteShortcutsModal: React.FC<ConfirmDeleteShortcutsModalPr
     }, [onCancel, onConfirm, handleConfirm]);
 
     return createPortal(
-        <div className="fixed inset-0 z-[250] flex items-center justify-center">
-            <div className="absolute inset-0 bg-background/80" onClick={onCancel} />
-            <div className="relative bg-card border border-border rounded-2xl p-6 shadow-2xl max-w-md w-full mx-4">
+        <AnimatePresence>
+            {isOpen && (
+                <div className="fixed inset-0 z-[250] flex items-center justify-center">
+            <motion.div 
+                className="absolute inset-0 bg-background/80" 
+                onClick={onCancel}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={reducedMotion ? FADE_ENTER : BACKDROP_ENTER}
+            />
+            <motion.div 
+                className="relative bg-card border border-border rounded-2xl p-6 shadow-2xl max-w-md w-full mx-4"
+                initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: MODAL_OFFSET_Y }}
+                animate={reducedMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+                exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: MODAL_OFFSET_Y }}
+                transition={reducedMotion ? FADE_ENTER : SPRING_ENTER}
+            >
                 <button
                     onClick={onCancel}
                     className="absolute top-3 right-3 w-8 h-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
@@ -108,8 +130,10 @@ export const ConfirmDeleteShortcutsModal: React.FC<ConfirmDeleteShortcutsModalPr
                         Don't show these hints again
                     </label>
                 </div>
-            </div>
-        </div>,
+            </motion.div>
+                </div>
+            )}
+        </AnimatePresence>,
         document.body
     );
 };

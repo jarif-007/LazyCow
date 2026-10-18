@@ -161,6 +161,8 @@ function App() {
     window.electronAPI.getSystemAccent().then((hex) => {
       setSystemAccent(hex);
       document.documentElement.style.setProperty('--primary', hexToHSL(hex));
+      // Cache the exact Windows accent color so the splash screen can use it next time
+      try { localStorage.setItem('lazycow-system-accent', hex); } catch {}
     });
 
     // Listen for real-time changes

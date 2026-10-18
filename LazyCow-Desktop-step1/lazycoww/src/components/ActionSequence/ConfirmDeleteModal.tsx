@@ -1,8 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { motion, AnimatePresence } from 'motion/react';
+import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion';
+import { SPRING_ENTER, FADE_ENTER, BACKDROP_ENTER, MODAL_OFFSET_Y } from '../../utils/motion';
 import { ActionItem } from '../../types/actions';
 
 interface ConfirmDeleteModalProps {
+  isOpen: boolean;
   actions: ActionItem[];
   onConfirm: () => void;
   onCancel: () => void;
@@ -18,10 +22,12 @@ const HINTS_STORAGE_KEY = 'lazycow-hide-modal-hints';
  * automatically by the Danger Zone factory reset (which calls localStorage.clear()).
  */
 export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
+  isOpen,
   actions,
   onConfirm,
   onCancel,
 }) => {
+  const reducedMotion = usePrefersReducedMotion();
   const [hideHints, setHideHints] = useState<boolean>(() => {
     try {
       return localStorage.getItem(HINTS_STORAGE_KEY) === 'true';
@@ -31,6 +37,7 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
   });
 
   useEffect(() => {
+    if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -64,10 +71,24 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
   const summary = Object.entries(counts).sort((a, b) => b[1] - a[1]);
 
   return createPortal(
-    <div className="fixed inset-0 z-[250] flex items-center justify-center">
-      <div className="absolute inset-0 bg-background/80" onClick={onCancel} />
-
-      <div className="relative bg-card border border-border rounded-2xl p-6 shadow-2xl max-w-md w-full mx-4">
+    <AnimatePresence>
+      {isOpen && (
+        <div className="fixed inset-0 z-[250] flex items-center justify-center">
+          <motion.div 
+            className="absolute inset-0 bg-background/80" 
+            onClick={onCancel}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={reducedMotion ? FADE_ENTER : BACKDROP_ENTER}
+          />
+          <motion.div 
+            className="relative bg-card border border-border rounded-2xl p-6 shadow-2xl max-w-md w-full mx-4"
+            initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: MODAL_OFFSET_Y }}
+            animate={reducedMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+            exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: MODAL_OFFSET_Y }}
+            transition={reducedMotion ? FADE_ENTER : SPRING_ENTER}
+          >
         <button
           onClick={onCancel}
           className="absolute top-3 right-3 w-8 h-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
@@ -136,8 +157,10 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
             Don't show these hints again
           </label>
         </div>
-      </div>
-    </div>,
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>,
     document.body
   );
 };

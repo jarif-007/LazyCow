@@ -6,6 +6,8 @@ export const SettingsDangerZone: React.FC = () => {
 
   const handleWipe = () => {
     localStorage.clear();
+    // Wipe the disk mirror so Library doesn't instantly recover the data on reload!
+    window.electronAPI?.writeShortcutsToDisk([]);
     window.location.reload();
   };
 

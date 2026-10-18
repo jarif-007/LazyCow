@@ -47,6 +47,8 @@ export interface SavedShortcut {
    * Absent = default based on `securedShortcutsEnabled` at creation time.
    */
   secured?: boolean;
+  /** True if the user has manually toggled the secured status for this shortcut. */
+  isSecuredCustom?: boolean;
 }
 
 // ──────────────────────────────────────────────

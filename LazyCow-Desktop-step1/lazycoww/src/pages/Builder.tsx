@@ -7,6 +7,7 @@ import { WindowLayoutPanel } from '../components/WindowLayout/WindowLayoutPanel'
 import { useHotkeyRecorder } from '../hooks/useHotkeyRecorder';
 import { useActionValidation } from '../hooks/useActionValidation';
 import { readSecuredShortcutsDefault } from '../utils/security';
+import { hasDangerousActions } from '../utils/danger';
 import { persistShortcuts } from '../utils/shortcutStorage';
 
 interface BuilderProps {
@@ -607,12 +608,12 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
       }
     }
 
-    // New shortcuts inherit `secured` from the global default + the
-    // shortcut's own dangerous content. Existing shortcuts keep whatever
-    // the user has already chosen (editData.secured).
-    const secured = editData
-      ? (editData.secured ?? sequence.some((a) => a.safetyOverride === 'dangerous' || (!a.safetyOverride && (a.type === 'run_script' || a.type === 'launch_app'))))
-      : (readSecuredShortcutsDefault() && sequence.some((a) => a.safetyOverride === 'dangerous' || (!a.safetyOverride && (a.type === 'run_script' || a.type === 'launch_app'))));
+    // If the user hasn't manually toggled secured, we dynamically calculate it.
+    const hasDangerous = hasDangerousActions(sequence);
+    const defaultSecured = hasDangerous && readSecuredShortcutsDefault();
+    
+    const isSecuredCustom = editData?.isSecuredCustom ?? false;
+    const secured = isSecuredCustom ? (editData?.secured ?? false) : defaultSecured;
 
     const shortcut: SavedShortcut = {
       id: editData?.id || `sc-${crypto.randomUUID()}`,
@@ -620,6 +621,7 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
       createdAt: editData?.createdAt || new Date().toISOString(),
       windowLayout,
       secured,
+      isSecuredCustom,
     };
 
     if (editData) {

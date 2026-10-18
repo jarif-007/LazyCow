@@ -11,11 +11,22 @@ import { hasDangerousActions } from './danger';
  */
 export function migrateShortcutsSecured(shortcuts: SavedShortcut[]): { shortcuts: SavedShortcut[]; changed: boolean } {
     let changed = false;
+    const globalDefault = readSecuredShortcutsDefault();
+    
     const next = shortcuts.map((sc) => {
-        if (typeof sc.secured === 'boolean') return sc;
-        changed = true;
-        return { ...sc, secured: hasDangerousActions(sc.actions) };
+        // If the user explicitly touched the toggle, we respect their choice.
+        if (sc.isSecuredCustom === true) return sc;
+        
+        // Otherwise, auto-evaluate based on the global setting and actions.
+        const defaultSecured = hasDangerousActions(sc.actions) && globalDefault;
+        
+        if (sc.secured !== defaultSecured) {
+            changed = true;
+            return { ...sc, secured: defaultSecured };
+        }
+        return sc;
     });
+    
     return { shortcuts: next, changed };
 }
 

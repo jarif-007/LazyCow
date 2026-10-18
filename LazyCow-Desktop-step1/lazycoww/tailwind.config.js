@@ -43,12 +43,12 @@ export default {
         "margin-page": "40px"
       },
       fontFamily: {
-        "label-caps": ["ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "monospace"],
-        "body-md": ["-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "Helvetica", "Arial", "sans-serif"],
-        "title-sm": ["-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "Helvetica", "Arial", "sans-serif"],
-        "body-sm": ["-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "Helvetica", "Arial", "sans-serif"],
-        "headline-md": ["-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "Helvetica", "Arial", "sans-serif"],
-        "display-lg": ["-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "Helvetica", "Arial", "sans-serif"],
+        "label-caps": ["-apple-system", "BlinkMacSystemFont", "SF Pro Text", "Segoe UI", "sans-serif"],
+        "body-md": ["-apple-system", "BlinkMacSystemFont", "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", "Roboto", "sans-serif"],
+        "title-sm": ["-apple-system", "BlinkMacSystemFont", "SF Pro Display", "Segoe UI Variable Display", "Segoe UI", "sans-serif"],
+        "body-sm": ["-apple-system", "BlinkMacSystemFont", "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", "Roboto", "sans-serif"],
+        "headline-md": ["-apple-system", "BlinkMacSystemFont", "SF Pro Display", "Segoe UI Variable Display", "Segoe UI", "sans-serif"],
+        "display-lg": ["-apple-system", "BlinkMacSystemFont", "SF Pro Display", "Segoe UI Variable Display", "Segoe UI", "sans-serif"],
         "code-sm": ["ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "monospace"]
       },
       fontSize: {

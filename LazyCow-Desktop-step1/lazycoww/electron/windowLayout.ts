@@ -23,7 +23,7 @@ import os from 'node:os'
  * the embedded C# here-string survives intact.
  */
 export async function snapshotHandles(): Promise<Set<string>> {
-  const script = `
+    const script = `
 $ErrorActionPreference = 'SilentlyContinue'
 Add-Type @"
 using System;
@@ -42,23 +42,23 @@ public class Snap {
 "@
 [Snap]::Get() -join ','
 `
-  const encoded = Buffer.from(script, 'utf16le').toString('base64')
-  return new Promise((resolve) => {
-    execFile(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
-      { windowsHide: true, maxBuffer: 1024 * 1024, timeout: 5000 },
-      (err, stdout) => {
-        if (err || !stdout) {
-          console.warn('[snapshotHandles] failed:', err)
-          resolve(new Set())
-          return
-        }
-        const handles = stdout.trim().split(',').filter(Boolean)
-        resolve(new Set(handles))
-      }
-    )
-  })
+    const encoded = Buffer.from(script, 'utf16le').toString('base64')
+    return new Promise((resolve) => {
+        execFile(
+            'powershell.exe',
+            ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+            { windowsHide: true, maxBuffer: 1024 * 1024, timeout: 5000 },
+            (err, stdout) => {
+                if (err || !stdout) {
+                    console.warn('[snapshotHandles] failed:', err)
+                    resolve(new Set())
+                    return
+                }
+                const handles = stdout.trim().split(',').filter(Boolean)
+                resolve(new Set(handles))
+            }
+        )
+    })
 }
 
 /**
@@ -69,67 +69,67 @@ public class Snap {
  * User data is JSON-escaped inside the script body — no CLI-injection surface.
  */
 async function runPowerShellScript(
-  script: string,
-  timeoutMs: number,
-  signal?: AbortSignal
+    script: string,
+    timeoutMs: number,
+    signal?: AbortSignal
 ): Promise<string> {
-  const tmpPath = path.join(
-    os.tmpdir(),
-    `lazycow-arrange-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.ps1`
-  )
+    const tmpPath = path.join(
+        os.tmpdir(),
+        `lazycow-arrange-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.ps1`
+    )
 
-  // Prepend UTF-8 BOM so Windows PowerShell 5.1 reads the file as UTF-8.
-  // Without this, non-ASCII characters in user values can be garbled.
-  const bom = '\uFEFF'
-  await fs.promises.writeFile(tmpPath, bom + script, 'utf8')
+    // Prepend UTF-8 BOM so Windows PowerShell 5.1 reads the file as UTF-8.
+    // Without this, non-ASCII characters in user values can be garbled.
+    const bom = '\uFEFF'
+    await fs.promises.writeFile(tmpPath, bom + script, 'utf8')
 
-  try {
-    return await new Promise<string>((resolve, reject) => {
-      execFile(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-ExecutionPolicy', 'Bypass',
-          '-File', tmpPath,
-        ],
-        {
-          windowsHide: true,
-          maxBuffer: 8 * 1024 * 1024,
-          timeout: timeoutMs,
-          // Force the spawned PowerShell to be DPI-aware from process creation.
-          // This MUST happen via env var, not a runtime API call — PowerShell
-          // has already initialised its GDI/window subsystem by the time our
-          // script runs, so SetProcessDPIAware() is a silent no-op.
-          env: { ...process.env, __COMPAT_LAYER: 'HIGHDPIAWARE' },
-          // AbortSignal: killing the child process stops the internal
-          // PowerShell polling loop immediately. Without this, cancellation
-          // would have to wait for the poll deadline (up to 60s) before the
-          // process exits — the user would click Cancel and see nothing happen.
-          signal,
-        },
-        (err, stdout, stderr) => {
-          // Always surface PowerShell's stderr — our diagnostic prints go there.
-          if (stderr && stderr.trim().length > 0) {
-            console.log('[windowLayout] powershell stderr:', stderr.trim())
-          }
-          if (err && !stdout) {
-            const e = new Error(
-              stderr ? `${err.message}\nSTDERR: ${stderr}` : err.message
-            ) as Error & { stdout?: string }
-            e.stdout = stdout
-            reject(e)
-            return
-          }
-          resolve(stdout)
-        }
-      )
-    })
-  } finally {
-    // Best-effort cleanup — ignore errors so a failed delete doesn't mask
-    // the real error thrown above.
-    fs.promises.unlink(tmpPath).catch(() => { /* ignore */ })
-  }
+    try {
+        return await new Promise<string>((resolve, reject) => {
+            execFile(
+                'powershell.exe',
+                [
+                    '-NoProfile',
+                    '-NonInteractive',
+                    '-ExecutionPolicy', 'Bypass',
+                    '-File', tmpPath,
+                ],
+                {
+                    windowsHide: true,
+                    maxBuffer: 8 * 1024 * 1024,
+                    timeout: timeoutMs,
+                    // Force the spawned PowerShell to be DPI-aware from process creation.
+                    // This MUST happen via env var, not a runtime API call — PowerShell
+                    // has already initialised its GDI/window subsystem by the time our
+                    // script runs, so SetProcessDPIAware() is a silent no-op.
+                    env: { ...process.env, __COMPAT_LAYER: 'HIGHDPIAWARE' },
+                    // AbortSignal: killing the child process stops the internal
+                    // PowerShell polling loop immediately. Without this, cancellation
+                    // would have to wait for the poll deadline (up to 60s) before the
+                    // process exits — the user would click Cancel and see nothing happen.
+                    signal,
+                },
+                (err, stdout, stderr) => {
+                    // Always surface PowerShell's stderr — our diagnostic prints go there.
+                    if (stderr && stderr.trim().length > 0) {
+                        console.log('[windowLayout] powershell stderr:', stderr.trim())
+                    }
+                    if (err && !stdout) {
+                        const e = new Error(
+                            stderr ? `${err.message}\nSTDERR: ${stderr}` : err.message
+                        ) as Error & { stdout?: string }
+                        e.stdout = stdout
+                        reject(e)
+                        return
+                    }
+                    resolve(stdout)
+                }
+            )
+        })
+    } finally {
+        // Best-effort cleanup — ignore errors so a failed delete doesn't mask
+        // the real error thrown above.
+        fs.promises.unlink(tmpPath).catch(() => { /* ignore */ })
+    }
 }
 
 // ──────────────────────────────────────────────
@@ -137,32 +137,32 @@ async function runPowerShellScript(
 // ──────────────────────────────────────────────
 
 export interface ZoneRect {
-  x: number
-  y: number
-  w: number
-  h: number
+    x: number
+    y: number
+    w: number
+    h: number
 }
 
 export interface Placement {
-  zoneId: string
-  zoneLabel: string
-  zone: ZoneRect
-  actionType: string
-  actionValue: string
-  actionTitle: string
-  /**
-   * True when the user left this action unassigned. The engine brings the
-   * window to front without resizing it. See decisions.md — "User-judge
-   * replaces UWP heuristic as the primary mechanism".
-   */
-  isUnassigned?: boolean
+    zoneId: string
+    zoneLabel: string
+    zone: ZoneRect
+    actionType: string
+    actionValue: string
+    actionTitle: string
+    /**
+     * True when the user left this action unassigned. The engine brings the
+     * window to front without resizing it. See decisions.md — "User-judge
+     * replaces UWP heuristic as the primary mechanism".
+     */
+    isUnassigned?: boolean
 }
 
 export interface PlacementResult {
-  zoneId: string
-  actionTitle: string
-  status: 'placed' | 'fallback_centered' | 'not_found' | 'skipped'
-  reason?: string
+    zoneId: string
+    actionTitle: string
+    status: 'placed' | 'fallback_centered' | 'not_found' | 'skipped'
+    reason?: string
 }
 
 // ──────────────────────────────────────────────
@@ -177,20 +177,28 @@ export interface PlacementResult {
  * - open_url    → resolved from the default browser's registry entry at runtime
  */
 function getExpectedProcessName(placement: Placement): string | null {
-  switch (placement.actionType) {
-    case 'launch_app': {
-      const base = path.basename(placement.actionValue)
-      return base.replace(/\.exe$/i, '')
+    switch (placement.actionType) {
+        case 'launch_app': {
+            const base = path.basename(placement.actionValue)
+            const name = base.replace(/\.exe$/i, '').toLowerCase()
+            // Shell launchers don't own their window — the window is owned
+            // by explorer.exe (classic Control Panel, File Explorer) or
+            // ApplicationFrameHost.exe (UWP). Map to the real owner so
+            // process-name matching in Find-Window has something to hit.
+            if (name === 'control' || name === 'rundll32' || name === 'explorer') {
+                return 'explorer'
+            }
+            return base.replace(/\.exe$/i, '')
+        }
+        case 'open_folder':
+            return 'explorer'
+        case 'open_file':
+        case 'open_url':
+            // Resolved inside the PowerShell script via registry lookup
+            return null
+        default:
+            return null
     }
-    case 'open_folder':
-      return 'explorer'
-    case 'open_file':
-    case 'open_url':
-      // Resolved inside the PowerShell script via registry lookup
-      return null
-    default:
-      return null
-  }
 }
 
 // ──────────────────────────────────────────────
@@ -213,78 +221,78 @@ function getExpectedProcessName(placement: Placement): string | null {
  * center-small behavior was superseded by user feedback.
  */
 export async function arrangeWindows(
-  placements: Placement[],
-  timeoutMs = 6000,
-  preExistingHandles?: Set<string>,
-  signal?: AbortSignal
+    placements: Placement[],
+    timeoutMs = 6000,
+    preExistingHandles?: Set<string>,
+    signal?: AbortSignal
 ): Promise<PlacementResult[]> {
-  if (placements.length === 0) return []
-  const engineTimeoutMs = Math.min(timeoutMs, 90000)
+    if (placements.length === 0) return []
+    const engineTimeoutMs = Math.min(timeoutMs, 90000)
 
-  // Pre-resolve expected process names where possible, otherwise 'auto'.
-  const placementsForScript = placements.map((p) => ({
-    zoneId: p.zoneId,
-    zoneLabel: p.zoneLabel,
-    x: p.zone.x,
-    y: p.zone.y,
-    w: p.zone.w,
-    h: p.zone.h,
-    process: getExpectedProcessName(p) ?? 'auto',
-    actionType: p.actionType,
-    actionValue: p.actionValue,
-    title: p.actionTitle,
-    isUnassigned: p.isUnassigned === true,
-  }))
-
-  // Pre-sanitize the handle list: digits + commas only. Prevents any
-  // possibility of injection via the CSV when it's interpolated into
-  // the PowerShell script body.
-  const existingHandlesCsv = preExistingHandles
-    ? [...preExistingHandles].join(',').replace(/[^0-9,]/g, '')
-    : ''
-  const script = buildScript(placementsForScript, engineTimeoutMs, existingHandlesCsv)
-
-  let stdout = ''
-  try {
-    // Subprocess timeout = engine poll budget + 5s headroom.
-    const subprocessTimeout = engineTimeoutMs + 5000
-    stdout = await runPowerShellScript(script, subprocessTimeout, signal)
-  } catch (err) {
-    // User aborted mid-poll. Return an empty result set — nothing was
-    // placed, and the caller isn't waiting for a status.
-    if (signal?.aborted) {
-      return []
-    }
-    const e = err as { stdout?: string; message?: string }
-    stdout = e.stdout ?? ''
-    if (!stdout) {
-      return placements.map((p) => ({
+    // Pre-resolve expected process names where possible, otherwise 'auto'.
+    const placementsForScript = placements.map((p) => ({
         zoneId: p.zoneId,
-        actionTitle: p.actionTitle,
-        status: 'not_found' as const,
-        reason: e.message ?? 'PowerShell engine failed',
-      }))
-    }
-  }
-
-  // Strip UTF-8 BOM and whitespace that PowerShell may prepend.
-  const clean = stdout.replace(/^\uFEFF/, '').trim()
-
-  try {
-    const parsed = JSON.parse(clean) as PlacementResult | PlacementResult[]
-    // PowerShell's ConvertTo-Json returns a bare object for single items,
-    // and an array for multiple. Normalize both to an array.
-    const normalized = Array.isArray(parsed) ? parsed : [parsed]
-    return normalized
-  } catch (parseErr) {
-    console.error('[windowLayout] parse failed:', parseErr)
-    return placements.map((p) => ({
-      zoneId: p.zoneId,
-      actionTitle: p.actionTitle,
-      status: 'not_found' as const,
-      reason: `Could not parse engine output: ${clean.slice(0, 200)}`,
+        zoneLabel: p.zoneLabel,
+        x: p.zone.x,
+        y: p.zone.y,
+        w: p.zone.w,
+        h: p.zone.h,
+        process: getExpectedProcessName(p) ?? 'auto',
+        actionType: p.actionType,
+        actionValue: p.actionValue,
+        title: p.actionTitle,
+        isUnassigned: p.isUnassigned === true,
     }))
-  }
+
+    // Pre-sanitize the handle list: digits + commas only. Prevents any
+    // possibility of injection via the CSV when it's interpolated into
+    // the PowerShell script body.
+    const existingHandlesCsv = preExistingHandles
+        ? [...preExistingHandles].join(',').replace(/[^0-9,]/g, '')
+        : ''
+    const script = buildScript(placementsForScript, engineTimeoutMs, existingHandlesCsv)
+
+    let stdout = ''
+    try {
+        // Subprocess timeout = engine poll budget + 5s headroom.
+        const subprocessTimeout = engineTimeoutMs + 5000
+        stdout = await runPowerShellScript(script, subprocessTimeout, signal)
+    } catch (err) {
+        // User aborted mid-poll. Return an empty result set — nothing was
+        // placed, and the caller isn't waiting for a status.
+        if (signal?.aborted) {
+            return []
+        }
+        const e = err as { stdout?: string; message?: string }
+        stdout = e.stdout ?? ''
+        if (!stdout) {
+            return placements.map((p) => ({
+                zoneId: p.zoneId,
+                actionTitle: p.actionTitle,
+                status: 'not_found' as const,
+                reason: e.message ?? 'PowerShell engine failed',
+            }))
+        }
+    }
+
+    // Strip UTF-8 BOM and whitespace that PowerShell may prepend.
+    const clean = stdout.replace(/^\uFEFF/, '').trim()
+
+    try {
+        const parsed = JSON.parse(clean) as PlacementResult | PlacementResult[]
+        // PowerShell's ConvertTo-Json returns a bare object for single items,
+        // and an array for multiple. Normalize both to an array.
+        const normalized = Array.isArray(parsed) ? parsed : [parsed]
+        return normalized
+    } catch (parseErr) {
+        console.error('[windowLayout] parse failed:', parseErr)
+        return placements.map((p) => ({
+            zoneId: p.zoneId,
+            actionTitle: p.actionTitle,
+            status: 'not_found' as const,
+            reason: `Could not parse engine output: ${clean.slice(0, 200)}`,
+        }))
+    }
 }
 
 // ──────────────────────────────────────────────
@@ -292,28 +300,28 @@ export async function arrangeWindows(
 // ──────────────────────────────────────────────
 
 interface ScriptPlacement {
-  zoneId: string
-  zoneLabel: string
-  x: number
-  y: number
-  w: number
-  h: number
-  process: string
-  actionType: string
-  actionValue: string
-  title: string
-  isUnassigned: boolean
+    zoneId: string
+    zoneLabel: string
+    x: number
+    y: number
+    w: number
+    h: number
+    process: string
+    actionType: string
+    actionValue: string
+    title: string
+    isUnassigned: boolean
 }
 
 function buildScript(
-  placements: ScriptPlacement[],
-  engineTimeoutMs: number,
-  existingHandlesCsv: string
+    placements: ScriptPlacement[],
+    engineTimeoutMs: number,
+    existingHandlesCsv: string
 ): string {
-  const json = JSON.stringify(placements)
-  const escapedJson = json.replace(/'/g, "''") // single-quote escape for PS
+    const json = JSON.stringify(placements)
+    const escapedJson = json.replace(/'/g, "''") // single-quote escape for PS
 
-  return `
+    return `
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -355,13 +363,16 @@ public class WinArranger {
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder strText, int maxCount);
     [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr hWnd);
+    [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
-    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+    [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
     [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
@@ -370,45 +381,48 @@ public class WinArranger {
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT { public int X; public int Y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WINDOWPLACEMENT {
+        public int length;
+        public int flags;
+        public int showCmd;
+        public POINT ptMinPosition;
+        public POINT ptMaxPosition;
+        public RECT rcNormalPosition;
+    }
+
+    [DllImport("user32.dll")] public static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT lpwndpl);
+    [DllImport("user32.dll")] public static extern bool SetWindowPlacement(IntPtr hWnd, [In] ref WINDOWPLACEMENT lpwndpl);
+
     public class WinItem {
         public IntPtr Handle;
         public string Title;
         public string ProcessName;
-        public DateTime ProcessStartTime;   // used to prefer newest windows
-        public bool IsUwp;                  // hosted by ApplicationFrameHost — position-only
+        public string ClassName;
+        public DateTime ProcessStartTime;
+        public bool IsUwp;
         public int X;
         public int Y;
         public int W;
         public int H;
     }
 
-    // True if the given process is a UWP/modern-shell app.
-    // Uses Windows' own IsImmersiveProcess — authoritative and stable across
-    // Windows updates (unlike process-name allow-lists, which break every
-    // time a package is renamed, e.g. calc → calc1).
     public static bool IsUwpWindow(uint pid) {
         try {
             using (var p = System.Diagnostics.Process.GetProcessById((int)pid)) {
                 return IsImmersiveProcess(p.Handle);
             }
-        } catch {
-            // If we can't open the process (access denied, exited), assume
-            // it's not UWP. Stretching is the safer default.
-            return false;
-        }
+        } catch { return false; }
     }
 
     public static List<WinItem> GetWindows() {
         var list = new List<WinItem>();
         EnumWindows((hWnd, lParam) => {
             if (!IsWindowVisible(hWnd)) return true;
-            int len = GetWindowTextLength(hWnd);
-            if (len == 0) return true;
-
-            var sb = new StringBuilder(len + 1);
-            GetWindowText(hWnd, sb, sb.Capacity);
-            string title = sb.ToString();
-
+            
             uint pid = 0;
             GetWindowThreadProcessId(hWnd, out pid);
             string procName = "";
@@ -416,63 +430,55 @@ public class WinArranger {
             try {
                 var p = System.Diagnostics.Process.GetProcessById((int)pid);
                 procName = p.ProcessName;
-                try { procStart = p.StartTime; } catch { /* access denied on some system procs */ }
+                try { procStart = p.StartTime; } catch {}
             } catch {}
 
-            // Skip the shell desktop
-            if (procName.Equals("explorer", StringComparison.OrdinalIgnoreCase) &&
-               (title.Equals("Program Manager", StringComparison.OrdinalIgnoreCase) || title.Length == 0)) {
+            int len = GetWindowTextLength(hWnd);
+            var sb = new StringBuilder(len + 1);
+            GetWindowText(hWnd, sb, sb.Capacity);
+            string title = sb.ToString();
+
+            var classSb = new StringBuilder(256);
+            GetClassName(hWnd, classSb, classSb.Capacity);
+            string className = classSb.ToString();
+
+            if (procName.Equals("explorer", StringComparison.OrdinalIgnoreCase) && title.Equals("Program Manager", StringComparison.OrdinalIgnoreCase)) {
                 return true;
             }
-            // Skip LazyCow itself
             if (procName.ToLower().Contains("lazycow") || title.IndexOf("LazyCow", StringComparison.OrdinalIgnoreCase) >= 0) {
                 return true;
             }
-            // Skip Windows system helper windows that are technically visible
-            // but are effectively invisible overlays (they cover the full
-            // screen and would trigger false occupancy in every zone).
             string[] sysIgnore = {
-                "TextInputHost",           // Windows Input Experience / IME overlay
-                "ShellExperienceHost",     // Start menu, Action Center
-                "SearchHost",              // Windows Search
-                "StartMenuExperienceHost", // Start menu host
-                "LockApp",                 // Lock screen host
-                "SystemSettings",          // Settings UWP host (usually hidden)
-                "WindowsInternal.ComposableShell.Experiences.TextInput.InputApp",
-                "SecurityHealthSystray",
-                "SystemSettingsBroker",
-                "Microsoft.YourPhone",
+                "TextInputHost", "ShellExperienceHost", "SearchHost", "StartMenuExperienceHost",
+                "LockApp", "SystemSettings", "WindowsInternal.ComposableShell.Experiences.TextInput.InputApp",
+                "SecurityHealthSystray", "SystemSettingsBroker", "Microsoft.YourPhone",
             };
             foreach (var ign in sysIgnore) {
-                if (procName.Equals(ign, StringComparison.OrdinalIgnoreCase)) {
-                    return true;
-                }
+                if (procName.Equals(ign, StringComparison.OrdinalIgnoreCase)) return true;
             }
 
             RECT r;
             GetWindowRect(hWnd, out r);
 
-            // Skip zero-size or fully-offscreen windows — some system windows
-            // report visible but have no usable area.
             int ww = r.Right - r.Left;
             int wh = r.Bottom - r.Top;
             if (ww <= 0 || wh <= 0) return true;
 
-            // UWP detection via Windows' own IsImmersiveProcess — authoritative,
-            // requires no elevation, and survives Windows updates that rename
-            // process images (calc → calc1, etc.).
             bool isUwp = IsUwpWindow(pid);
+            
+            // Force Explorer and Control Panel to be treated as Win32 apps.
+            // If they take the UWP branch, Windows passes SWP_NOSIZE and refuses to resize them.
+            if (procName.Equals("explorer", StringComparison.OrdinalIgnoreCase) || 
+                procName.Equals("control", StringComparison.OrdinalIgnoreCase) ||
+                procName.Equals("mmc", StringComparison.OrdinalIgnoreCase)) {
+                isUwp = false;
+            }
 
             list.Add(new WinItem {
-                Handle = hWnd,
-                Title = title,
-                ProcessName = procName,
-                ProcessStartTime = procStart,
-                IsUwp = isUwp,
-                X = r.Left,
-                Y = r.Top,
-                W = r.Right - r.Left,
-                H = r.Bottom - r.Top
+                Handle = hWnd, Title = title, ProcessName = procName,
+                ClassName = className,
+                ProcessStartTime = procStart, IsUwp = isUwp,
+                X = r.Left, Y = r.Top, W = r.Right - r.Left, H = r.Bottom - r.Top
             });
             return true;
         }, IntPtr.Zero);
@@ -510,10 +516,6 @@ public class WinArranger {
         } catch { return "auto"; }
     }
 
-    // Reliably bring a window to the front, even when called from a
-    // background process. AttachThreadInput temporarily merges our input
-    // queue with the current foreground thread, which unlocks
-    // SetForegroundWindow for the duration of the call.
     public static void ForceForeground(IntPtr hWnd) {
         IntPtr fore = GetForegroundWindow();
         uint forePid = 0;
@@ -521,10 +523,8 @@ public class WinArranger {
         uint thisThread = GetCurrentThreadId();
         bool attached = false;
         try {
-            if (foreThread != thisThread) {
-                attached = AttachThreadInput(foreThread, thisThread, true);
-            }
-            ShowWindow(hWnd, 9);           // SW_RESTORE (un-minimize)
+            if (foreThread != thisThread) attached = AttachThreadInput(foreThread, thisThread, true);
+            ShowWindow(hWnd, 9);
             BringWindowToTop(hWnd);
             SetForegroundWindow(hWnd);
         } finally {
@@ -545,20 +545,11 @@ $areaH = $area.Height
 # Diagnostic: log what PowerShell sees
 [Console]::Error.WriteLine("SCREEN_DEBUG: area=" + $areaX + "," + $areaY + " " + $areaW + "x" + $areaH + "  BoundsW=" + [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width + "x" + [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height)
 
-# ── Poll + place each window as soon as it appears (Batch 2c-polish) ──
-# Instead of waiting for ALL windows then placing them together, we now
-# poll each placement individually with a fast interval, and place it
-# the moment it's found. This cuts the "small window then snap" gap.
-# We no longer use a single global poll loop.
-
 # ── Track which handles we've already placed ──
 $usedHandles = [System.Collections.Generic.HashSet[IntPtr]]::new()
 $results = @()
 
-# ── Pre-snapshot: the list of window handles that were ALREADY on screen
-#    when Node captured the snapshot, before this shortcut's actions fired.
-#    These are "old" windows — a pre-existing browser window must never be
-#    used to satisfy a placement meant for a freshly-launched window.
+# ── Pre-snapshot ──
 $existingHandles = [System.Collections.Generic.HashSet[IntPtr]]::new()
 $existingCsv = '${existingHandlesCsv}'
 if ($existingCsv) {
@@ -571,9 +562,6 @@ if ($existingCsv) {
 [Console]::Error.WriteLine("PRE_SNAPSHOT: " + $existingHandles.Count + " windows passed from Node")
 
 # ── URL title helpers ──
-# For open_url placements, extract meaningful keywords from the URL host
-# so we can match against the browser window's title. This is how we tell
-# google.com and youtube.com apart when both open in the same browser.
 function Get-UrlKeyword($url) {
     try {
         $uri = [System.Uri]$url
@@ -603,9 +591,22 @@ function Find-Window($placement, $relaxed = $false) {
         }
     }
 
-    # Partition unused candidates into "new" (opened after the Node
-    # snapshot, i.e. by THIS shortcut run) and "old" (were already on
-    # screen). Placements strongly prefer new.
+    # Shell launchers: control.exe / rundll32.exe / explorer.exe don't
+    # own their window — the window belongs to explorer.exe (classic) or
+    # ApplicationFrameHost.exe (UWP). Remember which launcher it was so
+    # we can do title-hint matching below.
+    $shellLauncher = $null
+    if ($placement.actionType -eq 'launch_app') {
+        $exeBase = [System.IO.Path]::GetFileNameWithoutExtension($placement.actionValue)
+        if ($exeBase) {
+            $exeBaseLower = $exeBase.ToLower()
+            if ($exeBaseLower -eq 'control' -or $exeBaseLower -eq 'rundll32' -or $exeBaseLower -eq 'explorer') {
+                $shellLauncher = $exeBaseLower
+                $proc = 'explorer'
+            }
+        }
+    }
+
     $new = @()
     $old = @()
     if (-not $proc -or $proc -eq 'auto') {
@@ -625,27 +626,59 @@ function Find-Window($placement, $relaxed = $false) {
                 if ($w.ProcessName -like "*$proc*") { $strict += $w }
             }
         }
+        # Class fallback for shell windows — only known shell classes,
+        # never arbitrary windows.
+        if ($strict.Count -eq 0 -and $proc -eq 'explorer') {
+            $shellClasses = @('CabinetWClass', 'ApplicationFrameWindow', 'ExploreWClass')
+            foreach ($w in $allWindows) {
+                if ($usedHandles.Contains($w.Handle)) { continue }
+                if ($shellClasses -contains $w.ClassName) { $strict += $w }
+            }
+        }
         foreach ($w in $strict) {
             if ($existingHandles.Contains($w.Handle)) { $old += $w } else { $new += $w }
         }
     }
 
-    # ── open_url: NEW windows only, never old ──
-    # A pre-existing browser window must NEVER be placed in place of a URL
-    # the shortcut asked to open. If the browser reused an existing window
-    # (URL opened as a tab), there is no new window — the placement becomes
-    # not_found and the browser is left untouched.
-    #
-    # This is what stops a "meet.google.com" window from being grabbed by a
-    # "google.com" placement just because "google" appears in "Google Meet".
-    if ($placement.actionType -eq 'open_url') {
-        if ($new.Count -eq 0) {
-            # No new browser window yet — retry next poll iteration.
-            return $null
+    # ── open_folder: match folder name in the title ──
+    if ($placement.actionType -eq 'open_folder') {
+        $cleanPath = $placement.actionValue.TrimEnd('\\', '/')
+        $folderName = [System.IO.Path]::GetFileName($cleanPath)
+        
+        # 1. Try to find a NEW window with the exact folder name
+        if ($folderName) {
+            foreach ($w in $new) {
+                if ($usedHandles.Contains($w.Handle)) { continue }
+                if ($w.ProcessName.ToLower().Contains("lazycow")) { continue }
+                if ($w.Title -like "*$folderName*") { return $w }
+            }
+        }
+        
+        # 2. Fallback: Grab ANY new window that isn't LazyCow. 
+        # Explorer reuses the parent process, so ProcessStartTime doesn't change. 
+        # We must rely on the pre-snapshot ($new) to find the fresh window.
+        foreach ($w in $new) {
+            if ($usedHandles.Contains($w.Handle)) { continue }
+            if ($w.ProcessName.ToLower().Contains("lazycow")) { continue }
+            return $w
+        }
+        
+        # 3. Last resort: Grab an OLD window with the folder name.
+        if ($folderName) {
+            foreach ($w in $old) {
+                if ($usedHandles.Contains($w.Handle)) { continue }
+                if ($w.ProcessName.ToLower().Contains("lazycow")) { continue }
+                if ($w.Title -like "*$folderName*") { return $w }
+            }
         }
 
-        # Title matching works in BOTH passes — a slow-loading title may
-        # resolve after the main deadline but before the fallback runs.
+        return $null
+    }
+
+    # ── open_url: NEW windows only, never old ──
+    if ($placement.actionType -eq 'open_url') {
+        if ($new.Count -eq 0) { return $null }
+
         $keywords = Get-UrlKeyword $placement.actionValue
         if ($keywords -and $keywords.Count -gt 0) {
             $titleMatch = @()
@@ -659,20 +692,36 @@ function Find-Window($placement, $relaxed = $false) {
             }
         }
 
-        # Strict (main) pass: no title match yet — retry, give the page
-        # time to load and update its title.
         if (-not $relaxed) { return $null }
 
-        # Relaxed (fallback) pass only: no title match ever resolved. Take
-        # any unused NEW browser window — better than leaving it unarranged.
         $picked = $new[0]
         [Console]::Error.WriteLine("URL_NEW_FALLBACK: " + $placement.actionValue + " -> '" + $picked.Title + "'")
         return $picked
     }
 
-    # ── launch_app / open_folder / open_file: prefer new, fall back to old ──
-    # Process-name matching is unique enough (notepad.exe, Code.exe) that
-    # using a pre-existing window if no new one appears is safe.
+    # ── shell launchers: prefer by title hint before generic fallback ──
+    # control.exe opens a window titled "Control Panel" (classic) or the
+    # Settings app (UWP, process ApplicationFrameHost). If we're looking
+    # for a control.exe launch, prefer a title match so we don't grab an
+    # unrelated Explorer window (e.g. a folder from a sibling open_folder).
+    if ($shellLauncher -eq 'control') {
+        foreach ($w in $new) {
+            if ($usedHandles.Contains($w.Handle)) { continue }
+            if ($w.Title -like "*Control Panel*") { return $w }
+        }
+        foreach ($w in $old) {
+            if ($usedHandles.Contains($w.Handle)) { continue }
+            if ($w.Title -like "*Control Panel*") { return $w }
+        }
+    }
+    if ($shellLauncher -eq 'explorer') {
+        foreach ($w in $new) {
+            if ($usedHandles.Contains($w.Handle)) { continue }
+            if ($w.Title -like "*File Explorer*") { return $w }
+        }
+    }
+
+    # ── launch_app / open_file: prefer new, fall back to old ──
     $preferred = if ($new.Count -gt 0) { $new } else { $old }
     if ($preferred.Count -eq 0) { return $null }
 
@@ -680,8 +729,6 @@ function Find-Window($placement, $relaxed = $false) {
     return $sorted[0]
 }
 
-# Diagnostic-only: logs who was in the way, but does NOT affect placement.
-# Batch 2d — we now claim the assigned zone unconditionally (Windows Snap behavior).
 function Log-Zone-Occupancy($zoneX, $zoneY, $zoneW, $zoneH, $ourHandle) {
     $targetX = $areaX + $zoneX * $areaW
     $targetY = $areaY + $zoneY * $areaH
@@ -708,42 +755,37 @@ function Place-Window($hwnd, $zoneX, $zoneY, $zoneW, $zoneH, $isUwp) {
     $targetY = [int]($areaY + $zoneY * $areaH)
     $targetW = [int]($zoneW * $areaW)
     $targetH = [int]($zoneH * $areaH)
-    $strategy = if ($isUwp) { 'native-centered' } else { 'stretched' }
-    [Console]::Error.WriteLine("PLACE_DEBUG: hwnd=" + $hwnd + " target=" + $targetX + "," + $targetY + " " + $targetW + "x" + $targetH + " strategy=" + $strategy)
+    
+    [Console]::Error.WriteLine("PLACE_DEBUG: hwnd=" + $hwnd + " target=" + $targetX + "," + $targetY + " " + $targetW + "x" + $targetH)
 
-    # If the window is already at the target rect (within a small tolerance),
-    # skip the whole hide→move→show cycle — the visible hide/re-show was
-    # what the user perceived as a "flicker" when re-running a shortcut
-    # whose apps were already correctly placed.
-    $current = $null
-    foreach ($wi in $allWindows) {
-        if ($wi.Handle -eq $hwnd) { $current = $wi; break }
-    }
-    if ($current) {
-        $dx = [Math]::Abs($current.X - $targetX)
-        $dy = [Math]::Abs($current.Y - $targetY)
-        $dw = [Math]::Abs($current.W - $targetW)
-        $dh = [Math]::Abs($current.H - $targetH)
-        if ($dx -le 8 -and $dy -le 8 -and $dw -le 8 -and $dh -le 8) {
-            [Console]::Error.WriteLine("PLACE_SKIP: already at target rect (±8px)")
-            [WinArranger]::ForceForeground($hwnd)
-            return
-        }
+    # Strip WS_MAXIMIZE flag to force Explorer out of its stubborn state
+    $style = [WinArranger]::GetWindowLong($hwnd, -16)
+    if (($style -band 0x01000000) -ne 0) {
+        [WinArranger]::SetWindowLong($hwnd, -16, ($style -band (-bnot 0x01000000))) | Out-Null
     }
 
-    [WinArranger]::ShowWindow($hwnd, 0) | Out-Null   # SW_HIDE
+    # Force restore (un-maximize) BEFORE moving. SW_SHOWNORMAL (1) is
+    # the forceful version — SW_RESTORE (9) only animates the restore
+    # and Windows 11 Explorer often ignores it, leaving the window
+    # logically maximized while SetWindowPos silently no-ops.
+    [WinArranger]::ShowWindow($hwnd, 1) | Out-Null   # SW_SHOWNORMAL
+    Start-Sleep -Milliseconds 60
+
+    # Use SetWindowPlacement to forcefully resize the window.
+    $winPlacement = New-Object WinArranger+WINDOWPLACEMENT
+    $winPlacement.length = [System.Runtime.InteropServices.Marshal]::SizeOf($winPlacement)
+    [WinArranger]::GetWindowPlacement($hwnd, [ref]$winPlacement) | Out-Null
+    
+    $winPlacement.showCmd = 1 # SW_SHOWNORMAL (force restore)
+    $winPlacement.rcNormalPosition.Left = $targetX
+    $winPlacement.rcNormalPosition.Top = $targetY
+    $winPlacement.rcNormalPosition.Right = $targetX + $targetW
+    $winPlacement.rcNormalPosition.Bottom = $targetY + $targetH
+    
+    [WinArranger]::SetWindowPlacement($hwnd, [ref]$winPlacement) | Out-Null
     Start-Sleep -Milliseconds 20
 
     if ($isUwp) {
-        # UWP apps (Calculator, Settings, Photos) declare a MaxWidth /
-        # MaxHeight in their manifest. Windows refuses to grow them beyond
-        # that. Move position-only via SetWindowPos with SWP_NOSIZE, but
-        # CENTER the window within the zone so it doesn't sit pinned to
-        # the top-left corner with dead space around it.
-        #
-        # We don't know the app's actual size here, so we use the current
-        # rect (passed in by the caller as $w in the outer scope via
-        # $allWindows). We look it up again here to stay self-contained.
         $cur = $null
         foreach ($wi in $allWindows) {
             if ($wi.Handle -eq $hwnd) { $cur = $wi; break }
@@ -752,32 +794,27 @@ function Place-Window($hwnd, $zoneX, $zoneY, $zoneW, $zoneH, $isUwp) {
         $winH = if ($cur) { $cur.H } else { 0 }
         $centerX = $targetX + [int](($targetW - $winW) / 2)
         $centerY = $targetY + [int](($targetH - $winH) / 2)
-        # Clamp so we don't go above/left of the zone
         if ($centerX -lt $targetX) { $centerX = $targetX }
         if ($centerY -lt $targetY) { $centerY = $targetY }
-
-        # SWP_NOZORDER = 0x0004, SWP_NOSIZE = 0x0001, SWP_NOACTIVATE = 0x0010
         $flags = 0x0004 -bor 0x0001 -bor 0x0010
-        $ok = [WinArranger]::SetWindowPos($hwnd, [IntPtr]::Zero, $centerX, $centerY, 0, 0, $flags)
+        [WinArranger]::SetWindowPos($hwnd, [IntPtr]::Zero, $centerX, $centerY, 0, 0, $flags) | Out-Null
     } else {
-        $ok = [WinArranger]::MoveWindow($hwnd, $targetX, $targetY, $targetW, $targetH, $true)
+        # Use SWP_FRAMECHANGED to force Explorer to redraw its frame and accept the resize.
+        $flags = 0x0004 -bor 0x0010 -bor 0x0020 # SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
+        $swpOk = [WinArranger]::SetWindowPos($hwnd, [IntPtr]::Zero, $targetX, $targetY, $targetW, $targetH, $flags)
+        if (-not $swpOk) {
+            $err = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            [Console]::Error.WriteLine("PLACE_FAILED: SetWindowPos returned false, Win32Error=" + $err)
+        }
     }
 
     Start-Sleep -Milliseconds 20
     [WinArranger]::ShowWindow($hwnd, 4) | Out-Null   # SW_SHOWNOACTIVATE
-    [Console]::Error.WriteLine("PLACE_RESULT: MoveWindow returned " + $ok)
+    [Console]::Error.WriteLine("PLACE_RESULT: SetWindowPlacement applied")
 
     [WinArranger]::ForceForeground($hwnd)
 }
 
-# Place-Centered removed in Batch 2d — we claim the assigned zone instead.
-
-# Bring an unassigned window to front, centered on the primary monitor
-# at its current size. We never resize — some apps (UWP especially) refuse
-# to be resized and Windows snaps them back, causing a visual glitch.
-# Centering at native size is deterministic: whatever Windows remembers
-# about the window's last position, it comes back to the middle of the
-# screen where the user expects to see it.
 function Bring-Unassigned-Window($hwnd) {
     $cur = $null
     foreach ($wi in $allWindows) {
@@ -795,23 +832,12 @@ function Bring-Unassigned-Window($hwnd) {
     [WinArranger]::ForceForeground($hwnd)
 }
 
-# ── Place each window as soon as it appears (Batch 2c-polish v2) ──
-# One global polling loop. Each iteration re-scans ALL not-yet-placed
-# placements. A slow or failed launch never blocks the others — apps that
-# are already on screen snap immediately, and a window that never appears
-# just falls through to not_found at the deadline.
-$placed = @{}                        # zoneId → $true
+$placed = @{}
 $deadline = [DateTime]::UtcNow.AddMilliseconds(${engineTimeoutMs})
-# Fast warmup: poll every 15ms for the first 800ms (catches freshly-shown
-# windows before the user's eye registers them), then taper to 100ms.
 $warmupUntil = [DateTime]::UtcNow.AddMilliseconds(800)
 $pollInterval = 15
 $allWindows = @()
 
-# Stall detection: if no placement succeeds for this many ms, exit the
-# poll loop early. Prevents the shortcut from burning the full 18s budget
-# when placements can never resolve (Firefox single-window, missing apps,
-# etc). 5s is generous — Chrome URL placements resolve in 1-2s.
 $lastProgressAt = [DateTime]::UtcNow
 $stallThresholdMs = 5000
 
@@ -838,7 +864,7 @@ while ([DateTime]::UtcNow -lt $deadline -and $placed.Count -lt $placements.Count
                 reason = 'unassigned — brought to front'
             }
         } else {
-            Log-Zone-Occupancy $p.x $p.y $p.w $p.h $w.Handle  # diagnostic only
+            Log-Zone-Occupancy $p.x $p.y $p.w $p.h $w.Handle
             Place-Window $w.Handle $p.x $p.y $p.w $p.h $w.IsUwp
             $results += [PSCustomObject]@{
                 zoneId = $p.zoneId
@@ -857,7 +883,6 @@ while ([DateTime]::UtcNow -lt $deadline -and $placed.Count -lt $placements.Count
 
     if ($placed.Count -eq $placements.Count) { break }
     Start-Sleep -Milliseconds $pollInterval
-    # Stay fast during warmup, then taper.
     if ([DateTime]::UtcNow -lt $warmupUntil) {
         $pollInterval = 15
     } else {
@@ -865,11 +890,6 @@ while ([DateTime]::UtcNow -lt $deadline -and $placed.Count -lt $placements.Count
     }
 }
 
-# ── Fallback pass ──
-# Any placement that never resolved in the main poll loop gets one more
-# shot with relaxed matching (URL title requirement disabled). This
-# catches URLs whose page never loaded a title in time, or slow apps
-# that appeared right at the deadline.
 $allWindows = [WinArranger]::GetWindows()
 foreach ($p in $placements) {
     $key = if ($p.isUnassigned) { "unassigned-$($p.actionValue)" } else { $p.zoneId }
@@ -908,7 +928,6 @@ foreach ($p in $placements) {
     }
 }
 
-# ── Output as JSON ──
 $results | ConvertTo-Json -Compress -Depth 5
 `
 }

@@ -48,6 +48,12 @@ if (!gotSingleInstanceLock) {
   app.quit()
 }
 
+// Tell Windows this is a standalone app, not the generic Electron shell.
+// This forces the taskbar to use our icon and name instead of "Electron".
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.lazycow.app')
+}
+
 // ── OS Lock: LazyCow is exclusively designed for Microsoft Windows ──
 if (process.platform !== 'win32') {
   app.whenReady().then(() => {
@@ -200,12 +206,16 @@ ipcMain.on('update-general-settings', (_event, settings: { startAtLogin?: boolea
 })
 
 function getAppIconPath(): string {
+  const icoPath = path.join(process.env.VITE_PUBLIC, 'icon.ico')
+  if (fs.existsSync(icoPath)) return icoPath
   const pngPath = path.join(process.env.VITE_PUBLIC, 'icon.png')
   if (fs.existsSync(pngPath)) return pngPath
   return path.join(process.env.VITE_PUBLIC, 'electron-vite.svg')
 }
 
 function getTrayIconPath(): string {
+  const trayIcoPath = path.join(process.env.VITE_PUBLIC, 'icon.ico')
+  if (fs.existsSync(trayIcoPath)) return trayIcoPath
   const trayPngPath = path.join(process.env.VITE_PUBLIC, 'icon-32.png')
   if (fs.existsSync(trayPngPath)) return trayPngPath
   return getAppIconPath()
@@ -236,6 +246,8 @@ function createTray() {
 }
 
 function createWindow() {
+  console.log('--- APP ICON PATH ---', getAppIconPath());
+  console.log('--- TRAY ICON PATH ---', getTrayIconPath());
   win = new BrowserWindow({
     icon: getAppIconPath(),
     autoHideMenuBar: true,

@@ -153,6 +153,18 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
 
   useEffect(() => { refreshShortcuts(); }, [refreshShortcuts]);
 
+  // Re-evaluate non-custom shortcuts when the global setting changes
+  useEffect(() => {
+    const onSettingsChanged = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.key === 'securedShortcutsEnabled') {
+        refreshShortcuts();
+      }
+    };
+    window.addEventListener('lazycow-settings-changed', onSettingsChanged);
+    return () => window.removeEventListener('lazycow-settings-changed', onSettingsChanged);
+  }, [refreshShortcuts]);
+
   // ── Pre-flight path validation ──
   // Runs a debounced check on every path-based action in every shortcut.
   // Any shortcut with a broken path goes into `brokenShortcuts`, which:
@@ -433,9 +445,12 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
   // re-syncs the main process so the runtime reads the new value on the
   // next hotkey fire. Available in the ShortcutCard's 3-dot menu.
   const handleToggleSecured = (id: string) => {
-    const updated = shortcuts.map((s) =>
-      s.id === id ? { ...s, secured: !s.secured } : s
-    );
+    const updated = shortcuts.map((s) => {
+      if (s.id === id) {
+        return { ...s, secured: !s.secured, isSecuredCustom: true };
+      }
+      return s;
+    });
     setShortcuts(updated);
     persistShortcuts(updated);
     syncHotkeysAndTrackFailures(updated);
@@ -449,48 +464,48 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
   return (
     <main className={`flex-1 p-margin-page w-full max-w-container-max mx-auto overflow-y-auto pb-32 ${selectionMode ? 'select-none' : ''}`}>
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1">
           {!selectionMode ? (
-            <div className="flex items-center gap-2 bg-card-light p-1 rounded-lg border border-border">
+            <>
               {([2, 3, 4] as const).map((n) => (
                 <button key={n} onClick={() => setGridCols(n)}
-                  className={`p-1.5 rounded transition-colors ${gridCols === n ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+                  className={`h-9 w-9 rounded-full flex items-center justify-center transition-colors ${gridCols === n ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
                   title={`${n} Columns`}>
                   <span className="material-symbols-outlined text-[20px]">{n === 2 ? 'splitscreen' : n === 3 ? 'view_column' : 'grid_view'}</span>
                 </button>
               ))}
-            </div>
+            </>
           ) : (
-            <span className="text-body-sm text-primary font-medium">
+            <span className="text-body-sm text-primary font-medium h-9 flex items-center pl-2">
               {selectedIds.size} selected
             </span>
           )}
         </div>
 
         {!selectionMode ? (
-          <div className="flex items-center gap-3 w-full md:w-auto">
-            <div className="relative w-full md:w-64">
+          <div className="flex items-center gap-3 w-full md:w-auto h-9">
+            <div className="relative w-full md:w-64 h-9">
               <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-[18px]">search</span>
               <input type="text" placeholder="Search shortcuts..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-card-light border border-border rounded-full py-2 pl-9 pr-4 text-body-sm focus:outline-none focus:border-primary transition-colors text-foreground" />
+                className="w-full h-full bg-card-light border border-border rounded-full pl-9 pr-4 text-[13px] focus:outline-none focus:border-primary transition-colors text-foreground" />
             </div>
             {shortcuts.length > 0 && (
               <button onClick={() => setSelectionMode(true)}
-                className="shrink-0 px-4 py-2 border border-border rounded-full font-body-sm text-foreground hover:bg-muted transition-colors flex items-center gap-2">
+                className="shrink-0 h-9 px-4 border border-border rounded-full text-[13px] font-medium text-foreground hover:bg-muted transition-colors flex items-center justify-center gap-2">
                 <span className="material-symbols-outlined text-[16px]">checklist</span>
                 Select
               </button>
             )}
             <button onClick={() => { setActiveTab('builder'); }}
-              className="shrink-0 bg-primary text-primary-foreground px-4 py-2 rounded-full font-label-caps text-label-caps flex items-center gap-2 hover:opacity-90 transition-opacity">
-              <span className="material-symbols-outlined text-[16px]">add</span> New Shortcut
+              className="shrink-0 h-9 border border-transparent bg-primary text-primary-foreground px-4 rounded-full text-[13px] font-medium flex items-center justify-center gap-2 hover:opacity-90 transition-opacity">
+              <span className="material-symbols-outlined text-[14px]">add</span> New Shortcut
             </button>
           </div>
         ) : (
-          <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
+          <div className="flex items-center gap-2 w-full md:w-auto flex-wrap h-9">
             <button
               onClick={handleSelectAllToggle}
-              className="px-3 py-1.5 rounded-full border border-border text-body-sm text-foreground hover:bg-muted transition-colors"
+              className="h-full px-4 rounded-full border border-border text-body-sm text-foreground hover:bg-muted transition-colors flex items-center justify-center"
             >
               {(() => {
                 const visibleIds = shortcuts
@@ -514,11 +529,10 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
             <button
               onClick={() => setShowConfirmMultiDelete(true)}
               disabled={selectedIds.size === 0}
-              className={`px-3 py-1.5 rounded-full text-body-sm flex items-center gap-1.5 transition-colors ${
-                selectedIds.size === 0
+              className={`px-3 py-1.5 rounded-full text-body-sm flex items-center gap-1.5 transition-colors ${selectedIds.size === 0
                   ? 'bg-muted text-muted-foreground cursor-not-allowed'
                   : 'bg-red-500 text-white hover:bg-red-600'
-              }`}
+                }`}
             >
               <span className="material-symbols-outlined text-[16px]">delete</span>
               Delete
@@ -595,32 +609,32 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
         </div>,
         document.body
       )}
-      {deleteId && <DeleteModal onConfirm={confirmDelete} onCancel={() => setDeleteId(null)} />}
+      <DeleteModal
+        isOpen={!!deleteId}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteId(null)}
+      />
 
-      {showConfirmMultiDelete && (
-        <ConfirmDeleteShortcutsModal
-          count={selectedIds.size}
-          onConfirm={handleConfirmMultiDelete}
-          onCancel={() => setShowConfirmMultiDelete(false)}
-        />
-      )}
+      <ConfirmDeleteShortcutsModal
+        isOpen={showConfirmMultiDelete}
+        count={selectedIds.size}
+        onConfirm={handleConfirmMultiDelete}
+        onCancel={() => setShowConfirmMultiDelete(false)}
+      />
 
-      {confirmRun && (
-        <ConfirmSecuredModal
-          shortcut={confirmRun}
-          onCancel={() => setConfirmRun(null)}
-          onConfirm={(updated: SavedShortcut) => {
-            // Persist any staged safety-override edits + (optionally) the
-            // secured=false flip from the all-safe prompt.
-            const persisted = shortcuts.map((s) => s.id === updated.id ? updated : s);
-            setShortcuts(persisted);
-            persistShortcuts(persisted);
-            syncHotkeysAndTrackFailures(persisted);
-            setConfirmRun(null);
-            executeShortcut(updated);
-          }}
-        />
-      )}
+      <ConfirmSecuredModal
+        isOpen={!!confirmRun}
+        shortcut={confirmRun}
+        onCancel={() => setConfirmRun(null)}
+        onConfirm={(updated: SavedShortcut) => {
+          const persisted = shortcuts.map((s) => s.id === updated.id ? updated : s);
+          setShortcuts(persisted);
+          persistShortcuts(persisted);
+          syncHotkeysAndTrackFailures(persisted);
+          setConfirmRun(null);
+          executeShortcut(updated);
+        }}
+      />
     </main>
   );
 };

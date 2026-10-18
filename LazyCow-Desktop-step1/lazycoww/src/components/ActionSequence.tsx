@@ -610,13 +610,12 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
       </div>
 
       {/* Confirm delete modal */}
-      {showConfirmDelete && (
-        <ConfirmDeleteModal
-          actions={sequence.filter((a) => selectedIds.has(a.id))}
-          onConfirm={handleConfirmDelete}
-          onCancel={() => setShowConfirmDelete(false)}
-        />
-      )}
+      <ConfirmDeleteModal
+        isOpen={showConfirmDelete}
+        actions={sequence.filter((a) => selectedIds.has(a.id))}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setShowConfirmDelete(false)}
+      />
     </section>
   );
 };
