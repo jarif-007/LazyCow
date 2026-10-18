@@ -1,5 +1,15 @@
 # LazyCow — Active Missions
 
+## Mission: Session 15 — UI Bugfixes & Library Multi-Select
+Status: COMPLETE (Commit `<commit-hash>`)
+- [x] Wrap `DeleteModal`, Library rename modal, and App unsaved modal in `createPortal` to fix windowed-mode positioning.
+- [x] Add outside-click and Escape handlers to `ShortcutCard` 3-dot menu.
+- [x] Remove dead "New Project" button from Sidebar.
+- [x] Implement `useDragSelect` hook for shared long-press + drag-select logic.
+- [x] Add multi-select (Select All / Clear / Delete / Done) to Library.
+- [x] Fix Builder long-press double-toggle bug.
+- [x] Replace `Date.now()` with `crypto.randomUUID()` for actions and shortcuts.
+
 ## Mission: Window Layout (Batch 2)
 Status: COMPLETE (Session 6)
 - [x] 2a — IPC plumbing (committed d67bce4)
@@ -263,7 +273,7 @@ Status: IN PROGRESS (pilot complete; surfaces 2+ queued)
       spring bounce 0 (300ms in / 200ms out), reduced-motion 120ms fade.
 - [x] Hardware acceleration toggle — required to feel the motion at all
       (software rendering made scale-based animations choppy).
-- [ ] Surface 2 — TBD (see discussion below).
+- [x] Surface 2 — Library grid entrance stagger (`Math.min(index, 8) * 0.15`).
 - [ ] Surface 3 — drawer cell stagger.
 - [ ] Progress ring spring settle.
 - [ ] Modal exits for DeleteModal / ConfirmDeleteModal / ConfirmSecuredModal.

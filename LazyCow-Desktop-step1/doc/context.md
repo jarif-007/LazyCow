@@ -87,10 +87,13 @@ LazyCow/
 │           │   └── actions.ts         # Action catalogs, interfaces, blocked trigger defaults
 │           ├── hooks/
 │           │   ├── useHotkeyRecorder.ts # Reusable global keyboard capture hook (records e.code, not e.key)
-│           │   └── useActionValidation.ts # Shared validation for action sequences (sync + debounced path checks)
+│           │   ├── useActionValidation.ts # Shared validation for action sequences (sync + debounced path checks)
+│           │   ├── useDragSelect.ts   # Long-press & continuous drag-select engine for Library
+│           │   └── usePrefersReducedMotion.ts # Reactive prefers-reduced-motion tracking
 │           ├── utils/
 │           │   ├── appUsage.ts        # localStorage usage counter for the App Drawer's frequently-used row
 │           │   ├── appVisibility.ts   # Persistence for hiddenSet / visibleSet / customApps (state lives in AppDrawerModal)
+│           │   ├── autoScroll.ts      # Reads the user's autoScrollSpeed setting for drag engines
 │           │   ├── danger.ts          # DANGEROUS_EXTENSIONS + hasDangerousExtension + isDangerousAction + override-aware getActionLabel / hasDangerousActions
 │           │   └── security.ts        # migrateShortcutsSecured + readSecuredShortcutsDefault + readSecuredDoublePressSeconds
 │           ├── components/
@@ -302,8 +305,10 @@ The App Drawer is the picker for `launch_app` actions. Clicking **Select App** o
   - Success log appends a **"Window layout: N of M apps placed"** line when the shortcut has a layout enabled.
   - Menu is disabled while the shortcut is running. Uses solid `bg-background/95` and `bg-background/70` for the shade picker and action-icon pills — **no `backdrop-blur`** (removed for performance).
 - **`Library.tsx`:** Shortcut card dashboard with live step progress ring, execution log, search filter, duplicate workflow generator (`(Copy)` naming & hotkey decoupling), inline rename modal, dropdown management, and cancel handler that forwards to `cancelShortcut`.
+  - **Multi-Select:** Header toggle or long-press (~400ms) on a card enters selection mode. Continuous drag-select toggles cards under the cursor, with edge auto-scroll using `useDragSelect`. `Select All` / `Clear` / `Done` available in the header. A red `Delete` opens `ConfirmDeleteShortcutsModal` for batch deletion.
   - **Broken-path pre-flight:** On mount and whenever `shortcuts` changes, a debounced (250ms) loop calls `checkPathExists` for every path-based action. Any shortcut with at least one missing file/folder or an empty path value goes into `brokenShortcuts`, which greys the Run button and shows the amber badge on the card.
   - **Re-runs on window focus:** Returning from Explorer after fixing a path refreshes the badge without a page reload.
+- **`ConfirmDeleteShortcutsModal.tsx`:** Rendered via `createPortal`. Shows the count of shortcuts to delete. Supports Esc (cancel) and Enter (confirm). Includes a "Don't show hints again" checkbox persisted to `lazycow-hide-modal-hints`.
 - **`Settings.tsx` & Subcomponents:** Manages appearance, theme switching, startup launch, system tray minimization, execution notifications, blocked triggers, and factory reset.
 
 ### C2. Motion layer (`src/utils/motion.ts`)
@@ -409,7 +414,7 @@ npm run build
 * **Test Layout Button:** In the Window Layout panel. Runs only the launch-type actions (no scripts, no delays) and applies the layout — fast preview without side effects.
 * **Test Flow Button:** In the Builder footer. Runs the entire sequence end-to-end with the same validation gate as Save.
 * **Richer Completion Toasts:** OS notifications now append a layout summary (`3 of 4 apps placed`) and a per-action failure list when steps fail.
-* **Selection Mode + Multi-Delete:** Toggle via header `Select` button, or long-press (~400ms) on any card. Continuous drag-select toggles cards under the cursor. `Select All` / `Clear` / `Done` in the header; a red `Delete` opens a count-summarising confirmation modal (Esc / Enter / ✗ / Cancel all supported). `lazycow-hide-modal-hints` can suppress the small keyboard-hint badges.
+* **Selection Mode + Multi-Delete:** Available in both Builder (action cards) and Library (shortcut cards). Toggle via header `Select` button, or long-press (~400ms) on any card. Continuous drag-select toggles cards under the cursor. `Select All` / `Clear` / `Done` in the header; a red `Delete` opens a count-summarising confirmation modal (Esc / Enter / ✗ / Cancel all supported). `lazycow-hide-modal-hints` can suppress the small keyboard-hint badges.
 * **Flow Preview Reorder:** Wrap-aware icon strip above the cards. Icons are draggable (dnd-kit `rectSortingStrategy`), click-to-jump to the corresponding card, colored, with rich hover tooltips. Reordering works without touching the cards.
 * **Auto-Scroll During Drag:** Card drag and drag-select auto-scroll at the container edges with a speed curve the user controls via Settings → General → "Auto-scroll speed" (Slow 3 / Medium 6 / Fast 12 presets + slider 2–20). Warmup ramps the speed over ~900ms so the first moment of scroll isn't jarring.
 * **Shortcut Builder:** Visual drag-and-drop sequencing, live name uniqueness validation, hotkey collision checking, ComboBuilder modifier constructor, native OS Browse pickers. **Save is disabled when any action is invalid or unsupported**, with a red inline message under the Save button.

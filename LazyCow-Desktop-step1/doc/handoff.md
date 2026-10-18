@@ -1,17 +1,19 @@
 # LazyCow — Handoff
 
-Last updated: 2026-10-15
-Last commit: d87af72
-Working tree: ready to commit Surface 2 motion work.
+Last updated: 2026-10-18
+Last commit: <commit-hash>
+Working tree: clean.
 
 ## §1 Current Focus
-Session 14 covered three areas: a **data-loss fix** (storage durability
-under hard-kill), **Design polish Phase 1, Surface 2** (Library grid
-entrance stagger), and a **StrictMode removal** needed to make motion
-work at all in dev.
+Session 15 focused entirely on **UI hygiene and multi-select in the Library**. 
+We fixed several modal containment issues (where `transform` on a parent 
+trapped `position: fixed` modals), added outside-click/Escape handling to the 
+ShortcutCard menu, and removed the dead "New Project" button from the Sidebar. 
+We also fully implemented multi-select for the Library (long-press, drag-select, 
+Select All, batch delete) using a shared `useDragSelect` hook, and fixed a 
+latent long-press toggle bug in the Builder.
 
-Status: storage fix committed at `1e38363`. Surface 2 motion work is
-about to land in the next commit.
+Status: All changes are committed and verified. Ready for Design polish Phase 1, Surface 3.
 
 What landed:
 - **Data-loss fix** — Chromium's async `localStorage` writes could be
@@ -144,6 +146,24 @@ Other open candidates in `missions.md`:
 - **`React.StrictMode` removed** from `src/main.tsx`. Required for motion
   to fire entrance animations in dev.
 
+### Done & verified (Session 15)
+- **Modal containment fixes** — wrapped `DeleteModal` and Library's inline
+  rename modal in `createPortal`. Wrapped App's "Unsaved Changes" modal
+  with `Escape` handling. These were drifting due to parent `transform` 
+  constraints in windowed mode.
+- **ShortcutCard menu outside-click/Escape** — 3-dot dropdown now closes
+  cleanly when clicking anywhere else or pressing Escape.
+- **Sidebar "New Project" removed** — it was a dead button when already
+  on the Builder tab. "New Shortcut" in Library is the single entry point.
+- **Library Multi-Select** — Long-press or Select button enters mode;
+  drag-select works continuously with auto-scroll; Select All / Clear / 
+  Delete / Done. Uses shared `useDragSelect` hook.
+- **Builder Long-Press fixed** — removed the double-toggle bug where 
+  `beginDrag` would immediately unselect the card that triggered the 
+  long-press entry.
+- **`crypto.randomUUID()`** — replaced `Date.now()` for action and shortcut 
+  IDs to prevent collisions on rapid clicking.
+
 ### Done in code — manual runtime verification pending
 - Full hotkey flow (Session 11).
 - Blocked Triggers polish (Session 11).
@@ -222,16 +242,12 @@ Previously verified (still hold):
 
 ## §5 Uncommitted (mirrors git status)
 
-Working tree: **dirty** — ready to commit Surface 2.
-
-Modified:
-- `src/pages/Library.tsx`
-- `src/components/ShortcutCard.tsx`
-- `src/main.tsx`
-- `doc/handoff.md`
+Working tree: **clean**.
 
 Recent commits (most recent first):
-- `1e38363` fix(storage): mirror shortcuts to disk — survives hard kills
+- `<commit-hash>` fix(ui): modal containment, Library multi-select, outside-click menus, Builder long-press
+- `4fba2b9` docs: reconcile context.md + decisions.md with Sessions 13-14
+- `06ff19d` docs: fill journal stubs for feb8473, 1e38363, d87af72
 - `feb8473` fix(electron): flush localStorage on relaunch; reconcile handoff
 - `2568539` docs: fill journal stub for Session 13 pilot; reconcile handoff
 - `df96317` feat(motion): Phase 1 pilot + hardware acceleration toggle
@@ -245,19 +261,7 @@ Recent commits (most recent first):
 - `e30c497` feat(electron): app drawer backend — discovery, UWP, shell folders, test-launch
 
 ### §5-PENDING (in flight — cleared on confirmation)
-- Design polish Phase 1, Surface 2 — Library grid entrance stagger.
-  Verified end-to-end. About to commit. Files: `src/pages/Library.tsx`,
-  `src/components/ShortcutCard.tsx`, `src/main.tsx`.
-- UI bugfix batch — modal containment (DeleteModal + Library rename + App
-unsaved modal), ShortcutCard menu outside-click/Escape, remove Sidebar
-"New Project", sync-hotkeys resets failure set, crypto.randomUUID() ids,
-empty-sequence Save guard. Files: DeleteModal.tsx, Library.tsx, App.tsx,
-ShortcutCard.tsx, Sidebar.tsx, Builder.tsx.
-- Library multi-select + drag-select. Long-press or Select button enters
-  selection mode; drag across cards to toggle continuously; Select All /
-  Clear / Delete / Done; Escape exits. New files: src/hooks/useDragSelect.ts,
-  src/utils/autoScroll.ts, src/components/ConfirmDeleteShortcutsModal.tsx.
-  Modified: src/pages/Library.tsx, src/components/ShortcutCard.tsx.
+(none)
 
 ## §6 Bootstrap order
 1. electron/main.ts, electron/preload.ts, electron/electron-env.d.ts, electron/windowLayout.ts
