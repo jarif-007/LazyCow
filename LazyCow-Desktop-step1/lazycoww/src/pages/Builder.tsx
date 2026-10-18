@@ -407,12 +407,12 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
 
   const addAction = useCallback((item: CatalogItem) => {
     if (item.disabled) return;
-    setSequence((p) => [...p, { id: `act-${Date.now()}`, type: item.type, title: item.title, icon: item.icon, colorClass: item.colorClass, value: item.defaultValue }]);
+    setSequence((p) => [...p, { id: `act-${crypto.randomUUID()}`, type: item.type, title: item.title, icon: item.icon, colorClass: item.colorClass, value: item.defaultValue }]);
   }, []);
 
   const addActionAt = useCallback((item: CatalogItem, index: number) => {
     if (item.disabled) return;
-    setSequence((p) => { const n = [...p]; n.splice(index, 0, { id: `act-${Date.now()}`, type: item.type, title: item.title, icon: item.icon, colorClass: item.colorClass, value: item.defaultValue }); return n; });
+    setSequence((p) => { const n = [...p]; n.splice(index, 0, { id: `act-${crypto.randomUUID()}`, type: item.type, title: item.title, icon: item.icon, colorClass: item.colorClass, value: item.defaultValue }); return n; });
   }, []);
 
   const deleteAction = useCallback((id: string) => {
@@ -455,7 +455,7 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
     if (item) addAction(item);
   }, [addAction]);
 
-  const isFormValid = shortcutName.trim() !== '' && shortcutDesc.trim() !== '' && !hotkeyError && !nameError && actionsValid && hotkeyIsVerified;
+  const isFormValid = shortcutName.trim() !== '' && shortcutDesc.trim() !== '' && !hotkeyError && !nameError && actionsValid && hotkeyIsVerified && sequence.length > 0;
 
   const handleNameChange = (v: string) => {
     setShortcutName(v);
@@ -535,10 +535,6 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
       setDescError(shortcutDesc.trim() === '');
       return;
     }
-    if (sequence.length === 0) {
-      window.alert('Please add at least one action to the sequence before testing.');
-      return;
-    }
 
     const existing: SavedShortcut[] = JSON.parse(localStorage.getItem('lazycow-shortcuts') || '[]');
 
@@ -597,7 +593,6 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
 
   const handleSave = () => {
     if (!isFormValid) { setNameError(shortcutName.trim() === ''); setDescError(shortcutDesc.trim() === ''); return; }
-    if (sequence.length === 0) { alert('Please add at least one action to the sequence before saving.'); return; }
 
     const existing: SavedShortcut[] = JSON.parse(localStorage.getItem('lazycow-shortcuts') || '[]');
     
@@ -620,7 +615,7 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
       : (readSecuredShortcutsDefault() && sequence.some((a) => a.safetyOverride === 'dangerous' || (!a.safetyOverride && (a.type === 'run_script' || a.type === 'launch_app'))));
 
     const shortcut: SavedShortcut = {
-      id: editData?.id || `sc-${Date.now()}`,
+      id: editData?.id || `sc-${crypto.randomUUID()}`,
       name: shortcutName, description: shortcutDesc, hotkey, actions: sequence,
       createdAt: editData?.createdAt || new Date().toISOString(),
       windowLayout,
@@ -880,7 +875,12 @@ export const Builder: React.FC<BuilderProps> = ({ editData, focusActionId, isAct
                 : `Fix ${invalidActionCount} invalid action${invalidActionCount === 1 ? '' : 's'} before saving.`}
             </p>
           )}
-          {actionsValid && !hotkeyIsVerified && shortcutName.trim() !== '' && (
+          {actionsValid && sequence.length === 0 && shortcutName.trim() !== '' && (
+            <p className="text-red-500 font-body-sm text-right mt-2">
+              Add at least one action before saving.
+            </p>
+          )}
+          {actionsValid && sequence.length > 0 && !hotkeyIsVerified && shortcutName.trim() !== '' && (
             <p className="text-red-500 font-body-sm text-right mt-2">
               Test the hotkey before saving.
             </p>

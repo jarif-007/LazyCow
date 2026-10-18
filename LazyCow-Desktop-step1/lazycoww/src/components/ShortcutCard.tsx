@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
 import { SavedShortcut, LAYOUTS } from '../types/actions';
 import { SPRING_ENTER, FADE_ENTER, MODAL_OFFSET_Y } from '../utils/motion';
@@ -38,14 +38,43 @@ interface ShortcutCardProps {
   staggerIndex?: number;
   /** When true, replaces the staggered slide-in with a shared cross-fade. */
   reducedMotion?: boolean;
+  /** When true, the card is in multi-select mode — clicks toggle selection. */
+  selectionMode?: boolean;
+  /** When true (and selectionMode), this card is currently selected. */
+  isSelected?: boolean;
 }
 
 export const ShortcutCard: React.FC<ShortcutCardProps> = ({
   shortcut, shade, onShadeChange, onEditFlow, onRename, onDelete, onRun, onCancel, onDuplicate,
    hasHotkeyConflict, hasBrokenPath, brokenActionId, isCancelling, execution, customColorMode,
   onToggleSecured, staggerIndex = 0, reducedMotion = false,
+  selectionMode = false, isSelected = false,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuWrapperRef = useRef<HTMLDivElement>(null);
+
+  // Close the 3-dot menu on outside-click or Escape. Only listens while
+  // the menu is open, so there's no cost when it isn't. mousedown (not
+  // click) so the close happens before any subsequent focus/click work
+  // and before the menu item's own handler can fire against a stale DOM.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuWrapperRef.current && !menuWrapperRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
+
   const execState = execution || { status: 'idle' as const, currentStepIndex: -1, errors: [] as string[] };
   const stepLabels = shortcut.actions.map((a) => `> ${a.title}: ${a.value}`);
 
@@ -72,11 +101,44 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
 
   return (
     <motion.div
-      className={`card-themeable bg-gradient-to-br ${shadeClasses} border border-border rounded-xl p-5 group shadow-sm hover:shadow-md hover:-translate-y-1 transition-all flex flex-col gap-4 relative`}
+      data-card-id={shortcut.id}
+      className={`card-themeable bg-gradient-to-br ${shadeClasses} border rounded-xl p-5 group shadow-sm flex flex-col gap-4 relative transition-all ${
+        selectionMode
+          ? isSelected
+            ? 'border-primary ring-2 ring-primary ring-offset-2 ring-offset-background'
+            : 'border-border'
+          : 'border-border hover:shadow-md hover:-translate-y-1'
+      }`}
       initial="hidden"
       animate="visible"
       variants={entranceVariants}
     >
+      {/* Selection overlay — blocks all inner interactions while in
+          selection mode. Plain <div>, so the drag-select hit-test at
+          window level still picks it up (it doesn't match the
+          'input, textarea, select, button' skip filter). */}
+      {selectionMode && (
+        <div className="absolute inset-0 z-20 rounded-xl cursor-pointer" aria-hidden />
+      )}
+
+      {/* Selection checkbox — absolutely positioned so it sits above the
+          overlay (z-30) without disturbing card layout when toggling modes. */}
+      {selectionMode && (
+        <div
+          className={`absolute top-3 right-3 z-30 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
+            isSelected
+              ? 'bg-primary border-primary'
+              : 'bg-card border-border'
+          }`}
+          aria-hidden
+        >
+          {isSelected && (
+            <span className="material-symbols-outlined text-[12px] font-bold leading-none" style={{ color: 'hsl(var(--primary-foreground))' }}>
+              check
+            </span>
+          )}
+        </div>
+      )}
       {/* Header */}
       <div className="flex justify-between items-start">
         <div>
@@ -84,7 +146,7 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
           <p className="text-body-md text-current/70 mt-1">{shortcut.description}</p>
         </div>
 
-        <div className="flex items-center gap-1 relative">
+        <div ref={menuWrapperRef} className="flex items-center gap-1 relative">
           {customColorMode && (
             <div className={`flex items-center gap-1 bg-background/95 rounded-full px-2 py-1 border border-border transition-all duration-200 absolute right-8 ${menuOpen ? 'opacity-100 visible translate-x-0' : 'opacity-0 invisible translate-x-[10px]'}`}>
               {(['light', 'medium', 'dark'] as const).map((s) => (

@@ -283,7 +283,25 @@ function App() {
     setLibraryRefreshKey((k) => k + 1);
   };
 
-  const handleCancelLeave = () => { setShowConfirmModal(false); setPendingTab(null); };
+  const handleCancelLeave = useCallback(() => {
+    setShowConfirmModal(false);
+    setPendingTab(null);
+  }, []);
+
+  // Escape closes the unsaved-changes prompt. Capture phase so it fires
+  // before any in-modal keystroke handlers.
+  useEffect(() => {
+    if (!showConfirmModal) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        handleCancelLeave();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [showConfirmModal, handleCancelLeave]);
   const handleEditShortcut = (shortcut: SavedShortcut, focusActionIdArg?: string) => {
     setEditShortcut(shortcut);
     setFocusActionId(focusActionIdArg);

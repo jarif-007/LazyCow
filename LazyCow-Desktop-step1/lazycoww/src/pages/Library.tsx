@@ -1,11 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { SavedShortcut, isUwpPath } from '../types/actions';
 import { ShortcutCard } from '../components/ShortcutCard';
 import { DeleteModal } from '../components/DeleteModal';
 import { ConfirmSecuredModal } from '../components/ConfirmSecuredModal';
 import { migrateShortcutsSecured, readSecuredDoublePressSeconds } from '../utils/security';
 import { usePrefersReducedMotion } from '../hooks/usePrefersReducedMotion';
+import { useDragSelect } from '../hooks/useDragSelect';
 import { persistShortcuts, recoverShortcutsFromDiskIfEmpty } from '../utils/shortcutStorage';
+import { readAutoScrollSpeed } from '../utils/autoScroll';
+import { ConfirmDeleteShortcutsModal } from '../components/ConfirmDeleteShortcutsModal';
 
 interface LibraryProps {
   setActiveTab: (tab: string) => void;
@@ -17,6 +21,28 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
   const [gridCols, setGridCols] = useState<2 | 3 | 4>(2);
   const [searchQuery, setSearchQuery] = useState('');
 
+  // ── Multi-select state ──
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showConfirmMultiDelete, setShowConfirmMultiDelete] = useState(false);
+  const gridRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll speed mirror — same reader as ActionSequence uses.
+  const [autoScrollSpeed, setAutoScrollSpeed] = useState<number>(() => readAutoScrollSpeed());
+  const autoScrollSpeedRef = useRef(autoScrollSpeed);
+  useEffect(() => { autoScrollSpeedRef.current = autoScrollSpeed; }, [autoScrollSpeed]);
+  useEffect(() => {
+    const onRefresh = () => setAutoScrollSpeed(readAutoScrollSpeed());
+    window.addEventListener('storage', onRefresh);
+    window.addEventListener('focus', onRefresh);
+    window.addEventListener('lazycow-settings-changed', onRefresh);
+    return () => {
+      window.removeEventListener('storage', onRefresh);
+      window.removeEventListener('focus', onRefresh);
+      window.removeEventListener('lazycow-settings-changed', onRefresh);
+    };
+  }, []);
+
   const [shortcuts, setShortcuts] = useState<SavedShortcut[]>(() =>
     JSON.parse(localStorage.getItem('lazycow-shortcuts') || '[]')
   );
@@ -27,10 +53,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
     void recoverShortcutsFromDiskIfEmpty().then((recovered) => {
       if (recovered) {
         setShortcuts(recovered);
-        window.electronAPI?.syncHotkeys({
-          shortcuts: recovered.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured, windowLayout: s.windowLayout })),
-          securedDoublePressSeconds: readSecuredDoublePressSeconds(),
-        });
+        syncHotkeysAndTrackFailures(recovered);
       }
     });
   }, []);
@@ -47,6 +70,75 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
   // preference across every animated surface.
   const reducedMotion = usePrefersReducedMotion();
 
+  // Sync hotkeys AND reset the conflict-failure set first. The main process
+  // synchronously re-emits `hotkey-register-failed` for every combo it
+  // can't register, so the set repopulates with only the *current*
+  // failures. Without this clear, a shortcut that previously conflicted
+  // but no longer does would keep its stale "Conflict" badge forever —
+  // the main process never emits a success event, so the renderer has no
+  // other signal that the conflict resolved.
+  // ── Selection helpers ──
+  const toggleSelectedId = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  }, []);
+
+  const handleSelectAllToggle = useCallback(() => {
+    setSelectedIds((prev) => {
+      // Compare against the currently filtered list, not the full set —
+      // the user sees the filtered cards, so "Select All" must mean
+      // "all of THOSE". filtered is derived from search + shortcuts below.
+      const visibleIds = shortcuts
+        .filter((s) =>
+          s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          s.description.toLowerCase().includes(searchQuery.toLowerCase())
+        )
+        .map((s) => s.id);
+      const allSelected = visibleIds.length > 0 && visibleIds.every((id) => prev.has(id));
+      return allSelected ? new Set() : new Set(visibleIds);
+    });
+  }, [shortcuts, searchQuery]);
+
+  // Escape exits selection mode. Suppressed while the confirm modal is
+  // open — the modal owns Escape during that window.
+  useEffect(() => {
+    if (!selectionMode || showConfirmMultiDelete) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        exitSelectionMode();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [selectionMode, showConfirmMultiDelete, exitSelectionMode]);
+
+  // Long-press + drag-select engine. See useDragSelect for mechanics.
+  useDragSelect({
+    containerRef: gridRef,
+    enabled: selectionMode,
+    onToggle: toggleSelectedId,
+    onEnterSelectionMode: () => setSelectionMode(true),
+    getAutoScrollSpeed: () => autoScrollSpeedRef.current,
+  });
+
+  const syncHotkeysAndTrackFailures = useCallback((list: SavedShortcut[]) => {
+    setFailedHotkeys(new Set());
+    window.electronAPI?.syncHotkeys({
+      shortcuts: list.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured, windowLayout: s.windowLayout })),
+      securedDoublePressSeconds: readSecuredDoublePressSeconds(),
+    });
+  }, []);
+
   const refreshShortcuts = useCallback(() => {
     const raw: SavedShortcut[] = JSON.parse(localStorage.getItem('lazycow-shortcuts') || '[]');
     // One-time migration: compute `secured` for any shortcut that doesn't
@@ -56,12 +148,8 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
       persistShortcuts(loaded);
     }
     setShortcuts(loaded);
-    setFailedHotkeys(new Set());
-    window.electronAPI?.syncHotkeys({
-      shortcuts: loaded.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured, windowLayout: s.windowLayout })),
-      securedDoublePressSeconds: readSecuredDoublePressSeconds(),
-    });
-  }, []);
+    syncHotkeysAndTrackFailures(loaded);
+  }, [syncHotkeysAndTrackFailures]);
 
   useEffect(() => { refreshShortcuts(); }, [refreshShortcuts]);
 
@@ -306,12 +394,18 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
       const updated = shortcuts.filter((s) => s.id !== deleteId);
       setShortcuts(updated);
       persistShortcuts(updated);
-      window.electronAPI?.syncHotkeys({
-        shortcuts: updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured, windowLayout: s.windowLayout })),
-        securedDoublePressSeconds: readSecuredDoublePressSeconds(),
-      });
+      syncHotkeysAndTrackFailures(updated);
     }
     setDeleteId(null);
+  };
+
+  const handleConfirmMultiDelete = () => {
+    const updated = shortcuts.filter((s) => !selectedIds.has(s.id));
+    setShortcuts(updated);
+    persistShortcuts(updated);
+    syncHotkeysAndTrackFailures(updated);
+    setShowConfirmMultiDelete(false);
+    exitSelectionMode();
   };
 
   const handleDuplicate = (card: SavedShortcut) => {
@@ -332,10 +426,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
     const updated = [duplicated, ...shortcuts];
     setShortcuts(updated);
     persistShortcuts(updated);
-    window.electronAPI?.syncHotkeys({
-      shortcuts: updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured, windowLayout: s.windowLayout })),
-      securedDoublePressSeconds: readSecuredDoublePressSeconds(),
-    });
+    syncHotkeysAndTrackFailures(updated);
   };
 
   // Toggle the per-shortcut "Secured" flag. Persists to localStorage and
@@ -347,10 +438,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
     );
     setShortcuts(updated);
     persistShortcuts(updated);
-    window.electronAPI?.syncHotkeys({
-      shortcuts: updated.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured, windowLayout: s.windowLayout })),
-      securedDoublePressSeconds: readSecuredDoublePressSeconds(),
-    });
+    syncHotkeysAndTrackFailures(updated);
   };
 
   const filtered = shortcuts.filter((s) =>
@@ -359,28 +447,91 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
   );
 
   return (
-    <main className="flex-1 p-margin-page w-full max-w-container-max mx-auto overflow-y-auto pb-32">
+    <main className={`flex-1 p-margin-page w-full max-w-container-max mx-auto overflow-y-auto pb-32 ${selectionMode ? 'select-none' : ''}`}>
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-        <div className="flex items-center gap-2 bg-card-light p-1 rounded-lg border border-border">
-          {([2, 3, 4] as const).map((n) => (
-            <button key={n} onClick={() => setGridCols(n)}
-              className={`p-1.5 rounded transition-colors ${gridCols === n ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-              title={`${n} Columns`}>
-              <span className="material-symbols-outlined text-[20px]">{n === 2 ? 'splitscreen' : n === 3 ? 'view_column' : 'grid_view'}</span>
+        <div className="flex items-center gap-3">
+          {!selectionMode ? (
+            <div className="flex items-center gap-2 bg-card-light p-1 rounded-lg border border-border">
+              {([2, 3, 4] as const).map((n) => (
+                <button key={n} onClick={() => setGridCols(n)}
+                  className={`p-1.5 rounded transition-colors ${gridCols === n ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+                  title={`${n} Columns`}>
+                  <span className="material-symbols-outlined text-[20px]">{n === 2 ? 'splitscreen' : n === 3 ? 'view_column' : 'grid_view'}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <span className="text-body-sm text-primary font-medium">
+              {selectedIds.size} selected
+            </span>
+          )}
+        </div>
+
+        {!selectionMode ? (
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            <div className="relative w-full md:w-64">
+              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-[18px]">search</span>
+              <input type="text" placeholder="Search shortcuts..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-card-light border border-border rounded-full py-2 pl-9 pr-4 text-body-sm focus:outline-none focus:border-primary transition-colors text-foreground" />
+            </div>
+            {shortcuts.length > 0 && (
+              <button onClick={() => setSelectionMode(true)}
+                className="shrink-0 px-4 py-2 border border-border rounded-full font-body-sm text-foreground hover:bg-muted transition-colors flex items-center gap-2">
+                <span className="material-symbols-outlined text-[16px]">checklist</span>
+                Select
+              </button>
+            )}
+            <button onClick={() => { setActiveTab('builder'); }}
+              className="shrink-0 bg-primary text-primary-foreground px-4 py-2 rounded-full font-label-caps text-label-caps flex items-center gap-2 hover:opacity-90 transition-opacity">
+              <span className="material-symbols-outlined text-[16px]">add</span> New Shortcut
             </button>
-          ))}
-        </div>
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          <div className="relative w-full md:w-64">
-            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-[18px]">search</span>
-            <input type="text" placeholder="Search shortcuts..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-card-light border border-border rounded-full py-2 pl-9 pr-4 text-body-sm focus:outline-none focus:border-primary transition-colors text-foreground" />
           </div>
-          <button onClick={() => { setActiveTab('builder'); }}
-            className="shrink-0 bg-primary text-primary-foreground px-4 py-2 rounded-full font-label-caps text-label-caps flex items-center gap-2 hover:opacity-90 transition-opacity">
-            <span className="material-symbols-outlined text-[16px]">add</span> New Shortcut
-          </button>
-        </div>
+        ) : (
+          <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
+            <button
+              onClick={handleSelectAllToggle}
+              className="px-3 py-1.5 rounded-full border border-border text-body-sm text-foreground hover:bg-muted transition-colors"
+            >
+              {(() => {
+                const visibleIds = shortcuts
+                  .filter((s) =>
+                    s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    s.description.toLowerCase().includes(searchQuery.toLowerCase())
+                  )
+                  .map((s) => s.id);
+                const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+                return allSelected ? 'Deselect All' : 'Select All';
+              })()}
+            </button>
+            {selectedIds.size > 0 && (
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                className="px-3 py-1.5 rounded-full border border-border text-body-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              >
+                Clear
+              </button>
+            )}
+            <button
+              onClick={() => setShowConfirmMultiDelete(true)}
+              disabled={selectedIds.size === 0}
+              className={`px-3 py-1.5 rounded-full text-body-sm flex items-center gap-1.5 transition-colors ${
+                selectedIds.size === 0
+                  ? 'bg-muted text-muted-foreground cursor-not-allowed'
+                  : 'bg-red-500 text-white hover:bg-red-600'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[16px]">delete</span>
+              Delete
+            </button>
+            <button
+              onClick={exitSelectionMode}
+              className="px-3 py-1.5 rounded-full bg-primary text-primary-foreground text-body-sm hover:opacity-90 transition-opacity"
+              title="Exit selection mode (Esc)"
+            >
+              Done
+            </button>
+          </div>
+        )}
       </div>
 
       {filtered.length === 0 && (
@@ -396,7 +547,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
           variants). The parent is a plain div — motion's `staggerChildren`
           can't cap the delay and would give card 30 a 900ms wait; each
           card owns its own delay, capped at index 8. */}
-      <div className={`grid grid-cols-1 gap-gutter ${gridCols === 2 ? 'md:grid-cols-2' : gridCols === 3 ? 'md:grid-cols-2 lg:grid-cols-3' : 'md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
+      <div ref={gridRef} className={`grid grid-cols-1 gap-gutter ${gridCols === 2 ? 'md:grid-cols-2' : gridCols === 3 ? 'md:grid-cols-2 lg:grid-cols-3' : 'md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
         }`}>
         {filtered.map((card, index) => (
           <ShortcutCard
@@ -419,11 +570,13 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
             onToggleSecured={handleToggleSecured}
             staggerIndex={index}
             reducedMotion={reducedMotion}
+            selectionMode={selectionMode}
+            isSelected={selectedIds.has(card.id)}
           />
         ))}
       </div>
 
-      {renameId && (
+      {renameId && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-background/90" onClick={() => { setRenameId(null); setRenameError(''); }} />
           <div className="relative bg-card border border-border rounded-2xl p-6 shadow-2xl max-w-sm w-full mx-4">
@@ -439,9 +592,18 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
               <button onClick={handleRenameSave} className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-full font-body-sm hover:opacity-90 transition-opacity">Save</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
       {deleteId && <DeleteModal onConfirm={confirmDelete} onCancel={() => setDeleteId(null)} />}
+
+      {showConfirmMultiDelete && (
+        <ConfirmDeleteShortcutsModal
+          count={selectedIds.size}
+          onConfirm={handleConfirmMultiDelete}
+          onCancel={() => setShowConfirmMultiDelete(false)}
+        />
+      )}
 
       {confirmRun && (
         <ConfirmSecuredModal
@@ -453,10 +615,7 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
             const persisted = shortcuts.map((s) => s.id === updated.id ? updated : s);
             setShortcuts(persisted);
             persistShortcuts(persisted);
-            window.electronAPI?.syncHotkeys({
-              shortcuts: persisted.map((s) => ({ id: s.id, name: s.name, hotkey: s.hotkey, actions: s.actions, secured: s.secured, windowLayout: s.windowLayout })),
-              securedDoublePressSeconds: readSecuredDoublePressSeconds(),
-            });
+            syncHotkeysAndTrackFailures(persisted);
             setConfirmRun(null);
             executeShortcut(updated);
           }}

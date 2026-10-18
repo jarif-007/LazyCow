@@ -299,8 +299,11 @@ export const ActionSequence: React.FC<ActionSequenceProps> = ({
         longPressTimerRef.current = null;
         longPressStartRef.current = null;
         setSelectionMode(true);
-        setSelectedIds(new Set([id]));
-        // Start drag-select immediately so the user can drag without releasing
+        // Do NOT setSelectedIds here. beginDrag() already toggles the
+        // initial card into the set. Calling setSelectedIds(new Set([id]))
+        // here AND letting beginDrag toggle it results in React processing
+        // both updates in order: the first adds it, the second removes it —
+        // long-press would enter selection mode with an empty selection.
         beginDrag(pointerRef.current.x, pointerRef.current.y, id);
       }, LONG_PRESS_MS);
     };

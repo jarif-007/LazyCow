@@ -64,25 +64,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabClick, collaps
 
       {/* Footer */}
       <div className="flex flex-col gap-4">
-        {!collapsed && (
-          <button 
-            onClick={() => onTabClick('builder')}
-            className="w-full py-2 px-4 bg-primary text-primary-foreground rounded-full font-label-caps text-label-caps flex items-center justify-center gap-2 hover:opacity-90 transition-opacity shadow-sm"
-          >
-            <span className="material-symbols-outlined text-[16px]">add</span>
-            New Project
-          </button>
-        )}
-        {collapsed && (
-          <button 
-            onClick={() => onTabClick('builder')}
-            className="w-full py-2 bg-primary text-primary-foreground rounded-full flex items-center justify-center hover:opacity-90 transition-opacity shadow-sm"
-            title="New Project"
-          >
-            <span className="material-symbols-outlined text-[16px]">add</span>
-          </button>
-        )}
-        
+        {/* "New Project" button intentionally removed — creating a shortcut
+            is Library's job ("New Shortcut" button), and the old Sidebar
+            button silently did nothing when the user was already on the
+            Builder tab. One entry point, no dead clicks. */}
+
          {/* Collapse toggle — hidden when auto-collapsed by window size */}
         {!isAutoCollapsed && (
           <button

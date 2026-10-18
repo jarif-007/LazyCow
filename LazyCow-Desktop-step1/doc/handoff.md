@@ -248,6 +248,16 @@ Recent commits (most recent first):
 - Design polish Phase 1, Surface 2 — Library grid entrance stagger.
   Verified end-to-end. About to commit. Files: `src/pages/Library.tsx`,
   `src/components/ShortcutCard.tsx`, `src/main.tsx`.
+- UI bugfix batch — modal containment (DeleteModal + Library rename + App
+unsaved modal), ShortcutCard menu outside-click/Escape, remove Sidebar
+"New Project", sync-hotkeys resets failure set, crypto.randomUUID() ids,
+empty-sequence Save guard. Files: DeleteModal.tsx, Library.tsx, App.tsx,
+ShortcutCard.tsx, Sidebar.tsx, Builder.tsx.
+- Library multi-select + drag-select. Long-press or Select button enters
+  selection mode; drag across cards to toggle continuously; Select All /
+  Clear / Delete / Done; Escape exits. New files: src/hooks/useDragSelect.ts,
+  src/utils/autoScroll.ts, src/components/ConfirmDeleteShortcutsModal.tsx.
+  Modified: src/pages/Library.tsx, src/components/ShortcutCard.tsx.
 
 ## §6 Bootstrap order
 1. electron/main.ts, electron/preload.ts, electron/electron-env.d.ts, electron/windowLayout.ts
