@@ -1,7 +1,7 @@
 # LazyCow — Active Missions
 
 ## Mission: Session 15 — UI Bugfixes & Library Multi-Select
-Status: COMPLETE (Commit `<commit-hash>`)
+Status: COMPLETE (Commit `e01159a`)
 - [x] Wrap `DeleteModal`, Library rename modal, and App unsaved modal in `createPortal` to fix windowed-mode positioning.
 - [x] Add outside-click and Escape handlers to `ShortcutCard` 3-dot menu.
 - [x] Remove dead "New Project" button from Sidebar.

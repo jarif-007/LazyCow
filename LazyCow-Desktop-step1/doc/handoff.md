@@ -1,7 +1,7 @@
 # LazyCow — Handoff
 
-Last updated: 2026-10-18
-Last commit: <commit-hash>
+zLast updated: 2026-10-18
+Last commit: e01159a
 Working tree: clean.
 
 ## §1 Current Focus
@@ -245,7 +245,7 @@ Previously verified (still hold):
 Working tree: **clean**.
 
 Recent commits (most recent first):
-- `<commit-hash>` fix(ui): modal containment, Library multi-select, outside-click menus, Builder long-press
+- `e01159a` fix(ui): modal containment, Library multi-select, outside-click menus, Builder long-press
 - `4fba2b9` docs: reconcile context.md + decisions.md with Sessions 13-14
 - `06ff19d` docs: fill journal stubs for feb8473, 1e38363, d87af72
 - `feb8473` fix(electron): flush localStorage on relaunch; reconcile handoff

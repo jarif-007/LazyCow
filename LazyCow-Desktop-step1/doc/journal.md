@@ -308,7 +308,7 @@ Format:
 - **Solution:** Wrapped offending modals in `createPortal(..., document.body)`. Added outside-click/Escape handlers to ShortcutCard. Created `useDragSelect` hook to share the long-press + drag-select engine between Builder and Library. Integrated multi-select into Library with a new `ConfirmDeleteShortcutsModal`. Removed the Sidebar button. Switched to `crypto.randomUUID()`. Fixed the Builder long-press double-toggle by removing the explicit `setSelectedIds` call before `beginDrag`.
 - **Files:** src/components/DeleteModal.tsx, src/components/ShortcutCard.tsx, src/components/Sidebar.tsx, src/components/ConfirmDeleteShortcutsModal.tsx (new), src/pages/Library.tsx, src/pages/Builder.tsx, src/components/ActionSequence.tsx, src/hooks/useDragSelect.ts (new), src/utils/autoScroll.ts (new), src/App.tsx, src/main.tsx.
 - **Verified:** tsc clean. Manual test: windowed mode modals center correctly; menus close on outside click; multi-select and drag-select work in Library; Builder long-press maintains selection.
-- **Commit:** `<commit-hash>`
+- **Commit:** e01159a
 
 ## 2026-10-18 — fix(ui): modal containment, Library multi-select, outside-click menus, Builder long-press
 - **Issue:** (fill in)
