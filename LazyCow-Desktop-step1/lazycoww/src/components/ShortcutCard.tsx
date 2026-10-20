@@ -223,7 +223,7 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
           </span>
         )}
         {shortcut.secured && (
-          <span className="inline-flex items-center gap-1 bg-primary/10 text-primary border border-primary/30 text-[11px] font-medium px-2 py-0.5 rounded-md" title="Secured shortcut — confirmation required before running.">
+          <span className="inline-flex items-center gap-1 bg-background/50 text-foreground border border-border/50 text-[11px] font-medium px-2 py-0.5 rounded-md" title="Secured shortcut — confirmation required before running.">
             <span className="material-symbols-outlined text-[13px]">lock</span> Secured
           </span>
         )}
@@ -235,7 +235,7 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
           const assignedCount = Object.keys(wl.assignments).length;
           return (
             <span
-              className="inline-flex items-center gap-1 bg-primary/10 text-primary border border-primary/30 text-[11px] font-medium px-2 py-0.5 rounded-md"
+              className="inline-flex items-center gap-1 bg-background/50 text-foreground border border-border/50 text-[11px] font-medium px-2 py-0.5 rounded-md"
               title={`Arranges apps into ${layoutDef.label} — ${assignedCount} of ${layoutDef.zoneCount} zone${layoutDef.zoneCount !== 1 ? 's' : ''} assigned`}
             >
               <span className="material-symbols-outlined text-[13px]">grid_view</span>

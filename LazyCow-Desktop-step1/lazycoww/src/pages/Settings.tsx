@@ -4,6 +4,7 @@ import { SettingsAppearance } from '../components/SettingsAppearance';
 import { SettingsBlockedTriggers } from '../components/SettingsBlockedTriggers';
 import { SettingsDangerZone } from '../components/SettingsDangerZone';
 import { SettingsFooter } from '../components/SettingsFooter';
+import { persistSetting } from '../utils/settingsStorage';
 
 type Shade = 'light' | 'medium' | 'dark';
 type ThemeName = 'coffee' | 'ocean' | 'forest';
@@ -25,6 +26,8 @@ interface LocalSettings {
   zoomFactor: number;
   /** Backdrop style for the App Drawer modal. */
   appDrawerBackdrop: 'blur' | 'solid';
+  /** Where the sidebar logo redirects to. */
+  sidebarLogoLink: string;
 }
 
 const DEFAULT_SETTINGS: LocalSettings = {
@@ -38,6 +41,7 @@ const DEFAULT_SETTINGS: LocalSettings = {
   autoScrollSpeed: 6,
   zoomFactor: 1,
   appDrawerBackdrop: 'solid',
+  sidebarLogoLink: 'library',
 };
 
 interface SettingsProps {
@@ -112,7 +116,7 @@ export default function Settings({ themeMode, onThemeModeChange, customColorMode
   const updateSetting = (key: string, value: boolean | string | number) => {
   const updated = { ...settings, [key]: value };
   setSettings(updated);
-  localStorage.setItem('lazycow_settings', JSON.stringify(updated));
+  persistSetting('lazycow_settings', JSON.stringify(updated));
   // Notify sibling components (Builder, Library) that a setting changed,
   // so they can re-read localStorage without a page reload. Standard
   // pattern for cross-component state without a store.

@@ -75,6 +75,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readShortcutsFromDisk: () => ipcRenderer.invoke('read-shortcuts-from-disk'),
   writeShortcutsToDisk: (list: unknown[]) => ipcRenderer.invoke('write-shortcuts-to-disk', list),
 
+  // ── Synchronous Settings Persistence ──
+  saveSettingSync: (key: string, value: string) => ipcRenderer.sendSync('save-setting-sync', { key, value }),
+  readSettingsSync: () => ipcRenderer.sendSync('read-settings-sync'),
+
   // Each `on*` returns an unsubscribe function — call it from a useEffect cleanup.
   onShortcutProgress: (callback: (e: { shortcutId: string; stepIndex: number }) => void) => {
     const listener = (_event: unknown, data: { shortcutId: string; stepIndex: number }) => callback(data)

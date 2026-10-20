@@ -13,8 +13,9 @@ interface SettingsGeneralProps {
     securedDoublePressSeconds: number;
     generalShade: Shade;
     autoScrollSpeed: number;
+    sidebarLogoLink: string;
   };
-  onUpdate: (key: string, value: boolean | Shade | number) => void;
+  onUpdate: (key: string, value: boolean | string | number) => void;
   customColorMode: boolean;
   // ── Hardware acceleration ──
   hardwareAcceleration: boolean;
@@ -145,6 +146,25 @@ export const SettingsGeneral: React.FC<SettingsGeneralProps> = ({
             />
             <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all" />
           </label>
+        </div>
+
+        {/* ── Sidebar Logo Link ── */}
+        <div className="p-4 flex items-center justify-between">
+          <div>
+            <h3 className="font-body-md font-medium">Sidebar Logo Destination</h3>
+            <p className="text-body-sm opacity-80">Where to go when clicking the logo in the top left.</p>
+          </div>
+          <select
+            value={settings.sidebarLogoLink || 'library'}
+            onChange={(e) => onUpdate('sidebarLogoLink', e.target.value)}
+            className="bg-background/50 border border-border rounded-lg px-3 py-2 font-body-sm text-foreground focus:ring-1 focus:ring-primary focus:outline-none"
+          >
+            <option value="library">Library</option>
+            <option value="builder">Builder</option>
+            <option value="settings">Settings</option>
+            <option value="community">Community</option>
+            <option value="account">Account</option>
+          </select>
         </div>
 
         {/* ── Auto-scroll speed ── */}

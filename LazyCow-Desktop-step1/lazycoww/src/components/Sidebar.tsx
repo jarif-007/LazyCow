@@ -10,6 +10,14 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabClick, collapsed, isAutoCollapsed, onToggleCollapse }) => {
+  const handleLogoClick = () => {
+    let target = 'library';
+    try {
+      const settings = JSON.parse(localStorage.getItem('lazycow_settings') || '{}');
+      if (settings.sidebarLogoLink) target = settings.sidebarLogoLink;
+    } catch { /* ignore */ }
+    onTabClick(target);
+  };
   const navItems = [
     { id: 'library', label: 'Library', icon: 'auto_stories' },
     { id: 'builder', label: 'Builder', icon: 'construction' },
@@ -23,25 +31,32 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabClick, collaps
       }`}>
       <div>
         {/* Header Brand */}
-        <div className={`mb-12 flex items-center ${collapsed ? 'w-full justify-center' : 'pl-[16px]'}`}>
+        <button 
+          onClick={handleLogoClick}
+          className={`mb-12 flex items-center transition-opacity hover:opacity-80 ${collapsed ? 'w-full justify-center' : 'pl-[16px]'}`}
+        >
           <AnimatePresence mode="wait">
             {collapsed ? (
-              <motion.svg
+              <motion.div
                 key="collapsed-logo"
                 initial={{ opacity: 0, scale: 0.8, rotate: -5 }}
                 animate={{ opacity: 1, scale: 1, rotate: 0 }}
                 exit={{ opacity: 0, scale: 0.8 }}
                 transition={{ duration: 0.2 }}
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 9.75 58.95000076293945 35.5"
-                className="h-[26px] w-auto fill-current text-primary hover:scale-105"
-              >
-                <g fill="currentColor">
-                  <g transform="translate(0, 0)">
-                    <path d="M10.35 42.20Q11.75 42.20 13.03 41.95Q14.30 41.70 16.05 41.25Q18 40.70 19.53 40.42Q21.05 40.15 22.85 40.15L22.85 45.25L5.85 45.25Q4.55 45.25 2.85 45.08Q1.15 44.90 0 44.50L0 43.70Q1.50 43.70 2.13 40.75Q2.75 37.80 2.75 32.60L2.75 22.25L2.75 16.60Q2.75 14 2.60 12.98Q2.45 11.95 2.03 11.63Q1.60 11.30 0.50 11.30L0.50 10.50Q2.70 9.75 5.85 9.75Q9 9.75 11.20 10.50L11.20 11.30Q10.10 11.30 9.68 11.63Q9.25 11.95 9.10 12.98Q8.95 14 8.95 16.60L8.95 22.25L8.95 32.60Q8.95 39.75 10.05 42.20L10.35 42.20ZM58.95 40.30Q56.35 42.60 52.75 43.92Q49.15 45.25 45.30 45.25Q39.25 45.25 35.10 42.88Q30.95 40.50 28.90 36.45Q26.85 32.40 26.85 27.35Q26.85 22.85 28.83 18.82Q30.80 14.80 34.93 12.27Q39.05 9.75 45.25 9.75Q48.90 9.75 51.93 10.88Q54.95 12 56.68 13.95Q58.40 15.90 58.40 18.25Q58.40 19.70 57.40 20.52Q56.40 21.35 55.05 21.35Q53.80 21.35 52.90 20.57Q52 19.80 52 18.40Q52 17 51.20 15.72Q50.40 14.45 48.88 13.67Q47.35 12.90 45.25 12.90Q39.75 12.90 36.70 16.95Q33.65 21 33.65 27.70Q33.65 31.85 35.30 35.02Q36.95 38.20 39.63 39.90Q42.30 41.60 45.30 41.60Q47.45 41.60 49.13 40.88Q50.80 40.15 52.18 38.95Q53.55 37.75 55.80 35.40L58.95 40.30Z" />
-                  </g>
-                </g>
-              </motion.svg>
+                className="h-[48px] w-[48px] hover:scale-105 transition-transform shrink-0"
+                style={{
+                  WebkitMaskImage: 'url(/icon-monogram-3d.svg)',
+                  WebkitMaskSize: '160%', // The exact size you loved
+                  WebkitMaskRepeat: 'no-repeat',
+                  WebkitMaskPosition: 'center',
+                  maskImage: 'url(/icon-monogram-3d.svg)',
+                  maskSize: '160%',
+                  maskRepeat: 'no-repeat',
+                  maskPosition: 'center',
+                  // This gradient is the magic. It paints the 3D shine.
+                  background: 'linear-gradient(135deg, #ffffff 0%, hsl(var(--primary)) 40%, hsl(var(--primary)) 60%, rgba(0,0,0,0.8) 100%)'
+                } as React.CSSProperties}
+              />
             ) : (
               <motion.svg
                 key="expanded-logo"
@@ -57,7 +72,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabClick, collaps
               </motion.svg>
             )}
           </AnimatePresence>
-        </div>
+        </button>
 
         {/* Main Navigation */}
         <ul className="flex flex-col gap-1">

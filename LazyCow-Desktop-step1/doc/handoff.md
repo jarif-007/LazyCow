@@ -65,7 +65,11 @@ What landed:
 Working tree: **clean**.
 
 ### §5-PENDING (in flight — cleared on confirmation)
-- (none)
+- ### §5-PENDING (in flight — cleared on confirmation)
+- [ ] Replace collapsed Sidebar logo with 3D masked SVG (`Sidebar.tsx`).
+- [ ] Add Liquid Metal splash animation (`index.html`).
+- [ ] Enforce 1.8s minimum load time for splash (`App.tsx`).
+- [ ] Add `public/icon-monogram-3d.svg` asset.
 
 ## §6 Bootstrap order
 1. electron/main.ts, electron/preload.ts, electron/electron-env.d.ts, electron/windowLayout.ts

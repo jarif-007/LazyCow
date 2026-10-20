@@ -1919,6 +1919,38 @@ ipcMain.handle('select-path', async (_event, type: 'app' | 'file' | 'folder') =>
 })
 
 // ──────────────────────────────────────────────
+// SYNCHRONOUS SETTINGS STORAGE (survives hard kill)
+// ──────────────────────────────────────────────
+const settingsFilePath = () => path.join(app.getPath('userData'), 'settings.json')
+
+function readSettingsStore(): Record<string, string> {
+  try {
+    const raw = fs.readFileSync(settingsFilePath(), 'utf8')
+    return JSON.parse(raw)
+  } catch { return {} }
+}
+
+ipcMain.on('save-setting-sync', (event, { key, value }) => {
+  try {
+    const store = readSettingsStore()
+    if (value === null || value === undefined) {
+      delete store[key]
+    } else {
+      store[key] = value
+    }
+    fs.writeFileSync(settingsFilePath(), JSON.stringify(store, null, 2), 'utf8')
+    event.returnValue = true
+  } catch (err) {
+    console.warn('[settings-persistence] write failed:', err)
+    event.returnValue = false
+  }
+})
+
+ipcMain.on('read-settings-sync', (event) => {
+  event.returnValue = readSettingsStore()
+})
+
+// ──────────────────────────────────────────────
 // SHORTCUT PERSISTENCE (disk mirror)
 // ──────────────────────────────────────────────
 // Chromium's localStorage writes are async and can be lost on a hard kill

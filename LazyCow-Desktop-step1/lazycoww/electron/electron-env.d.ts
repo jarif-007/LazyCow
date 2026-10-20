@@ -77,6 +77,10 @@ interface Window {
     // ── Shortcut persistence (disk mirror) ──
     readShortcutsFromDisk: () => Promise<{ ok: boolean; data: unknown[] }>
     writeShortcutsToDisk: (list: unknown[]) => Promise<{ ok: boolean }>
+
+    // ── Synchronous Settings Persistence ──
+    saveSettingSync: (key: string, value: string) => boolean
+    readSettingsSync: () => Record<string, string>
     // ── Real execution + global hotkeys. Each `on*` returns an unsubscribe function. ──
     runShortcut: (shortcut: ShortcutForIPC) => Promise<ActionResult[]>
     testUrl: (url: string) => Promise<{ ok: boolean; error?: string }>

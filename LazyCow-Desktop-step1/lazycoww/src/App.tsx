@@ -4,6 +4,7 @@ import { Library } from './pages/Library';
 import { Builder } from './pages/Builder';
 import Settings from './pages/Settings';
 import { SavedShortcut } from './types/actions';
+import { persistSetting } from './utils/settingsStorage';
 
 type ThemeName = 'coffee' | 'ocean' | 'forest';
 type ThemeMode = 'system' | 'light' | 'dark';
@@ -118,15 +119,16 @@ function App() {
   // ── Splash screen ──
   useEffect(() => {
     const init = async () => {
-      // Wait for fonts, but never block the splash more than 1.5s —
-      // on slow or offline connections, Google Fonts can stall for
-      // seconds. We'd rather show the app with fallback fonts than
-      // keep the user staring at a spinner.
+      // 1.8s minimum load time to show off the liquid metal animation
+      // and give Electron enough time to warm up caches.
+      const minLoadTime = new Promise((r) => setTimeout(r, 2500));
+      const maxTimeout = new Promise((r) => setTimeout(r, 3000));
+
       await Promise.race([
-        document.fonts.ready.catch(() => {}),
-        new Promise((r) => setTimeout(r, 1500)),
+        Promise.all([document.fonts.ready.catch(() => {}), minLoadTime]),
+        maxTimeout,
       ]);
-      await new Promise((r) => setTimeout(r, 200));
+      
       const splash = document.getElementById('splash-screen');
       if (splash) splash.classList.add('hidden');
       setTimeout(() => { if (splash) splash.remove(); }, 500);
@@ -162,7 +164,7 @@ function App() {
       setSystemAccent(hex);
       document.documentElement.style.setProperty('--primary', hexToHSL(hex));
       // Cache the exact Windows accent color so the splash screen can use it next time
-      try { localStorage.setItem('lazycow-system-accent', hex); } catch {}
+      persistSetting('lazycow-system-accent', hex);
     });
 
     // Listen for real-time changes
@@ -171,6 +173,8 @@ function App() {
       if (!customColorMode) {
         document.documentElement.style.setProperty('--primary', hexToHSL(hex));
       }
+      // Cache the new accent to disk immediately so the splash screen is correct next time
+      persistSetting('lazycow-system-accent', hex);
     });
   }, [customColorMode]);
   // ── Compute dark mode for icon display ──
@@ -193,8 +197,8 @@ function App() {
     // initial default (customColorMode=false, theme=coffee) is written
     // immediately on mount and clobbers the user's saved choice.
     if (themeHydrated) {
-      localStorage.setItem('lazycow-custom-color-mode', String(customColorMode));
-      localStorage.setItem('lazycow-custom-theme', customTheme);
+      persistSetting('lazycow-custom-color-mode', String(customColorMode));
+      persistSetting('lazycow-custom-theme', customTheme);
     }
   }, [customColorMode, customTheme, systemAccent, themeHydrated]);
 
@@ -227,7 +231,7 @@ function App() {
 
     // Guard against writing before load-hydration has settled.
     if (themeHydrated) {
-      localStorage.setItem('lazycow-theme-mode', mode);
+      persistSetting('lazycow-theme-mode', mode);
     }
   };
 
@@ -249,7 +253,7 @@ function App() {
     if (isDark) document.documentElement.classList.remove('dark');
     else document.documentElement.classList.add('dark');
     setThemeMode(nextMode);
-    if (themeHydrated) localStorage.setItem('lazycow-theme-mode', nextMode);
+    if (themeHydrated) persistSetting('lazycow-theme-mode', nextMode);
   };
 
   // Clear any in-flight edit state when the user leaves Builder. Editing a
