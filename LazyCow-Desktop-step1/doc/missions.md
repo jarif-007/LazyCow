@@ -1,4 +1,15 @@
 # LazyCow — Active Missions
+## Mission: Session 17 — Splash Screen & Persistence Polish
+Status: COMPLETE (Commit pending)
+- [x] Add synchronous settings persistence (`settingsStorage.ts`, `settings.json`).
+- [x] Fix theme data loss on hard kill (Ctrl+C right after theme change).
+- [x] Implement `color-mix` to prevent theme intrusion in splash gradients.
+- [x] Finalize Liquid Metal splash animation (`icon-monogram-outline.svg`).
+- [x] Add looping animation for slow PCs (fills up, then drains/fills).
+- [x] Make Sidebar logo clickable.
+- [x] Add "Sidebar Logo Destination" setting to Settings → General.
+- [x] Fix ShortcutCard badges (Secured, Window Layout) visibility in light mode.
+- [x] Keep `public/test-splash.html` for color testing.
 ## Mission: Session 16 — Branding & Layout Engine Fixes
 Status: COMPLETE (Commit pending)
 - [x] Fix `open_folder` arrangement (`TrimEnd('\\', '/')` bug).

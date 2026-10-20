@@ -311,10 +311,10 @@ Format:
 - **Commit:** e01159a
 
 ## 2026-10-18 — fix(ui): modal containment, Library multi-select, outside-click menus, Builder long-press
-- **Issue:** (fill in)
-- **Solution:** (fill in)
-- **Files:** (fill in)
-- **Verified:** (fill in)
+- **Issue:** This was a duplicate / follow-up commit to `e01159a`, applying the exact same set of fixes (modal containment, Library multi-select, outside-click menus, Builder long-press) likely due to a rebase or a commit split during that session.
+- **Solution:** Same as `e01159a` — wrapped modals in `createPortal`, added outside-click/Escape handlers, created `useDragSelect`, integrated multi-select into Library, and fixed the Builder long-press double-toggle.
+- **Files:** Same as `e01159a`.
+- **Verified:** tsc clean. Manual test passed.
 - **Commit:** b5666d7
 
 ## 2026-10-19 — feat(ui): complete app branding + fix layout engine bugs
@@ -326,3 +326,14 @@ Format:
 - **Files:** `electron/main.ts`, `electron/windowLayout.ts`, `electron-builder.json5`, `index.html`, `tailwind.config.js`, `src/App.tsx`, `src/components/Sidebar.tsx`, `src/components/SettingsFooter.tsx`, `src/pages/Library.tsx`, `src/pages/Builder.tsx`, `public/*`
 - **Verified:** yes — `tsc` clean. Layout engine successfully arranges folders and Control Panel. Splash screen, sidebar, and taskbar icons all render correctly in Light, Dark, and Custom themes.
 - **Commit:** 53bad70
+
+## 2026-10-20 — feat: durable settings persistence, dynamic splash theme, clickable logo routing
+- **Issue:** (1) Changing a theme and hard-killing the app lost the changes because `localStorage` writes asynchronously. (2) The splash screen used hardcoded blue hex codes, causing it to clash with the Coffee/Forest themes and the Windows accent color. (3) The sidebar logo was unclickable. (4) The ShortcutCard badges were invisible in light mode.
+- **Solution:** 
+  - Created a synchronous disk mirror (`settings.json`) for critical settings and read it in `index.html` before React mounts. 
+  - Used CSS `color-mix` to generate the splash gradient dynamically from the active theme's `--splash-bar` variable, and added a loop fallback if boot takes >2.5s. 
+  - Wrapped the Sidebar logo in a button, added a routing dropdown to Settings → General, and read the destination `localStorage` at click-time to prevent stale state. 
+  - Changed badge text/icon colors to `text-foreground` to fix contrast in light mode.
+- **Files:** `electron/main.ts`, `electron/preload.ts`, `electron/electron-env.d.ts`, `index.html`, `src/utils/settingsStorage.ts` (new), `src/App.tsx`, `src/components/Sidebar.tsx`, `src/components/ShortcutCard.tsx`, `src/components/SettingsGeneral.tsx`, `src/pages/Settings.tsx`, `public/icon-monogram-outline.svg`, `public/icon-monogram-3d.svg`
+- **Verified:** yes — `tsc` clean. Splash colors adapt to all themes. Theme survives instant Ctrl+C. Logo routes correctly.
+- **Commit:** d750b56

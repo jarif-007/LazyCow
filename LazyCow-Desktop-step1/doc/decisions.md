@@ -510,3 +510,21 @@ Append-only. Never delete. Each entry: date, decision, alternatives, why, conseq
 - **Why:** Inline SVGs can use `fill="currentColor"` or `fill="var(--splash-bar)"`. This allows the logo to dynamically adapt to Windows Dark Mode and all three Custom Themes without needing multiple asset files.
 - **Consequence:** The logo perfectly matches the theme accent. The `public/wordmark.svg` file is only used for marketing (README), not inside the app UI.
 - **Status:** active
+## 2026-10-20 — Synchronous settings storage for critical UI state
+- **Decision:** Created `settings.json` in `userData` and a synchronous IPC bridge (`save-setting-sync`, `read-settings-sync`) to mirror theme, accent color, and app routing preferences. `index.html` reads from this disk store first before React hydrates.
+- **Alternatives:** Rely on `localStorage` and flush on exit. Rejected — we already proved in the shortcut data-loss incident (2026-10-15) that dev-mode Ctrl+C and `taskkill /f` skip all shutdown hooks.
+- **Why:** `localStorage` writes are async. Hard-killing the app right after changing a theme causes Chromium to lose the pending write. This is extremely frustrating for the user, as they have to set up their theme again. Synchronous disk writes guarantee the data survives any kill.
+- **Consequence:**
+  - New `src/utils/settingsStorage.ts` (`persistSetting`).
+  - New IPC handlers in `main.ts` and bridges in `preload.ts`.
+  - `index.html` splash screen script now queries `window.electronAPI.readSettingsSync()` before falling back to `localStorage`.
+- **Status:** active
+
+## 2026-10-20 — Splash screen uses `color-mix` for dynamic gradients
+- **Decision:** The splash screen's Liquid Metal animation uses CSS `color-mix(in srgb, white X%, var(--splash-bar))` instead of hardcoded hex values for the gradient stops.
+- **Alternatives:** Hardcoded gradients per theme. Rejected — caused severe theme intrusion bugs (e.g., the Coffee theme's liquid turning blue at the bottom, or the Windows accent bleeding into other themes).
+- **Why:** The splash screen can be tinted by custom themes (Coffee, Ocean, Forest) or the Windows system accent color. `color-mix` allows the liquid to dynamically generate a metallic shine (light top, dark bottom) based purely on the active `--splash-bar` color, ensuring 100% cohesion with zero hardcoding.
+- **Consequence:**
+  - CSS variables `--splash-gradient` added to `index.html`.
+  - Liquid always matches the theme (Brown for Coffee, Green for Forest, Blue for Windows).
+- **Status:** active

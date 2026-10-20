@@ -1,28 +1,28 @@
 # LazyCow — Handoff
 
-Last updated: 2026-10-19
-Last commit: 53bad70
+Last updated: 2026-10-20
+Last commit: [enter new commit hash here]
 Working tree: clean
 
 ## §1 Current Focus
-Session 16 focused on **fixing the Window Layout engine bugs and overhauling the app's visual branding**. 
-The layout engine now correctly arranges folders and Control Panel. The app has a new identity: SF Pro/Playfair typography, a new LC monogram icon, animated sidebar transitions, and theme-adaptive SVGs.
+Session 17 focused on **hardening the app against data loss and polishing the visual identity**.
+We implemented synchronous settings persistence to survive hard kills, finalized the Liquid Metal splash screen with dynamic theme colors, and made the Sidebar logo clickable with a user-configurable destination.
 
 Status: All code applied, verified, and committed. 
 
 What landed:
-- **Layout Engine Fixes** — `open_folder` and `control.exe` now arrange perfectly. `TrimEnd` escaping bug fixed. Shell launchers mapped to `explorer`.
-- **Branding & Typography** — Global font stack updated to SF Pro/Segoe UI Variable. `tailwind.config.js` monospace removed.
-- **New Icon System** — Added `icon.ico`, `wordmark.svg`, and `icon-monogram.svg`. Splash screen and Sidebar use inline SVGs that adapt to theme colors.
-- **Sidebar Animations** — Framer Motion added for smooth collapse/expand logo transitions.
-- **UI Alignment** — Library header buttons standardized to exact heights.
+- **Settings Persistence** — `settings.json` now mirrors critical UI state (themes, accent colors) synchronously to disk. No more resets after a hard kill.
+- **Dynamic Splash Screen** — The outline SVG fills using a `color-mix` gradient that adapts to *any* active theme (Coffee, Ocean, Windows, etc.) without hardcoded color intrusion. Includes a fail-safe looping animation if boot takes >2.5s.
+- **Sidebar Routing** — Clicking the logo now routes to a user-defined page (default: Library).
+- **Card Badge Fixes** — Secured and Window Layout badges now use `text-foreground` for perfect contrast in light mode.
 
 ## §2 Sub-task State
 
-### Done & verified (Session 16)
-- **Layout Engine** — `open_folder` / `control.exe` fixed and verified.
-- **App Branding** — New fonts, icons, splash screen, sidebar, footer.
-- **Header Alignment** — Library header UI standardized.
+### Done & verified (Session 17)
+- **Hard-kill persistence** — `settingsStorage.ts` + sync IPC.
+- **Splash screen** — `icon-monogram-outline.svg` + dynamic gradient + looping fallback.
+- **Sidebar Logo** — Clickable with Settings routing.
+- **ShortcutCard Badges** — Visibility fixes in light mode.
 
 ### Done in code — manual runtime verification pending
 - Full hotkey flow (Session 11).
@@ -48,38 +48,32 @@ What landed:
 - **`preload.ts` exposes `arrangeWindowsShortcut`; `main.ts` has no matching `ipcMain.handle`.** Dead bridge. Clean up in a dedicated `chore` commit.
 - **Vestigial `showDangerWarnings` prop in `Builder.tsx`.** Dead.
 - **`onShortcutStarted` dead channel.**
-- **`Builder.handleSave` reimplements `hasDangerousActions()` inline.**
 - **WhatsApp / Telegram multi-window ambiguity.**
 - **Four copies of the key vocabulary.**
 
 ## §3 Last Verified Test
-`npx tsc --noEmit` clean. Manual: `open_folder` and `control.exe` layout arrangement works. Splash screen and sidebar adapt to theme colors. Taskbar shows `.ico`. Header buttons align correctly.
+`npx tsc --noEmit` clean. Manual: Splash screen dynamically colors to theme in both dark/light mode. Theme persists after instant Ctrl+C kill. Clicking logo routes to the selected page.
 
 ## §4 Open Questions
-- **`Builder.handleSave` classification.** Should it use the shared `hasDangerousActions()` helper?
 - **Canonical key module.** Where should it live? `src/utils/keys.ts` feels right. Electron cannot import from `src/`.
-- **Design polish — hero theme.** Confirm Windows Fluent (system accent) as the identity.
 
 ## §5 Uncommitted (mirrors git status)
 
 Working tree: **clean**.
 
 ### §5-PENDING (in flight — cleared on confirmation)
-- ### §5-PENDING (in flight — cleared on confirmation)
-- [ ] Replace collapsed Sidebar logo with 3D masked SVG (`Sidebar.tsx`).
-- [ ] Add Liquid Metal splash animation (`index.html`).
-- [ ] Enforce 1.8s minimum load time for splash (`App.tsx`).
-- [ ] Add `public/icon-monogram-3d.svg` asset.
+- (none)
 
 ## §6 Bootstrap order
 1. electron/main.ts, electron/preload.ts, electron/electron-env.d.ts, electron/windowLayout.ts
 2. src/types/actions.ts, src/pages/Library.tsx, src/pages/Builder.tsx
-3. src/utils/security.ts, src/utils/danger.ts, src/components/ConfirmSecuredModal.tsx
-4. src/components/ActionSequence.tsx, src/components/ActionSequence/SortableActionCard.tsx
-5. src/components/WindowLayout/WindowLayoutPanel.tsx, src/components/WindowLayout/PositionDropdown.tsx
-6. src/components/SettingsBlockedTriggers.tsx, src/components/BlockedTriggerList.tsx, src/components/ComboBuilder.tsx, src/hooks/useHotkeyRecorder.ts
-7. src/components/AppDrawerModal.tsx, src/components/HiddenAppsModal.tsx, src/utils/appVisibility.ts, src/utils/appUsage.ts, src/utils/shortcutStorage.ts
-8. package.json, tsconfig.json, vite.config.ts (only if needed)
+3. src/utils/security.ts, src/utils/danger.ts, src/utils/settingsStorage.ts, src/utils/shortcutStorage.ts
+4. src/components/ShortcutCard.tsx, src/components/ConfirmSecuredModal.tsx
+5. src/components/ActionSequence.tsx, src/components/ActionSequence/SortableActionCard.tsx
+6. src/components/WindowLayout/WindowLayoutPanel.tsx, src/components/WindowLayout/PositionDropdown.tsx
+7. src/components/SettingsBlockedTriggers.tsx, src/components/BlockedTriggerList.tsx, src/components/ComboBuilder.tsx, src/hooks/useHotkeyRecorder.ts
+8. src/components/AppDrawerModal.tsx, src/components/HiddenAppsModal.tsx, src/utils/appVisibility.ts, src/utils/appUsage.ts
+9. index.html, package.json, tsconfig.json, vite.config.ts (only if needed)
 
 ## §7 Update rules
 Update when: "checkpoint" / "sync" / "commit" | bug found/fixed/abandoned | decision made/reversed | sub-task verified.
