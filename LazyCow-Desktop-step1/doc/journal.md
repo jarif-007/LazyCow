@@ -353,3 +353,10 @@ Format:
 - **Files:** (fill in)
 - **Verified:** (fill in)
 - **Commit:** 0557867
+
+## 2026-10-24 — feat: cloud architecture plan + Auth/Account UI (Session 18)
+- **Issue:** (fill in)
+- **Solution:** (fill in)
+- **Files:** (fill in)
+- **Verified:** (fill in)
+- **Commit:** a1f3105
