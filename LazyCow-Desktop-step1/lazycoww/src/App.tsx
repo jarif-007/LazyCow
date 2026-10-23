@@ -3,6 +3,8 @@ import { Sidebar } from './components/Sidebar';
 import { Library } from './pages/Library';
 import { Builder } from './pages/Builder';
 import Settings from './pages/Settings';
+import { Account } from './pages/Account';
+import { Auth } from './pages/Auth';
 import { SavedShortcut } from './types/actions';
 import { persistSetting } from './utils/settingsStorage';
 
@@ -32,6 +34,8 @@ function hexToHSL(hex: string): string {
 
 function App() {
   const [activeTab, setActiveTab] = useState<string>('library');
+  // Mock Authentication State (in the future, this reads from Supabase)
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [customColorMode, setCustomColorMode] = useState<boolean>(false);
   const [customTheme, setCustomTheme] = useState<ThemeName>('coffee');
   const [themeMode, setThemeMode] = useState<ThemeMode>('system');
@@ -397,12 +401,14 @@ function App() {
           </div>
         </div>
 
-        <div className={`${activeTab === 'account' ? 'flex-1 flex items-center justify-center' : 'hidden'}`}>
-          <div className="text-center max-w-md p-margin-page">
-            <span className="material-symbols-outlined text-muted-foreground text-5xl mb-4">account_circle</span>
-            <h2 className="text-xl font-bold font-headline-md text-foreground">My Profile</h2>
-            <p className="text-muted-foreground mt-2 font-body-md">Coming Soon!</p>
-          </div>
+        <div className={`page-container ${activeTab === 'account' ? 'active' : ''}`}>
+          {appReady && (
+            isAuthenticated ? (
+              <Account />
+            ) : (
+              <Auth onLogin={() => setIsAuthenticated(true)} />
+            )
+          )}
         </div>
       </div>
 

@@ -1,4 +1,31 @@
 # LazyCow — Active Missions
+## Mission: Session 18 — Cloud Architecture & Auth UI
+Status: COMPLETE (Commit pending)
+- [x] Plan Supabase DB schema (profiles, shortcuts, reviews).
+- [x] Design sanitization engine logic (strip paths, add uploader hints).
+- [x] Build `Auth.tsx` — split-screen layout, password strength meter, requirements checklist.
+- [x] Fix windowed mode clipping (using `my-auto` and `overflow-y-auto`).
+- [x] Add focus mode (left panel hides when typing).
+- [x] Build `Account.tsx` — Bento grid dashboard.
+- [x] Add Framer Motion focus modes and hover previews to Account page.
+- [x] Fix layout jitter during window resizing.
+- [x] Ensure passwords match validation is real-time.
+
+## Mission: Community Page UI
+Status: PLANNING
+- [ ] Build `Community.tsx`.
+- [ ] Layout: Search bar, category filter pills, leaderboard banner.
+- [ ] Grid of community shortcuts (Rating, Downloads, Author).
+- [ ] "Download Preview" modal.
+- [ ] Wire up to the Account page navigation.
+
+## Mission: Cloud Backend (Supabase)
+Status: NOT STARTED
+- [ ] Initialize Supabase client in the app.
+- [ ] Implement Email/Password sign-in and sign-up with OTP.
+- [ ] Implement Google OAuth (via `shell.openExternal` and deep linking).
+- [ ] Build `sanitizeShortcutForUpload` and `hydrateDownloadedShortcut` utilities.
+- [ ] Add "Needs Setup" badge to ShortcutCard for downloaded shortcuts with missing paths.
 ## Mission: Session 17 — Splash Screen & Persistence Polish
 Status: COMPLETE (Commit pending)
 - [x] Add synchronous settings persistence (`settingsStorage.ts`, `settings.json`).
@@ -144,6 +171,17 @@ Status: NOT STARTED
 - [ ] `onShortcutStarted` is subscribed in `Library.tsx`, exposed in `preload.ts`, declared in `electron-env.d.ts` — but no `win.webContents.send('shortcut-started', ...)` exists anywhere in `main.ts`.
 - [ ] **Recommended action:** delete the channel entirely — the modal already has three other close paths (`visibilitychange`, `shortcut-complete`, `hotkey-triggered`).
 - [ ] Touches: `electron/preload.ts`, `electron/electron-env.d.ts`, `src/pages/Library.tsx`.
+
+## Mission: `autoScrollSpeed` default drift
+Status: NOT STARTED
+- [ ] Three files disagree on the fallback default:
+  - `src/pages/Settings.tsx` — `DEFAULT_SETTINGS.autoScrollSpeed = 6`
+  - `src/utils/autoScroll.ts` — `DEFAULT_SPEED = 9`
+  - `src/components/ActionSequence.tsx` — `AUTO_SCROLL_MAX_SPEED_DEFAULT = 9`
+- [ ] **Effect:** fresh user with no `lazycow_settings` gets reader default 9. First setting change writes the whole settings object with `autoScrollSpeed: 6`, silently dropping the effective value 9 → 6.
+- [ ] **Recommended fix:** align on 6 (matches the Settings presets: Slow 3 / Medium 6 / Fast 12). Update `autoScroll.ts` and `ActionSequence.tsx`.
+- [ ] Touches: `src/utils/autoScroll.ts`, `src/components/ActionSequence.tsx`.
+- [ ] **Rationale:** silent value drops on first settings write are exactly the class of bug that erodes trust in the app.
 
 ## Mission: NFR Phases 4–6
 Status: NOT STARTED

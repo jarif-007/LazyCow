@@ -42,13 +42,13 @@ The application is structured to support:
   - Dangerous actions (scripts, executables) triggered via global hotkeys prompt for confirmation before executing.
   - The `index.html` CSP allows `script-src 'self' 'unsafe-inline'` — this is the intentional exception for the synchronous theme-bootstrap inline script (reads localStorage before the splash paints, preventing a flash of the wrong theme on cold start). Do not remove this exception without moving the bootstrap into a non-inline script first.
 * **Data Persistence:**
-  - `lazycow-shortcuts` — Array of saved `SavedShortcut` objects. Each shortcut carries `secured?: boolean` (per-shortcut runtime confirmation gate) and each action carries `safetyOverride?: 'dangerous' | 'safe'` (user-locked label).
+  - `lazycow-shortcuts` — Array of saved `SavedShortcut` objects. Each shortcut carries `secured?: boolean` (per-shortcut runtime confirmation gate), `isSecuredCustom?: boolean` (true when the user has manually toggled the secured flag — `migrateShortcutsSecured` short-circuits these and never overrides the stored value), and each action carries `safetyOverride?: 'dangerous' | 'safe'` (user-locked label).
     - **Also mirrored to `userData/shortcuts.json`** via synchronous IPC (`fs.writeFileSync` in main). Chromium's `localStorage` writes are async and can be lost on hard kill (Ctrl+C in dev, `taskkill /f`, power loss within the ~1–5s flush window). Every shortcut write goes through `persistShortcuts(list)` in `src/utils/shortcutStorage.ts`, which writes to both `localStorage` and the disk file. On Library mount, if `localStorage` is empty but the disk file has data, `recoverShortcutsFromDiskIfEmpty()` restores it. See decisions.md 2026-10-15 for the incident that motivated this.
   - `preferences.json` in `userData` — Main-process-only preferences that must be readable before `app.whenReady()`. Currently just `{ hardwareAcceleration?: boolean }` (default `false`). Written synchronously; read at module load in `electron/main.ts`. See `electron/preferences.ts`.
   - `settings.json` in `userData` — A synchronous key-value mirror of critical renderer settings (themes, accent color, sidebar routing). Solves the hard-kill data loss issue for themes (matching the shortcut disk mirror). Read synchronously in `index.html` before the splash screen paints. Managed by `src/utils/settingsStorage.ts` and sync IPC (`save-setting-sync`, `read-settings-sync`).
   - `lazycow-blocked-triggers` — Blocked hotkey trigger strings.
   - `lazycow-os-critical-triggers` — OS-critical protected triggers.
-  - `lazycow_settings` — General desktop settings (`startAtLogin`, `keepInTray`, `executionNotifications`, `securedShortcutsEnabled`, `securedDoublePressSeconds`, `autoScrollSpeed`, `zoomFactor`, `appDrawerBackdrop`, `generalShade`, `dataShade`).
+  - `lazycow_settings` — General desktop settings (`startAtLogin`, `keepInTray`, `executionNotifications`, `securedShortcutsEnabled`, `securedDoublePressSeconds`, `autoScrollSpeed`, `zoomFactor`, `appDrawerBackdrop`, `generalShade`, `dataShade`, `sidebarLogoLink`).
     - `securedShortcutsEnabled` (default `true`) — controls whether *newly created* shortcuts with dangerous actions default to `secured`. Does **not** retroactively change existing shortcuts.
     - `securedDoublePressSeconds` (default `5`, range 5–30) — window in seconds for the double-press confirmation on a minimized window.
     - Legacy `showDangerWarnings` key (from commit `7ed280c`) is **silently migrated** to `securedShortcutsEnabled` on first `Settings.tsx` load and deleted. Do not re-read the old key.
@@ -61,6 +61,7 @@ The application is structured to support:
   - `lazycow-dark` — Legacy flag kept in sync with dark mode state.
   - `lazycow-system-accent` — Cached hex color of the user's Windows accent, used by the splash screen to prevent a color flash before React hydrates.
   - `lazycow-hide-modal-hints` — Boolean. When true, the multi-delete confirmation modal hides the small `Esc` / `Enter` badges.
+  - `lazycow-hide-safe-prompt-<shortcutId>` — Boolean, per-shortcut (key suffix is the shortcut id). When true, `ConfirmSecuredModal` skips the "all actions marked safe — turn off Secured?" prompt for that shortcut.
 
 ---
 
@@ -82,6 +83,8 @@ LazyCow/
 │       ├── electron/
 │       │   ├── main.ts                # Main process: execution engine, IPC handlers, hotkeys, tray
 │       │   ├── preload.ts             # Context bridge: safe electronAPI exposure
+│       │   ├── windowLayout.ts        # Window Layout engine (PowerShell + C# P/Invoke)
+│       │   ├── preferences.ts         # Synchronous preferences.json (hardwareAcceleration)
 │       │   └── electron-env.d.ts      # TypeScript interfaces for electronAPI
 │       └── src/
 │           ├── App.tsx                # App root: tab management, theme orchestrator, modal handlers
@@ -114,6 +117,7 @@ LazyCow/
 │           │   ├── BlockedTriggerList.tsx # Searchable blocked triggers list
 │           │   ├── CollapsedSearchPopover.tsx # Command-palette search popover for collapsed ActionSidebar
 │           │   ├── ComboBuilder.tsx   # Controlled hotkey constructor: modifier chips + grouped key dropdown + preview
+│           │   ├── ConfirmDeleteShortcutsModal.tsx # Library batch-delete confirmation (portal, Esc/Enter, hint persistence)
 │           │   ├── ConfirmSecuredModal.tsx # Interactive per-action review for secured shortcuts (filter + label editor)
 │           │   ├── DeleteModal.tsx    # Confirmation modal for shortcut deletion
 │           │   ├── OSCriticalWarningModal.tsx # Safety warning modal for critical hotkey deletes
@@ -129,6 +133,8 @@ LazyCow/
 │           │       ├── LayoutThumbnail.tsx    # Visual preview of a layout with icons
 │           │       └── PositionDropdown.tsx   # Per-card zone assignment dropdown
 │           └── pages/
+│               ├── Auth.tsx           # Login/Signup split-screen UI with validation & focus modes
+│               ├── Account.tsx        # Bento-grid dashboard with modal focus states
 │               ├── Builder.tsx        # Shortcut creation/editing with live validation
 │               ├── Library.tsx        # Saved shortcut catalog & execution dashboard
 │               └── Settings.tsx       # Desktop preferences orchestrator
@@ -314,6 +320,8 @@ The App Drawer is the picker for `launch_app` actions. Clicking **Select App** o
   - **Re-runs on window focus:** Returning from Explorer after fixing a path refreshes the badge without a page reload.
 - **`ConfirmDeleteShortcutsModal.tsx`:** Rendered via `createPortal`. Shows the count of shortcuts to delete. Supports Esc (cancel) and Enter (confirm). Includes a "Don't show hints again" checkbox persisted to `lazycow-hide-modal-hints`.
 - **`Settings.tsx` & Subcomponents:** Manages appearance, theme switching, startup launch, system tray minimization, execution notifications, blocked triggers, and factory reset.
+- **`Auth.tsx`:** Split-screen login/registration. Left panel shows the value proposition and a cursor-following light. Right panel is the form. Focus mode hides the left panel and centers the form. Includes real-time password strength meter, requirements checklist, and inline email/password validation. Handles mock Google OAuth and loading states.
+- **`Account.tsx`:** Bento-grid dashboard. Layout uses CSS Grid (`col-span-`). Clicking a card opens a focused modal overlay (no backdrop-blur for performance). Uses Framer Motion `layout` to smoothly animate the expansion and shrinking of cards. Includes mock sync history, connected devices, and community upload stats.
 
 ### C2. Motion layer (`src/utils/motion.ts`)
 
@@ -383,7 +391,7 @@ npm run build
 11. **Auto-Prefix URLs on Blur:** URL fields auto-prepend `https://` when the user blurs without a scheme. The prefixer strips any orphan `://`, `//`, or `:` first. Users who explicitly type `http://` or `https://` keep control. Private and loopback IP ranges (`10.`, `127.`, `169.254.`, `172.16–31.`, `192.168.`) and `localhost` get `http://` instead.
 12. **Hardware Acceleration Is a User Toggle, Default OFF:** `app.disableHardwareAcceleration()` is called conditionally — only when the user's `preferences.json` says `hardwareAcceleration: false`. Default is `false`, matching the app's historical behaviour on the affected GPU class. Do not remove the disable call entirely; do not flip the default to ON without a decision. The toggle exists in Settings → General, requires a restart, and is read synchronously at module load (before `app.whenReady()`) because Chromium's compositor initialises before the renderer can push a preference down. See decisions.md 2026-10-15.
 13. **URL Validation Stays Format-Only:** Never reintroduce a TLD whitelist or a DNS lookup for URL validation. Both create maintenance burden, offline-hostile behavior, and false negatives. Users verify reachability themselves via the **Test** button.
-14. **No `backdrop-blur` in Modals or Overlays:** `backdrop-blur-*` forces Chromium to blur the entire backdrop on every frame the modal is open, and to recompute on open/close. Under software rendering (which the GPU workaround forces) this is measurably expensive. Use solid `bg-background/90` (or `/95` for tighter overlays) instead.
+14. **No `backdrop-blur` in Modals or Overlays:** `backdrop-blur-*` forces Chromium to blur the entire backdrop on every frame the modal is open, and to recompute on open/close. Under software rendering (which the GPU workaround forces) this is measurably expensive. Use solid `bg-background/90` (or `/95` for tighter overlays) instead. **One sanctioned exception:** the App Drawer backdrop is user-configurable (Settings → Appearance → "App Drawer backdrop: Blur / Solid"); when the user picks Blur, `AppDrawerModal.tsx` uses `backdrop-blur-md`. This is an explicit opt-in, not a default — do not add blur anywhere else without a decision.
 15. **rAF-Throttle Resize Listeners:** Any `window.addEventListener('resize', ...)` must be wrapped in a `requestAnimationFrame` throttle so the handler runs at most once per frame. Without it, the handler fires hundreds of times during a drag and causes visible lag.
 16. **Native Context Menu is Mandatory:** `electron-context-menu` in `main.ts` enables right-click → copy/paste/cut/select-all across the app. Removing it breaks every text field. Chromium's default is no menu at all — this is not optional.
 17. **Single Instance Lock:** The `app.requestSingleInstanceLock()` call in `main.ts` prevents multiple Electron processes. Without it, running `npm run dev` while the app is in the tray starts a second process — two writers to the same `localStorage`, causing settings to silently reset. Never remove the lock. The `second-instance` handler must always restore + focus the existing window.
@@ -431,8 +439,15 @@ npm run build
 * **Responsive Layout:** Window has a hard minimum of 800×600. Main sidebar auto-collapses below 900px; ActionSidebar auto-collapses below 1100px. Manual collapse choice persists; auto-collapse is forced only while the window is narrow.
 * **Native Context Menu:** Right-click any input, textarea, or contentEditable → Cut/Copy/Paste/Select All. Works in dev and production.
 * **Collapsed Search Popover:** When ActionSidebar is collapsed, clicking the search icon opens a centered command-palette-style popover (`CollapsedSearchPopover.tsx`) rendered via React `createPortal`. Live filtering by name or category, grouped results, keyboard support (`Esc` to close, `Enter` to add first result).
+* **Cloud UI (Auth & Account):** Complete UI implementation of the authentication flow (split-screen, live validation, password strength) and the account dashboard (Bento grid, interactive focus modes, history timeline). Backend is currently mocked; Supabase integration is pending.
 
-### B. Remaining Desktop Roadmap (Excluding Cloud / Auth)
+### B. Remaining Cloud & Community Roadmap
+1. **Supabase Backend:** Initialize Supabase client, create Postgres schema (`profiles`, `shortcuts`, `reviews`), and wire up Email/Password + Google OAuth.
+2. **Community Page UI:** Build the marketplace grid, search bar, leaderboard banner, and download preview modal.
+3. **Sanitization Engine:** Implement `sanitizeShortcutForUpload` (strips local paths, adds uploader hints) and `hydrateDownloadedShortcut` (maps hints to local paths).
+4. **Cloud Sync:** Wire the "Auto Sync" toggle and "Sync Now" button to the Supabase database.
+
+### C. Remaining Desktop Roadmap
 1. **Shortcut Export / Import (.json):** Allow users to export shortcuts as `.lazycow` or `.json` files to back up or share offline, with an Import button to restore them.
 2. **Mini Floating HUD / Quick Trigger Bar:** Compact floating pill or tray popover (like Raycast or Spotlight) summoned via a global hotkey to trigger any shortcut by typing without opening the main window.
 3. **Application Arguments & Working Directory:** Advanced settings for `launch_app` to pass CLI flags and specify custom working directories.

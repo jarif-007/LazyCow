@@ -337,3 +337,19 @@ Format:
 - **Files:** `electron/main.ts`, `electron/preload.ts`, `electron/electron-env.d.ts`, `index.html`, `src/utils/settingsStorage.ts` (new), `src/App.tsx`, `src/components/Sidebar.tsx`, `src/components/ShortcutCard.tsx`, `src/components/SettingsGeneral.tsx`, `src/pages/Settings.tsx`, `public/icon-monogram-outline.svg`, `public/icon-monogram-3d.svg`
 - **Verified:** yes — `tsc` clean. Splash colors adapt to all themes. Theme survives instant Ctrl+C. Logo routes correctly.
 - **Commit:** d750b56
+## 2026-10-23 — feat: Cloud architecture plan + Auth/Account UI
+- **Issue:** The app needed a cloud sync and community feature, but lacked the UI and architecture for Auth, Account management, and cross-device shortcut sanitization. The previous Account UI attempts were cluttered, scroll-heavy, and visually uninteresting. Additionally, modals suffered from clipping and laggy backgrounds in windowed mode.
+- **Solution:** 
+  - Planned the Supabase cloud architecture with a "Sanitization Engine" for device-specific paths (replacing paths with uploader hints).
+  - Built `Auth.tsx` — a split-screen layout with a focus mode that hides the branding panel when typing. Added real-time password strength, interactive requirement checklists, and inline error validation.
+  - Built `Account.tsx` — a dynamic Bento-grid dashboard. Clicking a card opens a focused modal overlay via `createPortal`. Added filtering tabs (All/Errors/Ready), Info tooltips, and contextual empty states.
+  - Fixed windowed mode layout clipping, locked background scrolling when modals are open, and removed `backdrop-blur` to eliminate jitter on low-end PCs.
+- **Files:** `src/pages/Auth.tsx`, `src/pages/Account.tsx`
+- **Verified:** yes — `tsc` clean. Layout animations are smooth, real-time validation works, and modals prevent scroll leaks.
+- **Commit:** (pending — fill in after this batch is committed)
+## 2026-10-24 — fix(account): per-item sync spinners are independent
+- **Issue:** (fill in)
+- **Solution:** (fill in)
+- **Files:** (fill in)
+- **Verified:** (fill in)
+- **Commit:** 0557867

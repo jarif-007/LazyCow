@@ -528,3 +528,94 @@ Append-only. Never delete. Each entry: date, decision, alternatives, why, conseq
   - CSS variables `--splash-gradient` added to `index.html`.
   - Liquid always matches the theme (Brown for Coffee, Green for Forest, Blue for Windows).
 - **Status:** active
+  ## 2026-10-23 — Cloud Sanitization & Missing Path Hints
+- **Decision:** When uploading a shortcut, local absolute paths (`open_file`, `open_folder`, `launch_app`) are stripped and replaced with an empty string. The uploader must provide a text `hint` for each of these actions (e.g., "Select your University folder"). 
+- **Alternatives:** 
+  - Upload raw paths (rejected: breaks instantly for other users).
+  - Auto-discover paths on download (rejected: impossible to know what the user's local folder structure looks like).
+- **Why:** A shortcut is useless if it points to `C:\Users\Tamjid\...` on someone else's machine. The `hint` bridges the gap between the uploader's intent and the downloader's file system, turning a broken shortcut into a "Needs Setup" state that the user can easily fix.
+- **Consequence:** 
+  - `ActionItem` interface gets a `hint?: string` field.
+  - Downloading a shortcut with empty paths triggers the "Needs Setup" badge in the Library.
+  - `Builder` needs a way to display the hint when editing a downloaded shortcut.
+- **Status:** active (backend pending)
+
+## 2026-10-23 — Auth Page uses Split-Screen & Focus Mode
+- **Decision:** The Auth page uses a 45/55 split layout (Left: Value Prop, Right: Form). When the user clicks into an input, the left panel animates out of view (width 0%) and the form centers.
+- **Alternatives:** 
+  - Centered single-column form (rejected: boring, requires scrolling in windowed mode, doesn't show off the app's value).
+  - Standard split-screen without focus mode (rejected: the left panel distracts from the task of logging in).
+- **Why:** The split-screen shows the value of LazyCow Cloud while keeping the form compact. Focus mode removes all distractions and ensures the form is perfectly centered when the user is actually typing, which feels premium and native.
+- **Consequence:** 
+  - Auth layout uses Framer Motion `animate={{ width: ... }}` for fluid transitions.
+  - Form container uses `my-auto` to prevent clipping in windowed mode (Create Account mode expands height without pushing the logo off-screen).
+- **Status:** active
+
+## 2026-10-23 — Account Dashboard uses Bento Grid + Modal Focus
+- **Decision:** The Account page uses a Bento grid (different-sized cards) to establish visual hierarchy. Clicking a card opens it as a centered modal overlay with a dark backdrop (no blur, for performance).
+- **Alternatives:** 
+  - Standard grid of equal-sized cards (rejected: doesn't tell a story, everything feels equally important).
+  - Navigating to a new page when clicking a card (rejected: loses context).
+- **Why:** Bento grids are the modern standard for dashboards (Apple, Windows 11). The size of the box immediately tells the user what needs attention (e.g., "Action Required" is the largest). The modal focus expands the card, providing detailed context without leaving the dashboard.
+- **Consequence:** 
+  - `Account.tsx` uses Framer Motion `layoutId` or smooth `scale`/`opacity` for the modal. 
+  - Backdrop blur is intentionally removed to prevent frame drops on low-end PCs.
+  - Clicking outside the modal resets the dashboard to the equal-grid state.
+- **Status:** active
+## 2026-10-23 — Cloud Sanitization & Missing Path Hints
+- **Decision:** When uploading a shortcut, local absolute paths (`open_file`, `open_folder`, `launch_app`) are stripped and replaced with an empty string. The uploader must provide a text `hint` for each of these actions (e.g., "Select your University folder"). 
+- **Alternatives:** 
+  - Upload raw paths (rejected: breaks instantly for other users).
+  - Auto-discover paths on download (rejected: impossible to know what the user's local folder structure looks like).
+- **Why:** A shortcut is useless if it points to `C:\Users\Tamjid\...` on someone else's machine. The `hint` bridges the gap between the uploader's intent and the downloader's file system, turning a broken shortcut into a "Needs Setup" state that the user can easily fix.
+- **Consequence:** 
+  - `ActionItem` interface gets a `hint?: string` field.
+  - Downloading a shortcut with empty paths triggers the "Needs Setup" badge in the Library.
+- **Status:** active (backend pending)
+
+## 2026-10-23 — Auth Page uses Split-Screen & Focus Mode
+- **Decision:** The Auth page uses a 45/55 split layout (Left: Value Prop, Right: Form). When the user clicks into an input, the left panel animates out of view (width 0%) and the form centers.
+- **Alternatives:** 
+  - Centered single-column form (rejected: boring, requires scrolling in windowed mode).
+  - Standard split-screen without focus mode (rejected: the left panel distracts from the task of logging in).
+- **Why:** The split-screen shows the value of LazyCow Cloud while keeping the form compact. Focus mode removes all distractions and ensures the form is perfectly centered when the user is actually typing, which feels premium and native.
+- **Consequence:** 
+  - Auth layout uses Framer Motion `animate={{ width: ... }}` for fluid transitions.
+  - Form container uses `my-auto` to prevent clipping in windowed mode.
+- **Status:** active
+
+## 2026-10-23 — Account Dashboard uses Bento Grid + Portal Modals
+- **Decision:** The Account page uses a Bento grid (different-sized cards) to establish visual hierarchy. Clicking a card opens it as a centered modal overlay rendered via `createPortal`.
+- **Alternatives:** 
+  - Standard grid of equal-sized cards (rejected: doesn't tell a story).
+  - Standard modal without `createPortal` (rejected: caused background scroll leaks and clipping in windowed mode because it was bound to the `<main>` tag's overflow).
+- **Why:** Bento grids are the modern standard for dashboards. `createPortal` is required to escape the `overflow-y-auto` of the main container and ensure the background locks properly without leaking.
+- **Consequence:** 
+  - `Account.tsx` uses `createPortal(..., document.body)` for all modals.
+  - The background overlay uses solid `bg-background/90` instead of `backdrop-blur` to prevent rendering lag on low-end PCs.
+  - Cards now feature an Info (i) button with hover tooltips and a click-to-open help modal to guide non-technical users.
+- **Status:** active
+
+## 2026-10-23 — Secured override tracking via `isSecuredCustom`
+- **Decision:** `SavedShortcut` carries `isSecuredCustom?: boolean`. When `true`, `migrateShortcutsSecured` (Library mount) never overrides the stored `secured` value — the user's manual toggle is respected forever. When absent/false, migration recomputes `secured` from `hasDangerousActions(actions) && readSecuredShortcutsDefault()`.
+- **Alternatives:**
+  - Compute `secured` on every read (rejected: would silently flip the user's manual choice whenever a shortcut's actions changed — e.g. they turn secured OFF, edit an action, and it flips back ON because the default says so).
+  - Store only `secured` and infer "was this manual?" from absence (rejected: absence also means "never set" for shortcuts that predate the field; can't distinguish "user explicitly turned it off" from "never touched").
+- **Why:** The global `securedShortcutsEnabled` setting controls *defaults for new shortcuts*. It must not override an explicit user choice on an existing shortcut. Without `isSecuredCustom`, every Library mount would re-run migration and clobber the manual value if the shortcut's action set changed in a way that altered `hasDangerousActions`.
+- **Consequence:**
+  - `Library.handleToggleSecured` and `ConfirmSecuredModal.handleAllSafeConfirm` set `isSecuredCustom: true` on write.
+  - `Builder.handleSave` reads `editData.isSecuredCustom` and only recomputes `secured` when it's false/absent.
+  - `migrateShortcutsSecured` short-circuits any shortcut with `isSecuredCustom === true`.
+- **Status:** active
+
+## 2026-10-23 — Per-item sync spinners in Account Dashboard
+- **Decision:** The Account page's "Sync Now" buttons (header + per-shortcut rows in the Sync Center modal) use a shared `syncingIds: Set<string>` state, keyed by `'__global__'` for the header and `String(item.id)` for each row.
+- **Alternatives:**
+  - A single `isSyncing` boolean (the pre-fix behavior, rejected: clicking one row spun the header button AND every other row's spinner simultaneously, because they all read the same flag).
+  - A separate boolean per row via `Record<string, boolean>` (functionally similar; Set was simpler because we only ever ask "is this key spinning right now?").
+- **Why:** The buttons represent independent actions, and users need to see which one they clicked start spinning and which ones haven't. A shared boolean made the whole sync panel look frozen on a single click.
+- **Consequence:**
+  - `handleSyncClick(e, targetId)` takes a per-target key.
+  - Each button reads `syncingIds.has(myKey)` to decide its own spinner/text/disabled state.
+  - When the mock `setTimeout` fires, only its own key is removed from the Set.
+- **Status:** active
