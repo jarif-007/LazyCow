@@ -346,17 +346,17 @@ Format:
   - Fixed windowed mode layout clipping, locked background scrolling when modals are open, and removed `backdrop-blur` to eliminate jitter on low-end PCs.
 - **Files:** `src/pages/Auth.tsx`, `src/pages/Account.tsx`
 - **Verified:** yes — `tsc` clean. Layout animations are smooth, real-time validation works, and modals prevent scroll leaks.
-- **Commit:** (pending — fill in after this batch is committed)
+- **Commit:** a1f3105 (pre-commit narrative — the post-commit hook also generated the 2026-10-24 `feat: cloud architecture plan` entry for the same commit)
 ## 2026-10-24 — fix(account): per-item sync spinners are independent
-- **Issue:** (fill in)
-- **Solution:** (fill in)
-- **Files:** (fill in)
-- **Verified:** (fill in)
+- **Issue:** In the Account Dashboard's Sync Center, the header "Sync Now" button and every per-shortcut row button shared a single `isSyncing: boolean` state. Clicking any one of them flipped the flag, which spun the header spinner AND every row's spinner simultaneously — the whole sync panel looked frozen on a single click. Users couldn't tell which item they had actually triggered.
+- **Solution:** Replaced the single boolean with `syncingIds: Set<string>`, keyed by `'__global__'` for the header button and `String(item.id)` for each row. `handleSyncClick(e, targetId)` accepts a per-target key: if the key is already present, ignore; otherwise add it and schedule a 1.5s `setTimeout` that removes just that key. Each button reads `syncingIds.has(myKey)` to compute its own `disabled` / spinner / label state, so buttons are fully independent and can run in parallel without cross-contamination.
+- **Files:** `src/pages/Account.tsx` — replaced `isSyncing`/`setIsSyncing` state with `syncingIds`/`setSyncingIds`; rewrote `handleSyncClick` to take a `targetId`; updated the header Sync Now button to use `'__global__'`; updated the per-row Sync Now button inside the Sync Center modal to use `String(sc.id)`.
+- **Verified:** yes — `npx tsc --noEmit` clean. Manual: clicking a row's "Sync Now" spins only that row's spinner; the header and other rows stay static. Clicking the header spins only the header. All three can run at once without any shared state.
 - **Commit:** 0557867
 
 ## 2026-10-24 — feat: cloud architecture plan + Auth/Account UI (Session 18)
-- **Issue:** (fill in)
-- **Solution:** (fill in)
-- **Files:** (fill in)
-- **Verified:** (fill in)
+- **Issue:** The app needed a cloud sync and community feature, but lacked the UI and architecture for Auth, Account management, and cross-device shortcut sanitization. The previous Account UI attempts were cluttered, scroll-heavy, and visually uninteresting. Modals also suffered from clipping and laggy backgrounds in windowed mode.
+- **Solution:** Planned the Supabase cloud architecture with a "Sanitization Engine" for device-specific paths (strips local paths, replaces with uploader hints). Built `Auth.tsx` — split-screen layout with a focus mode that hides the branding panel when typing, real-time password strength, requirement checklists, and inline email/password validation. Built `Account.tsx` — Bento-grid dashboard with a `createPortal` focused modal overlay, filtering tabs (All / Errors / Ready), Info tooltips, and contextual empty states. Fixed windowed-mode clipping, locked background scroll while modals are open, removed `backdrop-blur` to eliminate jitter on low-end PCs. Same commit also carried the `App.tsx` changes that gate Account behind Auth and wire the new tab. Full pre-commit narrative is in the 2026-10-23 entry above — this stub is the auto-generated counterpart for the same commit.
+- **Files:** `src/pages/Auth.tsx`, `src/pages/Account.tsx`, `src/App.tsx`, `doc/context.md`, `doc/decisions.md`, `doc/handoff.md`, `doc/journal.md`, `doc/missions.md`
+- **Verified:** yes — `npx tsc --noEmit` clean. Manual: Auth page focus mode animates smoothly, password strength and confirm-password validation work in real time, Account page focus modal expands without frame drops, background scroll is locked, info modals open and close cleanly. Sync-spinner cross-contamination fixed in the follow-up commit `0557867`.
 - **Commit:** a1f3105

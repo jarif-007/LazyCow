@@ -1,27 +1,25 @@
 # LazyCow — Handoff
 
-Last updated: 2026-10-23
-Last commit: 740f194
-Working tree: dirty
+Last updated: 2026-10-24
+Last commit: a1f3105
+Working tree: clean
 
 ## §1 Current Focus
-Session 18 (Cloud plan + Auth/Account UI) is code-complete but **uncommitted**.
-This turn: verified every source file, fixed the Account.tsx sync-spinner bug
-(header button and per-row buttons shared one `isSyncing` boolean — now keyed
-per-target via `syncingIds`), and reconciled the doc set (context, decisions,
-handoff, missions, journal).
+Session 18 (Cloud plan + Auth/Account UI) is **committed** (`a1f3105`).
+The Account sync-spinner bug fix is **committed** (`0557867`).
+Journal stubs for both commits are filled, and the doc-sync follow-up
+(journal + handoff) is committed. Nothing outstanding for this turn.
 
-Status: ready to commit. Two commits to land:
-1. `fix(account)` — per-item sync spinners are independent.
-2. `feat` — Session 18 batch (Auth.tsx, Account.tsx, App.tsx, docs).
+Ready for the next session. Logical next step: pick one from §2 "Not started"
+or advance the Supabase backend per §5 Remaining backend.
 
 ## §2 Sub-task State
 
-### Done & verified (Session 18)
+### Done & verified (Session 18 — committed)
 - **Cloud Planning** — Sanitization logic defined (hints for `open_file`, `open_folder`, `launch_app`).
-- **Auth UI** — Split screen, validation logic, focus mode.
-- **Account UI** — Bento grid, focus modal, Info modals, fluid resizing.
-- **Account sync bug fix (this turn)** — `isSyncing` boolean → `syncingIds: Set<string>`; per-row and header buttons now spin independently. Clicking one row's Sync Now leaves the header and other rows unchanged.
+- **Auth UI** — Split screen, validation logic, focus mode. (`a1f3105`)
+- **Account UI** — Bento grid, focus modal, Info modals, fluid resizing. (`a1f3105`)
+- **Account sync bug fix** — `isSyncing` boolean → `syncingIds: Set<string>`; per-row and header buttons now spin independently. (`0557867`)
 
 ### Done in code — manual runtime verification pending
 - Supabase integration (Auth & DB schema).
@@ -49,7 +47,7 @@ Status: ready to commit. Two commits to land:
 - **`autoScrollSpeed` default drift.** `Settings.tsx` = 6, `autoScroll.ts` = 9, `ActionSequence.tsx` = 9. First setting change silently drops the effective value.
 
 ## §3 Last Verified Test
-`npx tsc --noEmit` clean before this turn. Manual: Auth page layout doesn't clip in windowed mode; Account page focus modal expands smoothly; info modals open/close. **This turn:** Account.tsx sync-spinner bug fixed — clicking one row's "Sync Now" no longer spins the header button or other rows.
+`npx tsc --noEmit` clean after the sync-spinner fix. Manual: clicking one row's "Sync Now" in the Sync Center modal spins only that row; the header button and other rows stay static. Clicking the header spins only the header. Auth page focus mode animates smoothly, Account focus modal expands without frame drops, info modals open/close cleanly.
 
 ## §4 Open Questions
 - **Canonical key module.** Where should it live? `src/utils/keys.ts` feels right. Electron cannot import from `src/`.
@@ -58,22 +56,17 @@ Status: ready to commit. Two commits to land:
 
 ## §5 Uncommitted (mirrors git status)
 
-Working tree: **dirty.**
-M ../doc/context.md
-M ../doc/decisions.md
-M ../doc/handoff.md
-M ../doc/journal.md
-M ../doc/missions.md
-M src/App.tsx
-?? src/pages/Account.tsx
-?? src/pages/Auth.tsx
-(`src/pages/Account.tsx` includes the sync-spinner fix applied this turn.)
+Working tree: **clean.**
+M — (none)
+
+Recent commits:
+a1f3105 feat: cloud architecture plan + Auth/Account UI (Session 18)
+0557867 fix(account): per-item sync spinners are independent
+740f194 docs: sync handoff hash
+d921bf4 feat: durable settings persistence, dynamic splash theme, clickable logo routing
 
 ### §5-PENDING (in flight — cleared on confirmation)
-- [ ] Land the sync-spinner fix (commit 1).
-- [ ] Land Session 18 batch (commit 2).
-- [ ] Fill journal stub for both commits after they land.
-- [ ] Post-commit: update `handoff.md` header to new HEAD.
+- (none)
 
 ### Remaining backend (unchanged)
 - [ ] Integrate Supabase Auth logic (replace `setTimeout` mocks).
