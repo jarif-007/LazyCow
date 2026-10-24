@@ -1693,89 +1693,134 @@ async function runAction(action: ShortcutActionData): Promise<void> {
     }
     case 'toggle_dnd': {
       const mode = action.value || 'toggle'
+      // ── v8: Invisible UI Automation ──
+      // We use Win32 API to instantly move the Settings window off-screen
+      // (-32000, -32000) so the user never sees it. UIA still works
+      // perfectly on off-screen windows. Once toggled, we close it.
       const script = `
       $mode = "${mode}"
+
+      Add-Type -AssemblyName UIAutomationClient
+      Add-Type -AssemblyName UIAutomationTypes
+
+      # Win32 API to instantly hide the window
+      Add-Type @"
+      using System;
+      using System.Runtime.InteropServices;
+      public class Win32Hide {
+          [DllImport("user32.dll")]
+          public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
+      }
+      "@
+
+      $root = [System.Windows.Automation.AutomationElement]::RootElement
       
-      $keyPath = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\DefaultAccount\\Current\\default\\$windows.data.notifications.quiethourssettings\\windows.data.notifications.quiethourssettings"
-      
-      # Read the existing byte array
-      $bytes = (Get-ItemProperty -Path $keyPath -Name Data -ErrorAction SilentlyContinue).Data
-      
-      if (-not $bytes) {
-          # If the key doesn't exist, the user has never toggled DND manually. Let Windows create it.
-          Write-Warning "DND registry key not found. Please toggle DND manually in Windows Settings once to initialize it."
+      # Check if Settings is already open to avoid double open
+      $cond = New-Object System.Windows.Automation.AndCondition(
+          (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ClassNameProperty, "ApplicationFrameWindow")),
+          (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, "Settings"))
+      )
+
+      $settingsWin = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $cond)
+      $weOpenedIt = $false
+
+      if (-not $settingsWin) {
+          Start-Process "ms-settings:notifications"
+          $weOpenedIt = $true
+          for ($k = 0; $k -lt 30; $k++) {
+              $settingsWin = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $cond)
+              if ($settingsWin) { break }
+              Start-Sleep -Milliseconds 100
+          }
+      }
+
+      if (-not $settingsWin) {
+          Write-Output "FAIL:Could not find Settings window."
           exit 1
       }
-      
-      # Both strings are exactly 12 characters long, so we can do an in-place replacement
-      $targetOnStr = "PriorityOnly"
-      $targetOffStr = "Unrestricted"
-      
-      $bytesOn = [System.Text.Encoding]::Unicode.GetBytes($targetOnStr)
-      $bytesOff = [System.Text.Encoding]::Unicode.GetBytes($targetOffStr)
-      
-      # Determine current state by searching for PriorityOnly
-      $isOn = $false
-      for ($i = 0; $i -le $bytes.Length - $bytesOn.Length; $i++) {
-          $match = $true
-          for ($j = 0; $j -lt $bytesOn.Length; $j++) {
-              if ($bytes[$i + $j] -ne $bytesOn[$j]) { $match = $false; break }
+
+      # Move off-screen instantly if we opened it
+      if ($weOpenedIt) {
+          $hwnd = $settingsWin.Current.NativeWindowHandle
+          if ($hwnd -ne 0) {
+              [Win32Hide]::MoveWindow([IntPtr]$hwnd, -32000, -32000, 100, 100, $true)
           }
-          if ($match) { $isOn = $true; break }
       }
-      
+
+      # Find the DND toggle (Button or CheckBox named "Do not disturb")
+      $typeCond = New-Object System.Windows.Automation.OrCondition(
+          (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)),
+          (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::CheckBox))
+      )
+      $nameCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, "Do not disturb")
+      $btnCond = New-Object System.Windows.Automation.AndCondition($nameCond, $typeCond)
+
+      $dndToggle = $null
+      for ($k = 0; $k -lt 30; $k++) {
+          $dndToggle = $settingsWin.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $btnCond)
+          if ($dndToggle) { break }
+          Start-Sleep -Milliseconds 100
+      }
+
+      if (-not $dndToggle) {
+          if ($weOpenedIt) { try { $settingsWin.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close() } catch {} }
+          Write-Output "FAIL:Could not find the DND toggle."
+          exit 1
+      }
+
+      # Determine current state
+      $isOn = $false
+      try {
+          $togglePattern = $dndToggle.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+          $isOn = ($togglePattern.Current.ToggleState -eq [System.Windows.Automation.ToggleState]::On)
+      } catch {
+          if ($dndToggle.Current.HelpText -match "On") { $isOn = $true }
+      }
+
       $targetOn = $isOn
       if ($mode -eq 'enable') { $targetOn = $true }
       elseif ($mode -eq 'disable') { $targetOn = $false }
       else { $targetOn = -not $isOn }
-      
-      if ($targetOn -eq $isOn) { exit 0 }
-      
-      # Create a new array to modify safely
-      $newBytes = [byte[]]::new($bytes.Length)
-      [Array]::Copy($bytes, $newBytes, $bytes.Length)
-      
-      $findBytes = if ($targetOn) { $bytesOff } else { $bytesOn }
-      $replaceBytes = if ($targetOn) { $bytesOn } else { $bytesOff }
-      
-      # Find and replace the text inside the binary data
-      $replaced = $false
-      for ($i = 0; $i -le $newBytes.Length - $findBytes.Length; $i++) {
-          $match = $true
-          for ($j = 0; $j -lt $findBytes.Length; $j++) {
-              if ($newBytes[$i + $j] -ne $findBytes[$j]) { $match = $false; break }
-          }
-          if ($match) {
-              [Array]::Copy($replaceBytes, 0, $newBytes, $i, $replaceBytes.Length)
-              $replaced = $true
-              break
-          }
+
+      if ($targetOn -eq $isOn) {
+          if ($weOpenedIt) { try { $settingsWin.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close() } catch {} }
+          Write-Output "OK:unchanged=$targetOn"
+          exit 0
       }
-      
-      if (-not $replaced) {
-          Write-Warning "Could not find the expected profile string in the registry binary."
+
+      # Toggle it
+      $success = $false
+      try {
+          $invokePattern = $dndToggle.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+          $invokePattern.Invoke()
+          $success = $true
+      } catch {
+          try {
+              $togglePattern = $dndToggle.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+              $togglePattern.Toggle()
+              $success = $true
+          } catch {}
+      }
+
+      if (-not $success) {
+          if ($weOpenedIt) { try { $settingsWin.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close() } catch {} }
+          Write-Output "FAIL:Could not activate the DND toggle."
           exit 1
       }
+
+      Start-Sleep -Milliseconds 200
       
-      # Increment the timestamp bytes (10-14) so Windows recognizes the change
-      for ($i = 10; $i -le 14; $i++) {
-          if ($newBytes[$i] -ne 0xFF) {
-              $newBytes[$i] = ($newBytes[$i] + 1) -band 0xFF
-              break
-          }
+      # Close Settings only if we opened it
+      if ($weOpenedIt) {
+          try { $settingsWin.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close() } catch {}
       }
-      
-      # Write back the modified binary data
-      Set-ItemProperty -Path $keyPath -Name Data -Value $newBytes -Type Binary
-      
-      # Restart the WpnUserService to apply immediately
-      $wpnService = Get-Service -Name "WpnUserService*" | Select-Object -First 1
-      if ($wpnService) {
-          Restart-Service -Name $wpnService.Name -Force
-      }
+
+      Write-Output "OK:dnd=$targetOn"
       `
-      const encoded = Buffer.from(script, 'utf16le').toString('base64')
-      await execAsync(`powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}`, { windowsHide: true })
+      const stdout = await runPowerShellFile(script, 15000)
+      if (!/^OK:/m.test(stdout)) {
+        throw new Error(`DND toggle did not confirm. Output: ${stdout.trim() || '(empty)'}`)
+      }
       return
     }
     case 'toggle_nightlight': {

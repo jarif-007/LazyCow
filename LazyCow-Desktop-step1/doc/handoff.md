@@ -66,8 +66,13 @@ a1f3105 feat: cloud architecture plan + Auth/Account UI (Session 18)
 d921bf4 feat: durable settings persistence, dynamic splash theme, clickable logo routing
 
 ### §5-PENDING (in flight — cleared on confirmation)
-- [ ] Replace `toggle_dnd` with surgical byte-replacement logic (Unrestricted <-> PriorityOnly) to safely toggle DND across all Windows 11 builds.
-
+### §5-PENDING (in flight — cleared on confirmation)
+- [x] Replace `toggle_dnd` with UIA. (Committed)
+- [ ] **Refactor `toggle_dnd` to be truly invisible.** 
+  - *Current state:* Uses UI Automation (UIA) to launch `ms-settings:notifications`, moves the window to `(-32000, -32000)` via `MoveWindow` if LazyCow opened it, clicks the toggle, and closes it.
+  - *Why:* Registry writes are silently rejected by Win11 22H2+ (strict Bond serialization). WinRT `FocusSessionManager` failed to instantiate via PowerShell.
+  - *Flaw:* If the user already has Settings open (e.g., they added it to the shortcut), it hijacks their window and toggles it. If it opens Settings, there is a tiny 1px flash before `MoveWindow` hides it.
+  - *Next attempt:* Implement a native Node addon or C# helper using `Windows.UI.Shell.FocusSessionManager` (WinRT) to avoid UI interaction entirely.
 ### Remaining backend (unchanged)
 - [ ] Integrate Supabase Auth logic (replace `setTimeout` mocks).
 - [ ] Build Community Page UI.

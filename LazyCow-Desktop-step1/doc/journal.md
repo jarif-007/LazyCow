@@ -360,3 +360,10 @@ Format:
 - **Files:** `src/pages/Auth.tsx`, `src/pages/Account.tsx`, `src/App.tsx`, `doc/context.md`, `doc/decisions.md`, `doc/handoff.md`, `doc/journal.md`, `doc/missions.md`
 - **Verified:** yes — `npx tsc --noEmit` clean. Manual: Auth page focus mode animates smoothly, password strength and confirm-password validation work in real time, Account page focus modal expands without frame drops, background scroll is locked, info modals open and close cleanly. Sync-spinner cross-contamination fixed in the follow-up commit `0557867`.
 - **Commit:** a1f3105
+
+## 2026-10-24 — feat: per-action test buttons, volume/night-light fixes, DND byte swap
+- **Issue:** (fill in)
+- **Solution:** (fill in)
+- **Files:** (fill in)
+- **Verified:** (fill in)
+- **Commit:** fe4ce64
