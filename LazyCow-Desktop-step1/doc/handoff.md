@@ -66,7 +66,7 @@ a1f3105 feat: cloud architecture plan + Auth/Account UI (Session 18)
 d921bf4 feat: durable settings persistence, dynamic splash theme, clickable logo routing
 
 ### §5-PENDING (in flight — cleared on confirmation)
-- (none)
+- [ ] Replace `toggle_dnd` with surgical byte-replacement logic (Unrestricted <-> PriorityOnly) to safely toggle DND across all Windows 11 builds.
 
 ### Remaining backend (unchanged)
 - [ ] Integrate Supabase Auth logic (replace `setTimeout` mocks).

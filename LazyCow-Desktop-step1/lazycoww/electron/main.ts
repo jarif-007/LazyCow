@@ -12,13 +12,14 @@ import { app, BrowserWindow, ipcMain, nativeTheme, shell, globalShortcut, Tray, 
 const bootPreferences = readPreferencesSync()
 const hardwareAccelerationEnabled = bootPreferences.hardwareAcceleration ?? false
 if (!hardwareAccelerationEnabled) {
-    app.disableHardwareAcceleration()
+  app.disableHardwareAcceleration()
 }
 import { exec, execFile, spawn } from 'child_process'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs'
+import os from 'node:os'
 import crypto from 'node:crypto'
 import { z } from 'zod'
 import contextMenu from 'electron-context-menu'
@@ -66,6 +67,49 @@ if (process.platform !== 'win32') {
 }
 
 const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
+
+/**
+ * Run a PowerShell script via a temp .ps1 file + `-File`. Required for
+ * scripts with large C# P/Invoke blocks — `-EncodedCommand` base64-UTF16LE
+ * roughly triples the source size, blowing past cmd.exe's ~8KB command-line
+ * cap once the C# surface gets big enough. Mirrors the pattern in
+ * windowLayout.ts. See decisions.md 2026-10-01.
+ */
+async function runPowerShellFile(script: string, timeoutMs = 60000): Promise<string> {
+  const tmpPath = path.join(
+    os.tmpdir(),
+    `lazycow-sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.ps1`
+  )
+  // PowerShell here-string terminators ('@ and "@) MUST be at column 0.
+  const normalized = script.replace(/^[ \t]+(['"])@/gm, '$1@')
+  await fs.promises.writeFile(tmpPath, '\uFEFF' + normalized, 'utf8')
+
+  try {
+    const { stdout } = await execFileAsync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', tmpPath],
+      { windowsHide: true, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 }
+    )
+    return stdout
+  } catch (err: unknown) {
+    // When powershell.exe exits with a non-zero code, execFileAsync rejects.
+    // We MUST extract stderr/stdout here, otherwise we only see "Command failed".
+    const execErr = err as { stderr?: string; stdout?: string; message?: string }
+    const stderr = (execErr.stderr || '').trim()
+    const stdout = (execErr.stdout || '').trim()
+
+    if (stdout && stdout.startsWith('FAIL:')) {
+      throw new Error(stdout)
+    }
+    if (stderr) {
+      throw new Error(stderr)
+    }
+    throw new Error(execErr.message || String(err))
+  } finally {
+    fs.promises.unlink(tmpPath).catch(() => { /* ignore */ })
+  }
+}
 
 // ── Zoom limits ──
 // Used by the before-input-event handler in createWindow to clamp
@@ -1466,56 +1510,99 @@ async function runAction(action: ShortcutActionData): Promise<void> {
       }
       const scalar = (volume / 100).toFixed(4)
       const script = `
+      $ErrorActionPreference = 'Stop'
       Add-Type -TypeDefinition @'
       using System;
       using System.Runtime.InteropServices;
 
       [Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
       interface IAudioEndpointVolume {
-          int f(); int g(); int h(); int i();
-          int SetMasterVolumeLevelScalar(float fLevel, System.Guid pguidEventContext);
-          int j();
-          int GetMasterVolumeLevelScalar(out float pfLevel);
-          int k(); int l(); int m(); int n();
-          int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, System.Guid pguidEventContext);
-          int GetMute(out bool pbMute);
+          [PreserveSig] int _0();
+          [PreserveSig] int _1();
+          [PreserveSig] int _2();
+          [PreserveSig] int _3();
+          [PreserveSig] int SetMasterVolumeLevelScalar(float fLevel, ref Guid pguidEventContext);
+          [PreserveSig] int _5();
+          [PreserveSig] int GetMasterVolumeLevelScalar(out float pfLevel);
+          [PreserveSig] int _7();
+          [PreserveSig] int _8();
+          [PreserveSig] int _9();
+          [PreserveSig] int _10();
+          [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, ref Guid pguidEventContext);
+          [PreserveSig] int GetMute(out bool pbMute);
       }
 
       [Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
       interface IMMDevice {
-          int Activate(ref System.Guid id, int clsCtx, int activationParams, out IAudioEndpointVolume aev);
+          [PreserveSig] int Activate(ref Guid id, int clsCtx, IntPtr activationParams, out IAudioEndpointVolume aev);
       }
 
       [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
       interface IMMDeviceEnumerator {
-          int f();
-          int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice endpoint);
+          [PreserveSig] int _0();
+          [PreserveSig] int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice endpoint);
       }
 
       [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
       class MMDeviceEnumeratorComObject { }
 
       public class AudioController {
-          public static void SetVolume(double level) {
-              var enumerator = new MMDeviceEnumeratorComObject() as IMMDeviceEnumerator;
-              IMMDevice dev = null;
-              Marshal.ThrowExceptionForHR(enumerator.GetDefaultAudioEndpoint(0, 1, out dev));
-              IAudioEndpointVolume epv = null;
+          // HRESULT success is >= 0 (S_OK = 0x0, S_FALSE = 0x1). Only
+          // negative values are real failures. S_FALSE is common:
+          //   - SetMute(false) on an already-unmuted device
+          //   - SetMasterVolumeLevelScalar(x) when volume was already x
+          // Treating S_FALSE as failure made the slider move but the card
+          // report "SetMute failed" — the operation succeeded, the check
+          // was too strict. Fixed by using (hr < 0) everywhere.
+          static IAudioEndpointVolume GetEndpoint() {
+              var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
+              IMMDevice dev;
+              int hr = enumerator.GetDefaultAudioEndpoint(0, 1, out dev);
+              if (hr < 0) throw new COMException("GetDefaultAudioEndpoint failed (hr=0x" + hr.ToString("X8") + ")", hr);
               var epvid = typeof(IAudioEndpointVolume).GUID;
-              Marshal.ThrowExceptionForHR(dev.Activate(ref epvid, 23, 0, out epv));
+              IAudioEndpointVolume epv;
+              hr = dev.Activate(ref epvid, 23, IntPtr.Zero, out epv);
+              if (hr < 0) throw new COMException("Activate failed (hr=0x" + hr.ToString("X8") + ")", hr);
+              return epv;
+          }
+          public static void SetVolume(double level) {
+              var epv = GetEndpoint();
               float fLevel = (float)Math.Max(0.0, Math.Min(1.0, level));
-              Marshal.ThrowExceptionForHR(epv.SetMasterVolumeLevelScalar(fLevel, Guid.Empty));
-              if (fLevel > 0.0f) {
-                  epv.SetMute(false, Guid.Empty);
-              }
+              Guid emptyGuid = Guid.Empty;
+              int hr = epv.SetMasterVolumeLevelScalar(fLevel, ref emptyGuid);
+              if (hr < 0) throw new COMException("SetMasterVolumeLevelScalar failed (hr=0x" + hr.ToString("X8") + ")", hr);
+          }
+          public static float GetVolume() {
+              var epv = GetEndpoint();
+              float level;
+              int hr = epv.GetMasterVolumeLevelScalar(out level);
+              if (hr < 0) throw new COMException("GetMasterVolumeLevelScalar failed (hr=0x" + hr.ToString("X8") + ")", hr);
+              return level;
+          }
+          public static void Unmute() {
+              var epv = GetEndpoint();
+              Guid emptyGuid = Guid.Empty;
+              int hr = epv.SetMute(false, ref emptyGuid);
+              if (hr < 0) throw new COMException("SetMute failed (hr=0x" + hr.ToString("X8") + ")", hr);
           }
       }
-      '@ -ErrorAction SilentlyContinue
+      '@
 
-      [AudioController]::SetVolume(${scalar})
+      try {
+          [AudioController]::SetVolume(${scalar})
+          if (${scalar} -gt 0) { [AudioController]::Unmute() }
+          $current = [AudioController]::GetVolume()
+          $pct = [int]([Math]::Round($current * 100))
+          Write-Output "OK:volume=$pct"
+      } catch {
+          Write-Output "FAIL:$($_.Exception.Message)"
+          exit 1
+      }
       `
-      const encoded = Buffer.from(script, 'utf16le').toString('base64')
-      await execAsync(`powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}`, { windowsHide: true })
+      const stdout = await runPowerShellFile(script, 15000)
+      if (!/^OK:/m.test(stdout)) {
+        throw new Error(`Volume set did not confirm. Output: ${stdout.trim() || '(empty)'}`)
+      }
       return
     }
     case 'set_brightness': {
@@ -1524,8 +1611,10 @@ async function runAction(action: ShortcutActionData): Promise<void> {
         throw new Error('Brightness must be an integer between 0 and 100')
       }
       const script = `
+      $ErrorActionPreference = 'Stop'
       $target = [Math]::Max(0, [Math]::Min(100, ${brightness}))
       $success = $false
+      $err = ""
 
       try {
           $wmi = Get-WmiObject -Namespace root/wmi -Class WmiMonitorBrightnessMethods -ErrorAction Stop
@@ -1533,7 +1622,7 @@ async function runAction(action: ShortcutActionData): Promise<void> {
               $wmi.WmiSetBrightness(0, $target)
               $success = $true
           }
-      } catch { }
+      } catch { $err = $_.Exception.Message }
 
       if (-not $success) {
           try {
@@ -1542,7 +1631,7 @@ async function runAction(action: ShortcutActionData): Promise<void> {
                   Invoke-CimMethod -InputObject $cim -MethodName WmiSetBrightness -Arguments @{ Brightness = [uint32]$target; Timeout = 0 } -ErrorAction Stop | Out-Null
                   $success = $true
               }
-          } catch { }
+          } catch { $err = $_.Exception.Message }
       }
 
       if (-not $success) {
@@ -1583,37 +1672,107 @@ async function runAction(action: ShortcutActionData): Promise<void> {
                       return any;
                   }
               }
-'@
-              Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue
+              '@
+              Add-Type -TypeDefinition $code -ErrorAction Stop
               $success = [DdcMonitorHelper]::SetAll([uint32]$target)
-          } catch { }
+          } catch { $err = $_.Exception.Message }
       }
 
-      if (-not $success) {
-          Write-Warning "Brightness could not be adjusted (display does not support WMI or DDC/CI commands)."
+      if ($success) {
+          Write-Output "OK:brightness=$target"
+      } else {
+          Write-Output "FAIL:Brightness could not be adjusted. $err"
+          exit 1
       }
       `
-      const encoded = Buffer.from(script, 'utf16le').toString('base64')
-      await execAsync(`powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}`, { windowsHide: true })
+      const stdout = await runPowerShellFile(script, 20000)
+      if (!/^OK:/m.test(stdout)) {
+        throw new Error(`Brightness set did not confirm. Output: ${stdout.trim() || '(empty)'}`)
+      }
       return
     }
     case 'toggle_dnd': {
       const mode = action.value || 'toggle'
       const script = `
-      $path = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings"
-      if (-not (Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
-      $current = (Get-ItemProperty -Path $path -Name "NOC_GLOBAL_SETTING_ALLOW_TOASTS" -ErrorAction SilentlyContinue).NOC_GLOBAL_SETTING_ALLOW_TOASTS
-      if ($null -eq $current) { $current = 1 }
+      $mode = "${mode}"
       
-      $target = 1
-      if ("${mode}" -eq "enable") {
-          $target = 0
-      } elseif ("${mode}" -eq "disable") {
-          $target = 1
-      } else {
-          if ($current -eq 0) { $target = 1 } else { $target = 0 }
+      $keyPath = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\DefaultAccount\\Current\\default\\$windows.data.notifications.quiethourssettings\\windows.data.notifications.quiethourssettings"
+      
+      # Read the existing byte array
+      $bytes = (Get-ItemProperty -Path $keyPath -Name Data -ErrorAction SilentlyContinue).Data
+      
+      if (-not $bytes) {
+          # If the key doesn't exist, the user has never toggled DND manually. Let Windows create it.
+          Write-Warning "DND registry key not found. Please toggle DND manually in Windows Settings once to initialize it."
+          exit 1
       }
-      Set-ItemProperty -Path $path -Name "NOC_GLOBAL_SETTING_ALLOW_TOASTS" -Value $target -Type DWord
+      
+      # Both strings are exactly 12 characters long, so we can do an in-place replacement
+      $targetOnStr = "PriorityOnly"
+      $targetOffStr = "Unrestricted"
+      
+      $bytesOn = [System.Text.Encoding]::Unicode.GetBytes($targetOnStr)
+      $bytesOff = [System.Text.Encoding]::Unicode.GetBytes($targetOffStr)
+      
+      # Determine current state by searching for PriorityOnly
+      $isOn = $false
+      for ($i = 0; $i -le $bytes.Length - $bytesOn.Length; $i++) {
+          $match = $true
+          for ($j = 0; $j -lt $bytesOn.Length; $j++) {
+              if ($bytes[$i + $j] -ne $bytesOn[$j]) { $match = $false; break }
+          }
+          if ($match) { $isOn = $true; break }
+      }
+      
+      $targetOn = $isOn
+      if ($mode -eq 'enable') { $targetOn = $true }
+      elseif ($mode -eq 'disable') { $targetOn = $false }
+      else { $targetOn = -not $isOn }
+      
+      if ($targetOn -eq $isOn) { exit 0 }
+      
+      # Create a new array to modify safely
+      $newBytes = [byte[]]::new($bytes.Length)
+      [Array]::Copy($bytes, $newBytes, $bytes.Length)
+      
+      $findBytes = if ($targetOn) { $bytesOff } else { $bytesOn }
+      $replaceBytes = if ($targetOn) { $bytesOn } else { $bytesOff }
+      
+      # Find and replace the text inside the binary data
+      $replaced = $false
+      for ($i = 0; $i -le $newBytes.Length - $findBytes.Length; $i++) {
+          $match = $true
+          for ($j = 0; $j -lt $findBytes.Length; $j++) {
+              if ($newBytes[$i + $j] -ne $findBytes[$j]) { $match = $false; break }
+          }
+          if ($match) {
+              [Array]::Copy($replaceBytes, 0, $newBytes, $i, $replaceBytes.Length)
+              $replaced = $true
+              break
+          }
+      }
+      
+      if (-not $replaced) {
+          Write-Warning "Could not find the expected profile string in the registry binary."
+          exit 1
+      }
+      
+      # Increment the timestamp bytes (10-14) so Windows recognizes the change
+      for ($i = 10; $i -le 14; $i++) {
+          if ($newBytes[$i] -ne 0xFF) {
+              $newBytes[$i] = ($newBytes[$i] + 1) -band 0xFF
+              break
+          }
+      }
+      
+      # Write back the modified binary data
+      Set-ItemProperty -Path $keyPath -Name Data -Value $newBytes -Type Binary
+      
+      # Restart the WpnUserService to apply immediately
+      $wpnService = Get-Service -Name "WpnUserService*" | Select-Object -First 1
+      if ($wpnService) {
+          Restart-Service -Name $wpnService.Name -Force
+      }
       `
       const encoded = Buffer.from(script, 'utf16le').toString('base64')
       await execAsync(`powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}`, { windowsHide: true })
@@ -1622,22 +1781,54 @@ async function runAction(action: ShortcutActionData): Promise<void> {
     case 'toggle_nightlight': {
       const mode = action.value || 'toggle'
       const script = `
+      $mode = "${mode}"
       $path = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\DefaultAccount\\Current\\default\`$windows.data.bluelightreduction.bluelightreductionstate\\windows.data.bluelightreduction.bluelightreductionstate"
-      if (Test-Path $path) {
-          $data = (Get-ItemProperty -Path $path -Name "Data" -ErrorAction SilentlyContinue).Data
-          if ($data -and $data.Length -ge 19) {
-              $isOn = $data[18] -eq 0x15
-              $turnOn = if ("${mode}" -eq "enable") { $true } elseif ("${mode}" -eq "disable") { $false } else { -not $isOn }
-              if ($turnOn -ne $isOn) {
-                  if ($turnOn) {
-                      $data[18] = 0x15
-                  } else {
-                      $data[18] = 0x13
-                  }
-                  Set-ItemProperty -Path $path -Name "Data" -Value $data
-              }
+      
+      $bytes = (Get-ItemProperty -Path $path -Name "Data" -ErrorAction SilentlyContinue).Data
+      
+      # Safety check: if the key is missing or too short, bail without writing
+      if (-not $bytes -or $bytes.Length -lt 19) {
+          Write-Warning "Night Light registry state is missing or corrupt. Open Settings > Display > Night Light once to rebuild it, then try again."
+          exit 1
+      }
+      
+      # 0x15 is ON, 0x13 is OFF
+      $isOn = ($bytes[18] -eq 0x15)
+      
+      $targetOn = $isOn
+      if ($mode -eq 'enable') { $targetOn = $true }
+      elseif ($mode -eq 'disable') { $targetOn = $false }
+      else { $targetOn = -not $isOn }
+      
+      if ($targetOn -eq $isOn) { exit 0 }
+      
+      if ($targetOn) {
+          # TURN ON: Expand from 41 bytes to 43 bytes
+          $new = New-Object byte[] 43
+          [Array]::Copy($bytes, 0, $new, 0, 22)
+          $remaining = $bytes.Length - 23
+          if ($remaining -gt 0) { [Array]::Copy($bytes, 23, $new, 25, [Math]::Min($remaining, 18)) }
+          $new[18] = 0x15
+          $new[23] = 0x10
+          $new[24] = 0x00
+      } else {
+          # TURN OFF: Shrink from 43 bytes to 41 bytes
+          $new = New-Object byte[] 41
+          [Array]::Copy($bytes, 0, $new, 0, 22)
+          $remaining = $bytes.Length - 25
+          if ($remaining -gt 0) { [Array]::Copy($bytes, 25, $new, 23, [Math]::Min($remaining, 18)) }
+          $new[18] = 0x13
+      }
+      
+      # Increment timestamp bytes (10-14) so Windows recognizes the change
+      for ($i = 10; $i -le 14; $i++) {
+          if ($new[$i] -ne 0xFF) {
+              $new[$i] = ($new[$i] + 1) -band 0xFF
+              break
           }
       }
+      
+      Set-ItemProperty -Path $path -Name "Data" -Value $new -Type Binary
       `
       const encoded = Buffer.from(script, 'utf16le').toString('base64')
       await execAsync(`powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}`, { windowsHide: true })
@@ -1861,6 +2052,18 @@ ipcMain.handle('execute-shortcut', async (_event, rawShortcut: unknown) => {
   } catch (err: unknown) {
     const error = err as Error
     return [{ actionId: 'system', success: false, error: error.message || 'Invalid shortcut data' }]
+  }
+})
+
+// Test a single action without saving or running a whole shortcut.
+// Used by the Test button on each action card (ActionValueInput.tsx).
+// Goes through the same runAction path as a real run so behaviour is identical.
+ipcMain.handle('test-action', async (_event, action: { type: string; value: string }) => {
+  try {
+    await runAction({ id: 'test-action', type: action.type, value: action.value })
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 })
 

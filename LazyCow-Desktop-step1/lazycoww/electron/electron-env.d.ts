@@ -68,6 +68,9 @@ interface Window {
     getHardwareAcceleration: () => Promise<{ current: boolean; boot: boolean }>
     setHardwareAcceleration: (enabled: boolean) => Promise<{ ok: boolean }>
     relaunchApp: () => Promise<void>
+    // ── Action Testing ──
+    testAction: (action: { type: string; value: string }) => Promise<{ ok: boolean; error?: string }>
+
     // ── App Drawer ──
     listInstalledApps: () => Promise<InstalledAppForIPC[]>
     refreshInstalledApps: () => Promise<InstalledAppForIPC[]>

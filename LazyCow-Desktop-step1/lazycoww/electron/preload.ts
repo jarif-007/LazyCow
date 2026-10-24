@@ -44,6 +44,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   testHotkeyCheck: () => ipcRenderer.invoke('test-hotkey-check'),
   testHotkeyStop: () => ipcRenderer.invoke('test-hotkey-stop'),
 
+  // ── Action Testing ──
+  testAction: (action: { type: string; value: string }) => ipcRenderer.invoke('test-action', action),
+
   // ── App Drawer ──
   listInstalledApps: () => ipcRenderer.invoke('list-installed-apps'),
   refreshInstalledApps: () => ipcRenderer.invoke('refresh-installed-apps'),

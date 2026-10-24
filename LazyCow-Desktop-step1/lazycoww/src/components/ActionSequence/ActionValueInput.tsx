@@ -50,6 +50,7 @@ export const ActionValueInput: React.FC<ActionValueInputProps> = ({ card, hasErr
         <span className="font-body-sm font-semibold w-8 text-right text-foreground">
           {card.value}%
         </span>
+        <TestButton type={card.type} value={card.value} />
       </div>
     );
   }
@@ -57,15 +58,17 @@ export const ActionValueInput: React.FC<ActionValueInputProps> = ({ card, hasErr
   // ── DND / Night Light dropdown ──
   if (card.type === 'toggle_dnd' || card.type === 'toggle_nightlight') {
     return (
-      <select
-        value={card.value}
-        onChange={(e) => onUpdateValue(card.id, e.target.value)}
-        className="w-full bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-2 font-body-sm focus:ring-primary focus:outline-none"
-      >
-        <option value="toggle">Toggle State</option>
-        <option value="enable">Always Turn On</option>
-        <option value="disable">Always Turn Off</option>
-      </select>
+      <div className="flex items-center gap-2">
+        <select
+          value={card.value}
+          onChange={(e) => onUpdateValue(card.id, e.target.value)}
+          className="flex-1 bg-background/50 border border-border/50 text-foreground rounded-md px-3 py-2 font-body-sm focus:ring-primary focus:outline-none"
+        >
+          <option value="enable">Turn On</option>
+          <option value="disable">Turn Off</option>
+        </select>
+        <TestButton type={card.type} value={card.value} />
+      </div>
     );
   }
 
@@ -181,6 +184,58 @@ export const ActionValueInput: React.FC<ActionValueInputProps> = ({ card, hasErr
           <span className="material-symbols-outlined text-[18px]">folder_open</span>
           <span>Browse</span>
         </button>
+      )}
+      <TestButton type={card.type} value={card.value} />
+    </div>
+  );
+};
+
+// ──────────────────────────────────────────────
+// Generic Test Button for non-path-based actions
+// ──────────────────────────────────────────────
+const TestButton: React.FC<{ type: string, value: string }> = ({ type, value }) => {
+  const [testing, setTesting] = React.useState(false);
+  const [testResult, setTestResult] = React.useState<{ ok: boolean; error?: string } | null>(null);
+
+  const handleTest = async () => {
+    if (!value.trim()) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await window.electronAPI?.testAction({ type, value });
+      setTestResult(res ?? { ok: false, error: 'No response' });
+    } catch (err) {
+      setTestResult({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-2 shrink-0">
+      <button
+        type="button"
+        onClick={handleTest}
+        disabled={testing || !value.trim()}
+        className={`px-3 py-2 border rounded-md font-body-sm flex items-center gap-1.5 transition-colors shadow-sm ${
+          testing || !value.trim()
+            ? 'bg-muted text-muted-foreground border-border cursor-not-allowed'
+            : 'bg-card hover:bg-card-light border-border text-foreground hover:border-primary/50 cursor-pointer'
+        }`}
+        title="Test this action"
+      >
+        <span className={`material-symbols-outlined text-[18px] ${testing ? 'animate-spin' : ''}`}>
+          {testing ? 'progress_activity' : 'play_arrow'}
+        </span>
+        <span>{testing ? 'Testing…' : 'Test'}</span>
+      </button>
+      {testResult && (
+        <div className={`flex items-start gap-1.5 text-[11px] leading-snug ${testResult.ok ? 'text-green-500' : 'text-amber-500'}`}>
+          <span className="material-symbols-outlined text-[14px] shrink-0 mt-0.5">
+            {testResult.ok ? 'check_circle' : 'warning'}
+          </span>
+          <span>{testResult.ok ? 'Success.' : `Failed: ${testResult.error}`}</span>
+        </div>
       )}
     </div>
   );
