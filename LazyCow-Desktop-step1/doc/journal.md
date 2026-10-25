@@ -362,8 +362,15 @@ Format:
 - **Commit:** a1f3105
 
 ## 2026-10-24 — feat: per-action test buttons, volume/night-light fixes, DND byte swap
-- **Issue:** (fill in)
-- **Solution:** (fill in)
-- **Files:** (fill in)
-- **Verified:** (fill in)
+- **Issue:** Users needed a way to test individual actions without running the whole shortcut. Also, Volume had a false failure bug (S_FALSE treated as error), Night Light would crash if the registry key was corrupt/missing, and DND needed the byte array structure fixed to toggle silently.
+- **Solution:** Added `test-action` IPC handler, wired generic `TestButton` component into `ActionValueInput` for all types except delay. Fixed Volume COM HRESULT check (`hr < 0` instead of `hr != 0`). Added safety check for Night Light. Replaced DND registry logic with byte replacement.
+- **Files:** `electron/main.ts`, `src/components/ActionSequence/ActionValueInput.tsx`, `electron/preload.ts`, `electron/electron-env.d.ts`.
+- **Verified:** yes — volume toggle no longer falsely errors, night light bails safely on missing key, test buttons successfully invoke actions.
 - **Commit:** fe4ce64
+
+## 2026-10-25 — feat(electron): toggle DND via UIA fallback
+- **Issue:** Windows 11 22H2+ strictly validates the CloudStore binary blob. Registry writes are silently ignored if the Bond serialization doesn't perfectly match the OS build, causing DND to fail silently.
+- **Solution:** Fallback to UI Automation. Launch `ms-settings:notifications`, hide window via `MoveWindow` if we opened it, use UIA to find the button and toggle it, close the window. Note: will hijack the window if the user already has Settings open. To be refactored later.
+- **Files:** `electron/main.ts`, `doc/handoff.md`, `doc/journal.md`.
+- **Verified:** yes — successfully toggles DND in the background.
+- **Commit:** 34efbec
