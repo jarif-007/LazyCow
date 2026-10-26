@@ -44,7 +44,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   testHotkeyCheck: () => ipcRenderer.invoke('test-hotkey-check'),
   testHotkeyStop: () => ipcRenderer.invoke('test-hotkey-stop'),
 
-  // ── Action Testing ──
+  // ── Auth & External Links ──
+  openExternalUrl: (url: string) => ipcRenderer.invoke('open-external-url', url),
   testAction: (action: { type: string; value: string }) => ipcRenderer.invoke('test-action', action),
 
   // ── App Drawer ──
@@ -134,8 +135,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   onAuthCallback: (callback: (url: string) => void) => {
-    const listener = (_event: unknown, url: string) => callback(url)
+    const listener = (_event: unknown, url: string) => {
+      console.log("[Preload] Received auth-callback event from main process")
+      callback(url)
+    }
     ipcRenderer.on('auth-callback', listener)
-    return () => ipcRenderer.removeListener('auth-callback', listener)
+    return () => {
+      console.log("[Preload] Removing auth-callback listener")
+      ipcRenderer.removeListener('auth-callback', listener)
+    }
   },
 })

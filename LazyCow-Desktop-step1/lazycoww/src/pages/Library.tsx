@@ -7,7 +7,8 @@ import { ConfirmSecuredModal } from '../components/ConfirmSecuredModal';
 import { migrateShortcutsSecured, readSecuredDoublePressSeconds } from '../utils/security';
 import { usePrefersReducedMotion } from '../hooks/usePrefersReducedMotion';
 import { useDragSelect } from '../hooks/useDragSelect';
-import { persistShortcuts, recoverShortcutsFromDiskIfEmpty } from '../utils/shortcutStorage';
+import { persistShortcuts, recoverShortcutsFromDiskIfEmpty, addPendingDeletion, addPendingDeletions } from '../utils/shortcutStorage';
+import { downloadShortcutsFromCloud, uploadShortcutToCloud, areShortcutsEqual } from '../utils/cloudSync';
 import { readAutoScrollSpeed } from '../utils/autoScroll';
 import { ConfirmDeleteShortcutsModal } from '../components/ConfirmDeleteShortcutsModal';
 
@@ -15,9 +16,10 @@ interface LibraryProps {
   setActiveTab: (tab: string) => void;
   onEditShortcut: (shortcut: SavedShortcut, focusActionId?: string) => void;
   customColorMode: boolean;
+  isAuthenticated?: boolean;
 }
 
-export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, customColorMode }) => {
+export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, customColorMode, isAuthenticated }) => {
   const [gridCols, setGridCols] = useState<2 | 3 | 4>(2);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -46,6 +48,8 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
   const [shortcuts, setShortcuts] = useState<SavedShortcut[]>(() =>
     JSON.parse(localStorage.getItem('lazycow-shortcuts') || '[]')
   );
+  const [remoteShortcuts, setRemoteShortcuts] = useState<SavedShortcut[] | null>(null);
+  const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set());
 
   // On mount: if localStorage is empty but the disk mirror has data,
   // restore from disk. Covers the dev-mode hard-kill data-loss case.
@@ -130,6 +134,72 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
     onEnterSelectionMode: () => setSelectionMode(true),
     getAutoScrollSpeed: () => autoScrollSpeedRef.current,
   });
+
+  // Fetch remote shortcuts when signed in to display cloud badges.
+  // Does not block the library from rendering if offline — badges are just hidden.
+  useEffect(() => {
+    if (!isAuthenticated) { setRemoteShortcuts(null); return; }
+    let isMounted = true;
+    const fetchRemote = async () => {
+      try {
+        const remote = await downloadShortcutsFromCloud();
+        if (isMounted) setRemoteShortcuts(remote);
+      } catch (err) {
+        console.error("Failed to fetch remote for library badges:", err);
+      }
+    };
+    fetchRemote();
+    window.addEventListener('focus', fetchRemote);
+    return () => { isMounted = false; window.removeEventListener('focus', fetchRemote); };
+  }, [isAuthenticated]);
+
+  const handleRestoreFromCloud = (id: string) => {
+    const remote = remoteShortcuts?.find(r => r.id === id);
+    if (!remote) return;
+
+    const local = shortcuts.find(s => s.id === id);
+    if (!local) return;
+
+    // Warn if restoring would create a hotkey conflict
+    const conflict = shortcuts.find(s => s.id !== id && s.hotkey === remote.hotkey && remote.hotkey !== '');
+    if (conflict) {
+      const ok = confirm(`Restoring "${remote.name}" from the cloud will create a hotkey conflict with "${conflict.name}" (both use "${remote.hotkey}"). Continue?`);
+      if (!ok) return;
+    }
+
+    const ok = confirm(`Are you sure you want to discard your local edits to "${local.name}" and restore the cloud version?`);
+    if (!ok) return;
+
+    const updated = shortcuts.map(s => s.id === id ? remote : s);
+    setShortcuts(updated);
+    persistShortcuts(updated);
+    syncHotkeysAndTrackFailures(updated);
+  };
+
+  const handleSyncNow = async (id: string) => {
+    const sc = shortcuts.find((s) => s.id === id);
+    if (!sc) return;
+    setSyncingIds((prev) => new Set(prev).add(id));
+    try {
+      const uploaded = await uploadShortcutToCloud(sc);
+      if (uploaded.id !== sc.id) {
+        const updated = shortcuts.map(s => s.id === sc.id ? uploaded : s);
+        setShortcuts(updated);
+        persistShortcuts(updated);
+        syncHotkeysAndTrackFailures(updated);
+      }
+      const remote = await downloadShortcutsFromCloud();
+      setRemoteShortcuts(remote);
+    } catch (err) {
+      alert(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSyncingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
 
   const syncHotkeysAndTrackFailures = useCallback((list: SavedShortcut[]) => {
     setFailedHotkeys(new Set());
@@ -403,6 +473,11 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const confirmDelete = () => {
     if (deleteId) {
+      // Record the deletion so the Account page can offer "push deletion
+      // to cloud". Without this, the cloud copy stays orphaned with no
+      // UI path to remove it — the shortcut would keep re-appearing as
+      // "not in library" forever.
+      addPendingDeletion(deleteId);
       const updated = shortcuts.filter((s) => s.id !== deleteId);
       setShortcuts(updated);
       persistShortcuts(updated);
@@ -412,6 +487,9 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
   };
 
   const handleConfirmMultiDelete = () => {
+    // Same as confirmDelete, but batched — one localStorage write for the
+    // whole selection instead of N.
+    addPendingDeletions([...selectedIds]);
     const updated = shortcuts.filter((s) => !selectedIds.has(s.id));
     setShortcuts(updated);
     persistShortcuts(updated);
@@ -530,8 +608,8 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
               onClick={() => setShowConfirmMultiDelete(true)}
               disabled={selectedIds.size === 0}
               className={`px-3 py-1.5 rounded-full text-body-sm flex items-center gap-1.5 transition-colors ${selectedIds.size === 0
-                  ? 'bg-muted text-muted-foreground cursor-not-allowed'
-                  : 'bg-red-500 text-white hover:bg-red-600'
+                ? 'bg-muted text-muted-foreground cursor-not-allowed'
+                : 'bg-red-500 text-white hover:bg-red-600'
                 }`}
             >
               <span className="material-symbols-outlined text-[16px]">delete</span>
@@ -577,6 +655,17 @@ export const Library: React.FC<LibraryProps> = ({ setActiveTab, onEditShortcut, 
             onDuplicate={handleDuplicate}
             hasHotkeyConflict={failedHotkeys.has(card.id)}
             hasBrokenPath={brokenShortcuts.has(card.id)}
+            cloudState={
+              !isAuthenticated ? 'unauthenticated' :
+                brokenShortcuts.has(card.id) ? 'broken' :
+                  remoteShortcuts === null ? 'loading' :
+                    !remoteShortcuts.some(r => r.id === card.id) ? 'not-synced' :
+                      areShortcutsEqual(card, remoteShortcuts.find(r => r.id === card.id)!) ? 'synced' :
+                        'edited'
+            }
+            onSyncNow={handleSyncNow}
+            onRestoreFromCloud={handleRestoreFromCloud}
+            isSyncing={syncingIds.has(card.id)}
             brokenActionId={brokenShortcuts.get(card.id)}
             isCancelling={cancellingIds.has(card.id)}
             execution={executions[card.id]}

@@ -19,6 +19,11 @@ export interface ActionItem {
    * override, picking the other label is the only way to change it.
    */
   safetyOverride?: 'dangerous' | 'safe';
+  /** 
+   * A short name of the original file/folder/app (e.g. 'resume.pdf' or 'chrome.exe').
+   * Used to reconstruct the action on a new device where the original path doesn't exist.
+   */
+  hint?: string;
 }
 
 export interface CatalogItem {

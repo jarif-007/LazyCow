@@ -86,7 +86,7 @@ export const ActionValueInput: React.FC<ActionValueInputProps> = ({ card, hasErr
             type="text"
             value={card.value}
             onChange={(e) => onUpdateValue(card.id, e.target.value)}
-            placeholder="Choose an app or paste a path"
+            placeholder={card.hint ? `Missing app: ${card.hint} (Select again)` : "Choose an app or paste a path"}
             className={`flex-1 bg-background/50 border text-foreground rounded-md px-3 py-2 font-body-sm focus:outline-none shadow-inner ${hasError ? 'border-red-500/50 focus:ring-red-500' : 'border-border/50 focus:ring-primary'
               }`}
           />
@@ -165,6 +165,7 @@ export const ActionValueInput: React.FC<ActionValueInputProps> = ({ card, hasErr
         type="text"
         value={card.value}
         onChange={(e) => onUpdateValue(card.id, e.target.value)}
+        placeholder={card.hint ? `Missing file/folder: ${card.hint}` : undefined}
         className={`flex-1 bg-background/50 border text-foreground rounded-md px-3 py-2 font-body-sm focus:outline-none shadow-inner ${hasError ? 'border-red-500/50 focus:ring-red-500' : 'border-border/50 focus:ring-primary'
           }`}
       />

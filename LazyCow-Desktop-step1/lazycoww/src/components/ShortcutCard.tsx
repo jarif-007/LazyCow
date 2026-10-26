@@ -15,6 +15,10 @@ interface ShortcutCardProps {
   onDuplicate: (s: SavedShortcut) => void;
   hasHotkeyConflict?: boolean;
   hasBrokenPath?: boolean;
+  cloudState?: 'unauthenticated' | 'loading' | 'synced' | 'not-synced' | 'edited' | 'broken';
+  onSyncNow?: (id: string) => void;
+  onRestoreFromCloud?: (id: string) => void;
+  isSyncing?: boolean;
   /** First broken path action id (when hasBrokenPath is true). Passed to onEditFlow. */
   brokenActionId?: string;
   isCancelling?: boolean;
@@ -49,6 +53,7 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
    hasHotkeyConflict, hasBrokenPath, brokenActionId, isCancelling, execution, customColorMode,
   onToggleSecured, staggerIndex = 0, reducedMotion = false,
   selectionMode = false, isSelected = false,
+  cloudState, onSyncNow, onRestoreFromCloud, isSyncing = false,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuWrapperRef = useRef<HTMLDivElement>(null);
@@ -175,6 +180,37 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
               <button onClick={() => { setMenuOpen(false); onDuplicate(shortcut); }} className="w-full text-left px-4 py-2.5 text-body-sm text-foreground hover:bg-muted/50 flex items-center gap-2">
                 <span className="material-symbols-outlined text-[18px]">content_copy</span> Duplicate
               </button>
+              
+              {cloudState === 'edited' && onRestoreFromCloud && (
+                <button
+                  onClick={() => { setMenuOpen(false); onRestoreFromCloud(shortcut.id); }}
+                  className="w-full text-left px-4 py-2.5 text-body-sm text-foreground hover:bg-muted/50 flex items-center gap-2"
+                >
+                  <span className="material-symbols-outlined text-[18px]">history</span> Restore from Cloud
+                </button>
+              )}
+
+              {cloudState && cloudState !== 'unauthenticated' && cloudState !== 'loading' && (
+                <button
+                  onClick={() => { setMenuOpen(false); onSyncNow?.(shortcut.id); }}
+                  disabled={isSyncing || cloudState === 'synced' || cloudState === 'broken'}
+                  className={`w-full text-left px-4 py-2.5 text-body-sm flex items-center justify-between gap-2 transition-colors ${
+                    (isSyncing || cloudState === 'synced' || cloudState === 'broken')
+                      ? 'text-muted-foreground opacity-60 cursor-not-allowed'
+                      : 'text-foreground hover:bg-muted/50'
+                  }`}
+                  title={cloudState === 'broken' ? 'Fix broken paths before syncing' : undefined}
+                >
+                  <span className="flex items-center gap-2">
+                    <span className={`material-symbols-outlined text-[18px] ${isSyncing ? 'animate-spin' : ''}`}>
+                      {isSyncing ? 'progress_activity' : 'cloud_upload'}
+                    </span>
+                    {isSyncing ? 'Syncing...' : 'Sync Now'}
+                  </span>
+                  {cloudState === 'synced' && <span className="text-[10px] text-emerald-500 font-semibold">Up to date</span>}
+                  {cloudState === 'broken' && <span className="text-[10px] text-red-500 font-semibold">Broken path</span>}
+                </button>
+              )}
               <button onClick={() => { onToggleSecured(shortcut.id); }} className="w-full text-left px-4 py-2.5 text-body-sm text-foreground hover:bg-muted/50 flex items-center justify-between gap-2">
                 <span className="flex items-center gap-2">
                   <span className="material-symbols-outlined text-[18px]">lock</span> Secured
@@ -225,6 +261,26 @@ export const ShortcutCard: React.FC<ShortcutCardProps> = ({
         {shortcut.secured && (
           <span className="inline-flex items-center gap-1 bg-background/50 text-foreground border border-border/50 text-[11px] font-medium px-2 py-0.5 rounded-md" title="Secured shortcut — confirmation required before running.">
             <span className="material-symbols-outlined text-[13px]">lock</span> Secured
+          </span>
+        )}
+        {cloudState === 'synced' && (
+          <span className="inline-flex items-center gap-1 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 text-[11px] font-medium px-2 py-0.5 rounded-md" title="Shortcut is synced to the cloud.">
+            <span className="material-symbols-outlined text-[13px]">cloud_done</span> Synced
+          </span>
+        )}
+        {cloudState === 'not-synced' && (
+          <span className="inline-flex items-center gap-1 bg-amber-500/10 text-amber-500 border border-amber-500/20 text-[11px] font-medium px-2 py-0.5 rounded-md" title="Shortcut is not in the cloud yet.">
+            <span className="material-symbols-outlined text-[13px]">cloud_off</span> Not Synced
+          </span>
+        )}
+        {cloudState === 'edited' && (
+          <span className="inline-flex items-center gap-1 bg-amber-500/10 text-amber-500 border border-amber-500/20 text-[11px] font-medium px-2 py-0.5 rounded-md" title="Local changes made since last cloud sync.">
+            <span className="material-symbols-outlined text-[13px]">cloud_sync</span> Edited Locally
+          </span>
+        )}
+        {shortcut.actions.some(a => ['launch_app', 'open_file', 'open_folder'].includes(a.type) && !a.value && a.hint) && (
+          <span className="inline-flex items-center gap-1 bg-red-500/10 text-red-500 border border-red-500/20 text-[11px] font-medium px-2 py-0.5 rounded-md" title="This shortcut contains files from another device. Please update the paths.">
+            <span className="material-symbols-outlined text-[13px]">build</span> Needs Setup
           </span>
         )}
         {(() => {

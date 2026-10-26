@@ -68,6 +68,8 @@ interface Window {
     getHardwareAcceleration: () => Promise<{ current: boolean; boot: boolean }>
     setHardwareAcceleration: (enabled: boolean) => Promise<{ ok: boolean }>
     relaunchApp: () => Promise<void>
+    // ── Auth & External Links ──
+    openExternalUrl: (url: string) => Promise<{ ok: boolean; error?: string }>
     // ── Action Testing ──
     testAction: (action: { type: string; value: string }) => Promise<{ ok: boolean; error?: string }>
 

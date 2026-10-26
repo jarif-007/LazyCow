@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Library } from './pages/Library';
 import { Builder } from './pages/Builder';
@@ -7,6 +7,7 @@ import { Account } from './pages/Account';
 import { Auth } from './pages/Auth';
 import { SavedShortcut } from './types/actions';
 import { persistSetting } from './utils/settingsStorage';
+import { supabase } from './utils/supabase';
 
 type ThemeName = 'coffee' | 'ocean' | 'forest';
 type ThemeMode = 'system' | 'light' | 'dark';
@@ -36,6 +37,29 @@ function App() {
   const [activeTab, setActiveTab] = useState<string>('library');
   // Mock Authentication State (in the future, this reads from Supabase)
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [recoveryMode, setRecoveryMode] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [recoveryError, setRecoveryError] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [authMessage, setAuthMessage] = useState<string | null>(null);
+
+  const PASSWORD_REQUIREMENTS = [
+    { id: 'length', label: 'At least 8 characters', regex: /.{8,}/ },
+    { id: 'uppercase', label: 'One uppercase letter', regex: /[A-Z]/ },
+    { id: 'lowercase', label: 'One lowercase letter', regex: /[a-z]/ },
+    { id: 'number', label: 'One number', regex: /[0-9]/ },
+    { id: 'special', label: 'One special character', regex: /[^A-Za-z0-9]/ },
+  ];
+
+  const metRequirements = PASSWORD_REQUIREMENTS.map(req => ({
+    ...req,
+    met: req.regex.test(newPassword)
+  }));
+  const passwordStrength = metRequirements.filter(r => r.met).length;
+  const passwordsMatch = newPassword === confirmPassword;
+  const showPasswordMismatch = confirmPassword.length > 0 && !passwordsMatch;
   const [customColorMode, setCustomColorMode] = useState<boolean>(false);
   const [customTheme, setCustomTheme] = useState<ThemeName>('coffee');
   const [themeMode, setThemeMode] = useState<ThemeMode>('system');
@@ -97,6 +121,51 @@ function App() {
       if (rafId !== null) cancelAnimationFrame(rafId);
     };
   }, [manualCollapse]);
+
+  // ── Handle Auth Callback (Email Confirmation, Password Reset, & OAuth) ──
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.onAuthCallback(async (url) => {
+      console.log("[App] Received auth callback URL:", url);
+      try {
+        // The URL looks like: lazycow://auth/callback?code=...
+        const parsedUrl = new URL(url);
+        const code = parsedUrl.searchParams.get('code');
+        
+        if (code) {
+          const { error } = await supabase.auth.exchangeCodeForSession(code);
+          if (!error) {
+            console.log("[App] Successfully logged in via deep link!");
+            setIsAuthenticated(true);
+          } else {
+            console.error("[App] Auth callback error:", error);
+          }
+        }
+      } catch (err) {
+        console.error("[App] Failed to process auth callback:", err);
+      }
+    });
+    return () => unsubscribe?.();
+  }, []);
+
+  // ── Listen to Supabase Auth State ──
+  useEffect(() => {
+    // Check initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setIsAuthenticated(!!session);
+    });
+
+    // Listen for changes (login, logout, token refresh, password recovery)
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setRecoveryMode(true);
+      }
+      setIsAuthenticated(!!session);
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
 
   // ── Load saved preferences ──
   useEffect(() => {
@@ -325,7 +394,155 @@ function App() {
     setBuilderKey((k) => k + 1);
   };
 
+  const handleAuthLogin = useCallback(() => {
+    setIsAuthenticated(true);
+  }, []);
+
+  const handleUpdatePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (passwordStrength < 5) {
+      setRecoveryError('Password does not meet all requirements.');
+      return;
+    }
+    if (!passwordsMatch) {
+      setRecoveryError('Passwords do not match.');
+      return;
+    }
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) {
+      setRecoveryError(error.message);
+    } else {
+      // Sign out immediately so the user has to log in manually with their
+      // new password, instead of being silently auto-logged in.
+      await supabase.auth.signOut();
+      setIsAuthenticated(false);
+      setRecoveryMode(false);
+      setNewPassword('');
+      // Pass the success message directly to the Auth component instead of
+      // using a native alert(), which causes Electron to lose focus and
+      // leaves the inputs without a blinking cursor.
+      setAuthMessage('Password updated successfully! Please sign in with your new password.');
+    }
+  };
+
   const sidebarWidth = sidebarCollapsed ? '64px' : '260px';
+
+  if (recoveryMode) {
+    return (
+      <div className="flex flex-col items-center justify-center w-full h-screen bg-background">
+        <div className="bg-card border border-border rounded-2xl p-8 shadow-2xl max-w-md w-full mx-4">
+          <div className="flex items-center gap-3 mb-4">
+            <span className="material-symbols-outlined text-primary text-[32px]">lock_reset</span>
+            <h1 className="text-xl font-bold text-foreground">Set New Password</h1>
+          </div>
+          <p className="text-sm text-muted-foreground mb-6">
+            Please enter a new password for your account.
+          </p>
+          <form onSubmit={handleUpdatePassword} className="flex flex-col gap-4">
+            
+            {/* New Password Field */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-foreground">New Password</label>
+              <div className="flex items-center w-full bg-background border border-border px-3 py-2 rounded-xl focus-within:ring-2 focus-within:ring-primary focus-within:border-transparent transition-colors">
+                <span className="material-symbols-outlined text-[16px] text-muted-foreground mr-2 select-none">lock</span>
+                <input
+                  type={showNewPassword ? 'text' : 'password'}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                  className="w-full bg-transparent outline-none text-sm text-foreground placeholder:text-muted-foreground/50 tracking-wider"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewPassword(!showNewPassword)}
+                  className="text-muted-foreground hover:text-foreground flex items-center justify-center p-0.5 rounded transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[16px]">
+                    {showNewPassword ? 'visibility_off' : 'visibility'}
+                  </span>
+                </button>
+              </div>
+
+              {/* Password Strength Checklist */}
+              {newPassword.length > 0 && (
+                <div className="mt-1 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="h-1.5 flex-1 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className={`h-full transition-all duration-300 ${passwordStrength <= 2 ? 'bg-red-500' : passwordStrength <= 4 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                        style={{ width: `${(passwordStrength / 5) * 100}%` }}
+                      />
+                    </div>
+                    <span className={`text-[10px] font-bold w-12 text-right ${passwordStrength <= 2 ? 'text-red-500' : passwordStrength <= 4 ? 'text-amber-500' : 'text-emerald-500'}`}>
+                      {passwordStrength <= 2 ? 'Weak' : passwordStrength <= 4 ? 'Fair' : 'Strong'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {metRequirements.map(req => (
+                      <div key={req.id} className="flex items-center gap-1.5">
+                        <span className={`material-symbols-outlined text-[12px] ${req.met ? 'text-emerald-500' : 'text-muted-foreground/40'}`}>
+                          {req.met ? 'check_circle' : 'circle'}
+                        </span>
+                        <span className={`text-[11px] font-body-sm leading-snug ${req.met ? 'text-foreground' : 'text-muted-foreground/60'}`}>
+                          {req.label}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Confirm Password Field */}
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-foreground">Confirm Password</label>
+                {showPasswordMismatch && (
+                  <span className="text-[11px] font-body-sm font-medium text-red-500">Passwords do not match.</span>
+                )}
+              </div>
+              <div className={`flex items-center w-full bg-background border px-3 py-2 rounded-xl focus-within:ring-2 focus-within:ring-primary focus-within:border-transparent transition-colors ${showPasswordMismatch ? 'border-red-500/50' : 'border-border'}`}>
+                <span className="material-symbols-outlined text-[16px] text-muted-foreground mr-2 select-none">lock_reset</span>
+                <input
+                  type={showConfirmPassword ? 'text' : 'password'}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                  className="w-full bg-transparent outline-none text-sm text-foreground placeholder:text-muted-foreground/50 tracking-wider"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="text-muted-foreground hover:text-foreground flex items-center justify-center p-0.5 rounded transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[16px]">
+                    {showConfirmPassword ? 'visibility_off' : 'visibility'}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {recoveryError && <p className="text-red-500 text-xs text-center bg-red-500/10 p-2 rounded-lg">{recoveryError}</p>}
+            
+            <button
+              type="submit"
+              disabled={passwordStrength < 5 || !passwordsMatch || newPassword.length === 0}
+              className={`w-full py-2.5 rounded-xl font-semibold text-sm transition-all mt-2 ${
+                (passwordStrength < 5 || !passwordsMatch || newPassword.length === 0)
+                  ? 'bg-muted text-muted-foreground cursor-not-allowed opacity-70'
+                  : 'bg-primary text-primary-foreground hover:opacity-90'
+              }`}
+            >
+              Update Password
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex w-full h-screen overflow-hidden">
@@ -364,7 +581,7 @@ function App() {
         </header>
 
        <div className={`page-container ${activeTab === 'library' ? 'active' : ''}`}>
-  {appReady && <Library key={libraryRefreshKey} setActiveTab={handleTabClick} onEditShortcut={handleEditShortcut} customColorMode={customColorMode} />}
+  {appReady && <Library key={libraryRefreshKey} setActiveTab={handleTabClick} onEditShortcut={handleEditShortcut} customColorMode={customColorMode} isAuthenticated={isAuthenticated} />}
 </div>
 
         <div className={`page-container ${activeTab === 'builder' ? 'active' : ''}`}>
@@ -404,9 +621,9 @@ function App() {
         <div className={`page-container ${activeTab === 'account' ? 'active' : ''}`}>
           {appReady && (
             isAuthenticated ? (
-              <Account />
+              <Account onEditShortcut={handleEditShortcut} />
             ) : (
-              <Auth onLogin={() => setIsAuthenticated(true)} />
+              <Auth onLogin={handleAuthLogin} initialMessage={authMessage} />
             )
           )}
         </div>

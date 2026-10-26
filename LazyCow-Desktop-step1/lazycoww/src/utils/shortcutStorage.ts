@@ -26,6 +26,9 @@ export function persistShortcuts(list: SavedShortcut[]): void {
     // Fire-and-forget the disk mirror. If IPC fails, we've at least written
     // localStorage; if localStorage fails, disk is the fallback.
     window.electronAPI?.writeShortcutsToDisk(list);
+    
+    // Trigger instant update for the Account page
+    window.dispatchEvent(new CustomEvent('lazycow-shortcuts-changed'));
 }
 
 /** Read the current shortcut list from localStorage. Synchronous. */
@@ -46,6 +49,70 @@ export function readShortcuts(): SavedShortcut[] {
  *
  * Returns the recovered list, or null if nothing was recovered.
  */
+// ─── Deletion tracking ──────────────────────────────────────────────────
+// When a user deletes a shortcut in Library, we record the ID here so the
+// Account page can offer "push this deletion to cloud". Without it, deleting
+// a synced shortcut left the cloud copy orphaned with no way to propagate.
+// Cleanup: ID is filtered out against the live cloud list at render time, so
+// stale entries are harmless; they're pruned after each successful push.
+const PENDING_DELETIONS_KEY = 'lazycow-pending-deletions';
+
+export function readPendingDeletions(): string[] {
+    try {
+        const raw = localStorage.getItem(PENDING_DELETIONS_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch { return []; }
+}
+
+export function addPendingDeletion(id: string): void {
+    const current = readPendingDeletions();
+    if (!current.includes(id)) {
+        current.push(id);
+        try { localStorage.setItem(PENDING_DELETIONS_KEY, JSON.stringify(current)); } catch { /* ignore */ }
+    }
+}
+
+export function addPendingDeletions(ids: string[]): void {
+    const current = readPendingDeletions();
+    let changed = false;
+    for (const id of ids) {
+        if (!current.includes(id)) { current.push(id); changed = true; }
+    }
+    if (changed) {
+        try { localStorage.setItem(PENDING_DELETIONS_KEY, JSON.stringify(current)); } catch { /* ignore */ }
+    }
+}
+
+export function removePendingDeletions(ids: string[]): void {
+    const current = readPendingDeletions();
+    const next = current.filter(id => !ids.includes(id));
+    if (next.length !== current.length) {
+        try { localStorage.setItem(PENDING_DELETIONS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    }
+}
+
+// ─── Per-shortcut "auto-sync edits" opt-in ──────────────────────────────
+// Users who opt in are OK with edits to THIS shortcut being auto-pushed by
+// the timer, without the manual review that non-opted-in shortcuts require.
+// Not part of SavedShortcut — deliberately excluded so toggling it doesn't
+// appear as a "diff" in areShortcutsEqual and trigger a spurious pending state.
+const AUTO_SYNC_EDITS_KEY = 'lazycow-auto-sync-edits';
+
+export function readAutoSyncEdits(): string[] {
+    try {
+        const raw = localStorage.getItem(AUTO_SYNC_EDITS_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch { return []; }
+}
+
+export function writeAutoSyncEdits(ids: string[]): void {
+    try { localStorage.setItem(AUTO_SYNC_EDITS_KEY, JSON.stringify(ids)); } catch { /* ignore */ }
+}
+
 export async function recoverShortcutsFromDiskIfEmpty(): Promise<SavedShortcut[] | null> {
     const stored = localStorage.getItem(KEY);
     if (stored && stored !== '[]') return null;

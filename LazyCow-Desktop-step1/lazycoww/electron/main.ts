@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, nativeTheme, shell, globalShortcut, Tray, Menu, nativeImage, systemPreferences, dialog, Notification } from 'electron'
+import http from 'node:http'
 
 // ── Hardware acceleration (user-configurable) ──
 // Historically we always called app.disableHardwareAcceleration() to fix
@@ -37,6 +38,18 @@ contextMenu({
   showSearchWithGoogle: false,
 })
 
+// ── Register Deep Link Protocol ──
+// This tells Windows/macOS that clicking a "lazycow://" link should open LazyCow.
+if (process.defaultApp) {
+  if (process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient('lazycow', process.execPath, [
+      path.resolve(process.argv[1]),
+    ])
+  }
+} else {
+  app.setAsDefaultProtocolClient('lazycow')
+}
+
 // ── Single Instance Lock ──
 // LazyCow is a tray-resident app — only one process may run at a time.
 // If a second launch is attempted (double-click the icon, run `npm run dev`
@@ -53,8 +66,6 @@ if (!gotSingleInstanceLock) {
 // This forces the taskbar to use our icon and name instead of "Electron".
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.lazycow.app')
-  // Register the custom protocol for Supabase OAuth deep linking
-  app.setAsDefaultProtocolClient('lazycow')
 }
 
 // ── OS Lock: LazyCow is exclusively designed for Microsoft Windows ──
@@ -132,6 +143,17 @@ function isValidUrlFormat(value: string): boolean {
 }
 
 // Opens a URL in the default browser for a quick preview — does NOT run a shortcut.
+// Opens a URL in the default browser. Used for OAuth logins so the user
+// can authenticate with Google securely in their browser, not inside the app.
+ipcMain.handle('open-external-url', async (_event, url: string) => {
+  try {
+    await shell.openExternal(url)
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
 ipcMain.handle('test-url', async (_event, url: string) => {
   if (typeof url !== 'string' || !isValidUrlFormat(url)) {
     return { ok: false, error: 'Invalid URL' }
@@ -232,16 +254,24 @@ app.on('before-quit', () => {
 // A second launch attempt was blocked by the single-instance lock.
 // Bring the existing window to the foreground instead of opening a new one.
 app.on('second-instance', (_event, commandLine) => {
-  // Check if the second instance was triggered by our OAuth deep link
-  const url = commandLine.find((arg) => arg.startsWith('lazycow://'))
-  if (url && win) {
-    win.webContents.send('auth-callback', url)
-  }
-
   if (win) {
     if (win.isMinimized()) win.restore()
     win.show()
     win.focus()
+
+    // Extract the deep link URL from the command line
+    const url = commandLine.pop()
+    if (url && url.startsWith('lazycow://')) {
+      win.webContents.send('auth-callback', url)
+    }
+  }
+})
+
+// Handle Deep Link on macOS
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  if (win && url.startsWith('lazycow://')) {
+    win.webContents.send('auth-callback', url)
   }
 })
 
@@ -2550,11 +2580,55 @@ app.whenReady().then(() => {
   createWindow()
   createTray()
 
-  // Handle deep link if the app was launched by the OAuth callback (cold start)
-  const deepLink = process.argv.find((arg) => arg.startsWith('lazycow://'))
-  if (deepLink && win) {
-    win.webContents.on('did-finish-load', () => {
-      win?.webContents.send('auth-callback', deepLink)
+  // Start a local server to catch the Supabase OAuth callback.
+  // We use a recursive function to gracefully handle port conflicts (EADDRINUSE).
+  const startOAuthServer = (port = 54321) => {
+    const oauthServer = http.createServer((req, res) => {
+      if (req.url?.startsWith('/auth/callback')) {
+        const fullUrl = `http://localhost:${port}${req.url}`
+        console.log(`[OAuth Server] Callback hit on port ${port}`)
+
+        if (win) {
+          // Send the FULL URL to the renderer, not just the code.
+          // This matches the payload from the deep link handler, allowing
+          // App.tsx to uniformly parse it using `new URL(url)`.
+          win.webContents.send('auth-callback', fullUrl)
+        } else {
+          console.log(`[OAuth Server] Failed to send IPC. win is null`)
+        }
+
+        res.writeHead(200, { 'Content-Type': 'text/html' })
+        res.end(`
+          <html>
+            <body style="font-family: sans-serif; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; background: #1a1a1a; color: white; text-align: center; padding: 20px;">
+              <h2>Authentication successful!</h2>
+              <p style="color: #a0a0a0;">You can close this tab and return to LazyCow.</p>
+              <script>
+                // Attempt to close the tab automatically
+                setTimeout(() => { window.close(); }, 1000);
+              </script>
+            </body>
+          </html>
+        `)
+      } else {
+        res.writeHead(404)
+        res.end()
+      }
+    })
+
+    oauthServer.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        console.warn(`[OAuth Server] Port ${port} is in use, trying port ${port + 1}...`)
+        startOAuthServer(port + 1)
+      } else {
+        console.error('[OAuth Server] Error:', err)
+      }
+    })
+
+    oauthServer.listen(port, '127.0.0.1', () => {
+      console.log(`OAuth callback server listening on http://localhost:${port}`)
     })
   }
+
+  startOAuthServer()
 })

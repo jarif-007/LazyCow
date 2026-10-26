@@ -1,8 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence, useMotionValue, useSpring, useMotionTemplate } from 'motion/react';
+import { supabase } from '../utils/supabase';
 
 interface AuthProps {
     onLogin: () => void;
+    initialMessage?: string | null;
 }
 
 const PASSWORD_REQUIREMENTS = [
@@ -13,7 +15,7 @@ const PASSWORD_REQUIREMENTS = [
     { id: 'special', label: 'One special character', regex: /[^A-Za-z0-9]/ },
 ];
 
-export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
+export const Auth: React.FC<AuthProps> = ({ onLogin, initialMessage }) => {
     const [isLogin, setIsLogin] = useState(true);
     const [showPassword, setShowPassword] = useState(false);
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -22,8 +24,19 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
-    const [isGoogleLoading, setIsGoogleLoading] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [authError, setAuthError] = useState<string | null>(null);
+    const [successMsg, setSuccessMsg] = useState<string | null>(initialMessage || null);
+
+    // If we arrive here after a password reset, automatically focus the email
+    // input so the user can immediately start typing their new password.
+    useEffect(() => {
+        if (initialMessage) {
+            setTimeout(() => {
+                document.getElementById('auth-email-input')?.focus();
+            }, 100);
+        }
+    }, [initialMessage]);
 
     // Focus State for Dynamic Layout
     const [isFormFocused, setIsFormFocused] = useState(false);
@@ -60,33 +73,164 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
     const passwordsMatch = password === confirmPassword;
     const showPasswordMismatch = confirmPassword.length > 0 && !passwordsMatch;
 
-    const handleSubmit = (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!isEmailValid) return;
+    // Centralized validation to prevent silent submit failures
+    const isFormValid = 
+        isEmailValid && 
+        password.length > 0 && 
+        (isLogin || (passwordStrength === 5 && passwordsMatch));
 
-        if (isLogin) {
-            if (password.length === 0) return;
-            setIsSubmitting(true);
-            setTimeout(() => {
-                setIsSubmitting(false);
-                onLogin();
-            }, 800);
-        } else {
-            if (passwordStrength < 5 || !passwordsMatch) return;
-            setIsSubmitting(true);
-            setTimeout(() => {
-                setIsSubmitting(false);
-                onLogin();
-            }, 800);
+    const handleTabSwitch = (toLogin: boolean, preserveEmail = false) => {
+        setIsLogin(toLogin);
+        // Clear fields, but optionally keep the email if requested
+        if (!preserveEmail) setEmail('');
+        setPassword('');
+        setConfirmPassword('');
+        setAuthError(null);
+        setSuccessMsg(null);
+    };
+
+    const handleGoogleLogin = async () => {
+        setAuthError(null);
+        setIsSubmitting(true);
+        try {
+            const { data, error } = await supabase.auth.signInWithOAuth({
+                provider: 'google',
+                options: {
+                    redirectTo: 'http://localhost:54321/auth/callback',
+                    skipBrowserRedirect: true,
+                    queryParams: {
+                        access_type: 'offline',
+                        prompt: 'consent',
+                    },
+                },
+            });
+
+            if (error) throw error;
+            if (data?.url) {
+                // Open the Google login page in the user's default browser
+                await window.electronAPI?.openExternalUrl(data.url);
+            }
+        } catch (err) {
+            setAuthError(err instanceof Error ? err.message : 'Google sign-in failed.');
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
-    const handleGoogleLogin = () => {
-        setIsGoogleLoading(true);
-        setTimeout(() => {
-            setIsGoogleLoading(false);
-            onLogin();
-        }, 1500);
+    const handleForgotPassword = async () => {
+        if (!isEmailValid) {
+            setAuthError("Enter a valid email address first.");
+            return;
+        }
+        setIsSubmitting(true);
+        setAuthError(null);
+        setSuccessMsg(null);
+        try {
+            const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+                redirectTo: 'http://localhost:54321/auth/callback',
+            });
+            if (error) throw error;
+            setSuccessMsg("If an account exists for that email, a reset link has been sent. Please check your inbox.");
+        } catch (err) {
+            setAuthError(err instanceof Error ? err.message : "Failed to send reset email.");
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const handleResendEmail = async () => {
+        if (!email.trim()) return;
+        setIsSubmitting(true);
+        setAuthError(null);
+        setSuccessMsg(null);
+
+        const { error } = await supabase.auth.resend({
+            type: 'signup',
+            email: email.trim(),
+            options: {
+                emailRedirectTo: 'http://localhost:54321/auth/callback'
+            }
+        });
+
+        if (error) {
+            setAuthError(error.message);
+        } else {
+            setSuccessMsg("Confirmation email resent! Please check your inbox.");
+        }
+        setIsSubmitting(false);
+    };
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!isFormValid) return;
+        setAuthError(null);
+        setSuccessMsg(null);
+
+        // Sanitize email to prevent trailing space errors
+        const cleanEmail = email.trim();
+
+        if (isLogin) {
+            setIsSubmitting(true);
+
+            const { error } = await supabase.auth.signInWithPassword({
+                email: cleanEmail,
+                password,
+            });
+
+            if (error) {
+                if (error.message === 'Invalid login credentials') {
+                    setAuthError("INVALID_CREDENTIALS");
+                } else if (error.message === 'Email not confirmed') {
+                    // Catch the unconfirmed user edge case
+                    setAuthError("EMAIL_NOT_CONFIRMED");
+                } else if (error.message.includes('rate limit')) {
+                    setAuthError("Too many attempts. Please wait a few minutes before trying again.");
+                } else {
+                    setAuthError(error.message);
+                }
+                setIsSubmitting(false);
+            } else {
+                setIsSubmitting(false);
+                onLogin();
+            }
+        } else {
+            if (passwordStrength < 5 || !passwordsMatch) return;
+            setIsSubmitting(true);
+
+            const { data, error } = await supabase.auth.signUp({
+                email,
+                password,
+                options: {
+                    emailRedirectTo: 'http://localhost:54321/auth/callback'
+                }
+            });
+
+            if (error) {
+                if (error.message.includes('rate limit')) {
+                    setAuthError("Email rate limit exceeded. Please wait a few minutes or use a different email.");
+                } else {
+                    setAuthError(error.message);
+                }
+                setIsSubmitting(false);
+            } else if (data?.user?.identities?.length === 0) {
+                // Supabase obfuscates existing emails for security. 
+                // We catch the empty identities array to show a real error.
+                setAuthError("EMAIL_EXISTS");
+                // Do NOT set isLogin(true) here. Keep them on the Create Account page.
+                setPassword('');
+                setConfirmPassword('');
+                setIsSubmitting(false);
+            } else {
+                setIsSubmitting(false);
+                setIsLogin(true);
+                if (!data.session) {
+                    setSuccessMsg("Account created! Please check your email to confirm before signing in.");
+                } else {
+                    await supabase.auth.signOut();
+                    setSuccessMsg("Account created successfully! Please sign in.");
+                }
+            }
+        }
     };
 
     const getStrengthColor = () => {
@@ -187,13 +331,13 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
 
                     <div className="p-1 rounded-xl bg-muted/50 flex items-center mb-4 border border-border/50">
                         <button
-                            onClick={() => setIsLogin(true)}
+                            onClick={() => handleTabSwitch(true)}
                             className={`flex-1 py-1.5 text-center rounded-lg font-semibold text-sm transition-colors ${isLogin ? 'bg-card shadow-sm text-foreground border border-border/50' : 'text-muted-foreground hover:text-foreground'}`}
                         >
                             Sign In
                         </button>
                         <button
-                            onClick={() => setIsLogin(false)}
+                            onClick={() => handleTabSwitch(false)}
                             className={`flex-1 py-1.5 text-center rounded-lg font-semibold text-sm transition-colors ${!isLogin ? 'bg-card shadow-sm text-foreground border border-border/50' : 'text-muted-foreground hover:text-foreground'}`}
                         >
                             Create Account
@@ -215,19 +359,22 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
                                 <div className="flex flex-col gap-1 text-left">
                                     <div className="flex items-center justify-between">
                                         <label className="text-xs font-semibold text-foreground">Email address</label>
-                                        {email.length > 0 && !isEmailValid && (
-                                            <span className="text-[11px] font-body-sm font-medium text-red-500">Invalid email address.</span>
+                                        {email.includes('@') && !isEmailValid && (
+                                            <span className="text-[11px] font-body-sm font-medium text-red-500">Invalid email address format.</span>
                                         )}
                                     </div>
                                     <div className={`flex items-center w-full bg-background border px-3 py-2 rounded-xl focus-within:ring-2 focus-within:ring-primary focus-within:border-transparent transition-colors ${email.length > 0 && !isEmailValid ? 'border-red-500/50' : 'border-border'}`}>
                                         <span className="material-symbols-outlined text-[16px] text-muted-foreground mr-2 select-none">mail</span>
                                         <input
                                             type="email"
+                                            id="auth-email-input"
                                             placeholder="name@example.com"
                                             required
+                                            disabled={isSubmitting}
                                             value={email}
                                             onChange={(e) => setEmail(e.target.value)}
-                                            className="w-full bg-transparent outline-none text-sm text-foreground placeholder:text-muted-foreground/50"
+                                            onBlur={() => setEmail(email.trim())}
+                                            className="w-full bg-transparent outline-none text-sm text-foreground placeholder:text-muted-foreground/50 disabled:opacity-50"
                                         />
                                     </div>
                                 </div>
@@ -237,9 +384,14 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
                                     <div className="flex items-center justify-between">
                                         <label className="text-xs font-semibold text-foreground">Password</label>
                                         {isLogin && (
-                                            <a href="#" className="text-[10px] text-primary font-medium hover:underline transition-colors">
+                                            <button
+                                                type="button"
+                                                onClick={handleForgotPassword}
+                                                disabled={isSubmitting}
+                                                className="text-[10px] text-primary font-medium hover:underline transition-colors disabled:opacity-50"
+                                            >
                                                 Forgot?
-                                            </a>
+                                            </button>
                                         )}
                                     </div>
                                     <div className={`flex items-center w-full bg-background border px-3 py-2 rounded-xl focus-within:ring-2 focus-within:ring-primary focus-within:border-transparent transition-colors ${!isLogin && password.length > 0 && passwordStrength < 5 ? 'border-amber-500/50' : 'border-border'}`}>
@@ -332,11 +484,62 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
                                     </motion.div>
                                 )}
 
+                                {/* Success Message */}
+                                {successMsg && (
+                                    <div className="text-emerald-500 text-xs text-center font-medium bg-emerald-500/10 p-2 rounded-lg mt-2">
+                                        {successMsg}
+                                    </div>
+                                )}
+
+                                {/* Error Message */}
+                                {authError === "INVALID_CREDENTIALS" ? (
+                                    <div className="text-red-500 text-xs text-center font-medium bg-red-500/10 p-2 rounded-lg mt-2 flex flex-col gap-1 items-center">
+                                        <span>Invalid email or password.</span>
+                                        <button 
+                                            type="button"
+                                            onClick={() => handleTabSwitch(false)}
+                                            className="underline font-bold hover:text-red-400 transition-colors"
+                                        >
+                                            Don't have an account? Create one.
+                                        </button>
+                                    </div>
+                                ) : authError === "EMAIL_EXISTS" ? (
+                                    <div className="text-red-500 text-xs text-center font-medium bg-red-500/10 p-2 rounded-lg mt-2 flex flex-col gap-1 items-center">
+                                        <span>This email is already registered.</span>
+                                        <button 
+                                            type="button"
+                                            onClick={() => handleTabSwitch(true, true)}
+                                            className="underline font-bold hover:text-red-400 transition-colors"
+                                        >
+                                            Please sign in instead.
+                                        </button>
+                                    </div>
+                                ) : authError === "EMAIL_NOT_CONFIRMED" ? (
+                                    <div className="text-amber-500 text-xs text-center font-medium bg-amber-500/10 p-2 rounded-lg mt-2 flex flex-col gap-2 items-center">
+                                        <span>Please confirm your email address before signing in.</span>
+                                        <button 
+                                            type="button"
+                                            onClick={handleResendEmail}
+                                            className="bg-amber-500 text-white px-3 py-1 rounded-md hover:bg-amber-600 transition-colors font-bold"
+                                        >
+                                            Resend Confirmation Email
+                                        </button>
+                                    </div>
+                                ) : authError ? (
+                                    <div className="text-red-500 text-xs text-center font-medium bg-red-500/10 p-2 rounded-lg mt-2">
+                                        {authError}
+                                    </div>
+                                ) : null}
+
                                 {/* Submit Button */}
                                 <button
                                     type="submit"
-                                    disabled={isSubmitting}
-                                    className="w-full mt-2 py-2.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 bg-primary text-primary-foreground hover:opacity-90 active:scale-[0.99] transition-colors shadow-sm disabled:opacity-70"
+                                    disabled={isSubmitting || !isFormValid}
+                                    className={`w-full mt-2 py-2.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all shadow-sm ${
+                                        isSubmitting || !isFormValid
+                                            ? 'bg-muted text-muted-foreground cursor-not-allowed opacity-70'
+                                            : 'bg-primary text-primary-foreground hover:opacity-90 active:scale-[0.99]'
+                                    }`}
                                 >
                                     {isSubmitting ? (
                                         <span className="material-symbols-outlined text-[18px] animate-spin">progress_activity</span>
@@ -345,35 +548,46 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
                                     )}
                                     <span>{isLogin ? 'Sign In' : 'Create Account'}</span>
                                 </button>
+
+                                {/* Divider */}
+                                <div className="flex items-center gap-3 mt-2">
+                                    <div className="h-px bg-border flex-1" />
+                                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Or continue with</span>
+                                    <div className="h-px bg-border flex-1" />
+                                </div>
+
+                                {/* Google Button */}
+                                <button
+                                    type="button"
+                                    onClick={handleGoogleLogin}
+                                    disabled={isSubmitting}
+                                    className="w-full py-2.5 rounded-xl border border-border bg-card hover:bg-muted text-foreground font-semibold text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                                >
+                                    <svg className="w-5 h-5" viewBox="0 0 24 24">
+                                        <path
+                                            d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                                            fill="#4285F4"
+                                        />
+                                        <path
+                                            d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                                            fill="#34A853"
+                                        />
+                                        <path
+                                            d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+                                            fill="#FBBC05"
+                                        />
+                                        <path
+                                            d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                                            fill="#EA4335"
+                                        />
+                                    </svg>
+                                    Google
+                                </button>
                             </motion.form>
                         </AnimatePresence>
                     </motion.div>
 
-                    <div className="relative my-3 flex items-center justify-center">
-                        <div className="w-full h-px bg-border absolute"></div>
-                        <span className="relative bg-background px-3 text-[10px] text-muted-foreground select-none uppercase tracking-widest">
-                            or continue with
-                        </span>
-                    </div>
 
-                    <button
-                        type="button"
-                        onClick={handleGoogleLogin}
-                        disabled={isGoogleLoading}
-                        className="w-full py-2.5 rounded-xl font-semibold text-sm bg-background hover:bg-muted text-foreground transition-colors flex items-center justify-center gap-3 active:scale-[0.99] border border-border disabled:opacity-70"
-                    >
-                        {isGoogleLoading ? (
-                            <span className="material-symbols-outlined text-[18px] animate-spin">progress_activity</span>
-                        ) : (
-                            <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
-                                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
-                                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05" />
-                                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335" />
-                            </svg>
-                        )}
-                        <span>{isGoogleLoading ? 'Redirecting to Google...' : 'Continue with Google'}</span>
-                    </button>
 
                     <div className="mt-4 text-center">
                         <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground bg-muted/50 px-2.5 py-1 rounded-md">
