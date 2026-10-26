@@ -619,3 +619,11 @@ Append-only. Never delete. Each entry: date, decision, alternatives, why, conseq
   - Each button reads `syncingIds.has(myKey)` to decide its own spinner/text/disabled state.
   - When the mock `setTimeout` fires, only its own key is removed from the Set.
 - **Status:** active
+## 2026-10-25 — Cloud Sync Auth uses Supabase + Deep Linking
+- **Decision:** Use Supabase for Auth and DB. Use custom protocol deep linking (`lazycow://auth/callback`) to handle Google OAuth in Electron.
+- **Alternatives:** Local HTTP server (fragile, port conflicts), Auth0 (too expensive).
+- **Consequence:** Need to handle `second-instance` and `open-url` in `main.ts` to catch the callback.
+
+## 2026-10-25 — Path Sanitization saves filename as hint
+- **Decision:** When uploading, strip absolute paths for `launch_app`, `open_file`, `open_folder` and save the filename (e.g., `chrome.exe`) as the `hint`. On download, if `value` is empty, search `discoverInstalledApps` for the `hint` and auto-resolve.
+- **Why:** Users have different install paths. Auto-resolving saves them from manual setup 90% of the time.

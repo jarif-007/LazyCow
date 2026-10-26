@@ -5,16 +5,18 @@ Last commit: a1f3105
 Working tree: clean
 
 ## §1 Current Focus
-Session 18 (Cloud plan + Auth/Account UI) is **committed** (`a1f3105`).
-The Account sync-spinner bug fix is **committed** (`0557867`).
-Journal stubs for both commits are filled, and the doc-sync follow-up
-(journal + handoff) is committed. Nothing outstanding for this turn.
-
-Ready for the next session. Logical next step: pick one from §2 "Not started"
-or advance the Supabase backend per §5 Remaining backend.
+Mission: Cloud Sync & Auth (Supabase).
+Currently on: Step 1 (Supabase Client Setup).
 
 ## §2 Sub-task State
+### In Progress
+- [ ] Step 1: Install `@supabase/supabase-js`. Setup `src/utils/supabase.ts`. Add Deep Link handling to `main.ts`.
 
+### Not Started
+- [ ] Step 2: DB Schema.
+- [ ] Step 3: Sanitization Engine.
+- [ ] Step 4: UI (Hints & Needs Setup).
+- [ ] Step 5: Sync Logic.
 ### Done & verified (Session 18 — committed)
 - **Cloud Planning** — Sanitization logic defined (hints for `open_file`, `open_folder`, `launch_app`).
 - **Auth UI** — Split screen, validation logic, focus mode. (`a1f3105`)
@@ -55,7 +57,7 @@ or advance the Supabase backend per §5 Remaining backend.
 - **`autoScrollSpeed` canonical default.** 6 (matches Settings presets: Slow 3 / Medium 6 / Fast 12) or 9 (matches `autoScroll.ts` and `ActionSequence.tsx`)? Recommend 6.
 
 ## §5 Uncommitted (mirrors git status)
-
+- [ ] None currently.
 Working tree: **clean.**
 M — (none)
 
