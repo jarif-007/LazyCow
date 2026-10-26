@@ -374,3 +374,20 @@ Format:
 - **Files:** `electron/main.ts`, `doc/handoff.md`, `doc/journal.md`.
 - **Verified:** yes — successfully toggles DND in the background.
 - **Commit:** 34efbec
+## 2026-10-26 — feat(electron): register lazycow protocol and add auth callback deep linking
+- **Issue:** (fill in)
+- **Solution:** (fill in)
+- **Files:** (fill in)
+- **Verified:** (fill in)
+- **Commit:** bc17c04
+
+## 2026-10-27 — feat(cloud): complete GitHub-like sync engine, Google OAuth, and path sanitization
+- **Issue:** Cloud sync lacked robust diffing, pushed unintended local edits, had no way to propagate deletions, couldn't resolve cross-device paths, and lacked Google Sign-In. 
+- **Solution:** 
+  - **Phase 1-3:** Split `loadData` for instant UI; added `is_secured_custom` to DB; auto-sync defaults off and only pushes new shortcuts; implemented pending deletions (push/restore); added per-shortcut auto-sync opt-in; added explicit network error states; added Library badges and menu actions.
+  - **Google OAuth:** Configured Google Cloud and Supabase. Implemented deep linking (`lazycow://`) and IPC handling, with a fallback to the local server for email/OAuth redirects.
+  - **Path Sanitization:** Added `hint` field to actions. `sanitizeShortcutForUpload` generates hints; `hydrateDownloadedShortcut` auto-resolves paths or clears them if missing.
+  - **RLS Collision Fix:** `uploadShortcutToCloud` catches RLS `42501` errors and generates a new ID, fixing the Email vs Google auth conflict.
+- **Files:** `src/utils/cloudSync.ts`, `src/pages/Account.tsx`, `src/pages/Library.tsx`, `src/pages/Auth.tsx`, `src/App.tsx`, `src/components/ShortcutCard.tsx`, `src/components/ActionSequence/ActionValueInput.tsx`, `src/types/actions.ts`, `electron/main.ts`, `electron/preload.ts`, `electron/electron-env.d.ts`.
+- **Verified:** yes — `tsc` clean. Manual testing passed for Google login, RLS collision recovery, and path hydration.
+- **Commit:** e93f80d

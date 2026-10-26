@@ -627,3 +627,20 @@ Append-only. Never delete. Each entry: date, decision, alternatives, why, conseq
 ## 2026-10-25 — Path Sanitization saves filename as hint
 - **Decision:** When uploading, strip absolute paths for `launch_app`, `open_file`, `open_folder` and save the filename (e.g., `chrome.exe`) as the `hint`. On download, if `value` is empty, search `discoverInstalledApps` for the `hint` and auto-resolve.
 - **Why:** Users have different install paths. Auto-resolving saves them from manual setup 90% of the time.
+## 2026-10-27 — Google OAuth uses Deep Linking with local fallback
+- **Decision:** Auth redirects use `lazycow://auth/callback` for production, but fall back to `http://localhost:54321/auth/callback` for desktop flows where the browser needs a closure prompt.
+- **Alternatives:** Using only the local server (fails if the app is closed) or only deep linking (leaves the browser spinning endlessly with no success message).
+- **Why:** Deep linking ensures the OS routes the auth code to the app even if it's backgrounded, while the local server allows us to return an HTML success page that stops the browser spinner.
+- **Consequence:** `main.ts` listens for both the protocol and the local server. Supabase requires both URLs in the Redirect URLs list.
+
+## 2026-10-27 — Path Sanitization uses `hint` and existence checks
+- **Decision:** Path-based actions carry a `hint` (filename). On upload, paths are preserved. On download, `hydrateDownloadedShortcut` checks if the path exists; if not, it clears the value and uses the `hint` to auto-resolve (for apps) or display a "Needs Setup" placeholder.
+- **Alternatives:** Stripping paths on upload and forcing manual re-selection on every device.
+- **Why:** Users restoring on the same device should get their exact paths back instantly. Users restoring on a new device should get a helping hand (auto-resolved app paths) or clear visual feedback.
+- **Consequence:** `ActionItem` has `hint?: string`. `hydrateDownloadedShortcut` must be awaited before saving restored shortcuts.
+
+## 2026-10-27 — Cloud Sync RLS Collision fallback
+- **Decision:** If an upload fails with a Postgres RLS error (`42501`), the app assumes an ID conflict (e.g., logging in with Google vs Email) and generates a new `sc-<uuid>` ID, retrying the upload.
+- **Alternatives:** Requiring users to manually delete and recreate shortcuts that collide.
+- **Why:** Supabase's identity linking can sometimes assign a new user ID, leaving old shortcuts orphaned. Regenerating the ID is invisible to the user and fixes the collision instantly.
+- **Consequence:** `uploadShortcutToCloud` returns a `SavedShortcut`. Callers must check if the ID changed and update `localStorage` if so.

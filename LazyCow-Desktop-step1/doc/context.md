@@ -48,7 +48,10 @@ The application is structured to support:
   - `settings.json` in `userData` — A synchronous key-value mirror of critical renderer settings (themes, accent color, sidebar routing). Solves the hard-kill data loss issue for themes (matching the shortcut disk mirror). Read synchronously in `index.html` before the splash screen paints. Managed by `src/utils/settingsStorage.ts` and sync IPC (`save-setting-sync`, `read-settings-sync`).
   - `lazycow-blocked-triggers` — Blocked hotkey trigger strings.
   - `lazycow-os-critical-triggers` — OS-critical protected triggers.
-  - `lazycow_settings` — General desktop settings (`startAtLogin`, `keepInTray`, `executionNotifications`, `securedShortcutsEnabled`, `securedDoublePressSeconds`, `autoScrollSpeed`, `zoomFactor`, `appDrawerBackdrop`, `generalShade`, `dataShade`, `sidebarLogoLink`).
+  - `lazycow_settings` — General desktop settings (`startAtLogin`, `keepInTray`, `executionNotifications`, `securedShortcutsEnabled`, `securedDoublePressSeconds`, `autoSyncEnabled`, `autoScrollSpeed`, `zoomFactor`, `appDrawerBackdrop`, `generalShade`, `dataShade`, `sidebarLogoLink`).
+    - `autoSyncEnabled` (default `false`) — whether the background timer is allowed to push *new* shortcuts to the cloud. Does not auto-push edits to existing shortcuts.
+  - `lazycow-pending-deletions` — Array of shortcut IDs that were deleted locally but still exist in the cloud. Used to show the "Pending Deletions" UI.
+  - `lazycow-auto-sync-edits` — Array of shortcut IDs. If a shortcut is in this list, the auto-sync timer is allowed to push *edits* for it, bypassing the manual review requirement.
     - `securedShortcutsEnabled` (default `true`) — controls whether *newly created* shortcuts with dangerous actions default to `secured`. Does **not** retroactively change existing shortcuts.
     - `securedDoublePressSeconds` (default `5`, range 5–30) — window in seconds for the double-press confirmation on a minimized window.
     - Legacy `showDangerWarnings` key (from commit `7ed280c`) is **silently migrated** to `securedShortcutsEnabled` on first `Settings.tsx` load and deleted. Do not re-read the old key.
@@ -182,6 +185,8 @@ LazyCow/
   - A **layout summary** appended when the shortcut has a Window Layout enabled — `Window layout: 3 of 4 apps placed. Couldn't arrange: VS Code.` This is the only feedback the user sees when the placed windows cover the LazyCow window itself.
   - On failure: a per-action failure list rather than a generic "some steps failed".
 - **Broken-path pre-flight (`findFirstBrokenPath`):** Before a hotkey-triggered run, verifies every path-based action (`launch_app`, `open_file`, `open_folder`). If any path is missing, a native Windows toast names the first broken action and the shortcut refuses to run. The renderer never sees the trigger.
+- **Deep Linking (`lazycow://`):** Registers the `lazycow` protocol with the OS at startup (`app.setAsDefaultProtocolClient`). Listens for the `open-url` (macOS) and `second-instance` (Windows/Linux) events to catch auth callbacks from the browser and forward them to the renderer via `auth-callback`.
+- **Local Auth Server:** Spawns an HTTP server on `localhost:54321` to catch email confirmation and OAuth callbacks. Features an auto-fallback to the next available port if `54321` is busy. Sends a success HTML page back to the browser to stop the loading spinner.
 - **Path Dialogs (`select-path`):** Invokes `dialog.showOpenDialog` for native application (`.exe`), directory, or file selection.
 - **Path Checking (`check-path-exists`):** Verifies file/directory existence using `fs.existsSync`.
 - **URL Test (`test-url`):** Opens a URL in the default browser for a quick preview without executing a shortcut. Used by the **Test** button on `open_url` action cards. Format-checks the URL (scheme must be http/https, host must be present) before opening.
@@ -266,6 +271,7 @@ The App Drawer is the picker for `launch_app` actions. Clicking **Select App** o
 
 - **Types (`src/types/actions.ts`):**
   - `ActionItem` carries `safetyOverride?: 'dangerous' | 'safe'` — a user-locked label that overrides the computed classification. There is intentionally no "reset to auto" state; picking the other label is the only change.
+  - `ActionItem` carries `hint?: string` — a short filename (e.g., `chrome.exe` or `resume.pdf`) generated on upload. Used during restore to auto-resolve missing apps or show a "Needs Setup" placeholder.
   - `SavedShortcut` carries `secured?: boolean` — the runtime confirmation gate. Absent means "not secured". Migration computes defaults for shortcuts that predate the field.
 - **10 Supported Action Types (All Active):**
   1. `launch_app` — Application Path (`.exe` only)
@@ -320,8 +326,10 @@ The App Drawer is the picker for `launch_app` actions. Clicking **Select App** o
   - **Re-runs on window focus:** Returning from Explorer after fixing a path refreshes the badge without a page reload.
 - **`ConfirmDeleteShortcutsModal.tsx`:** Rendered via `createPortal`. Shows the count of shortcuts to delete. Supports Esc (cancel) and Enter (confirm). Includes a "Don't show hints again" checkbox persisted to `lazycow-hide-modal-hints`.
 - **`Settings.tsx` & Subcomponents:** Manages appearance, theme switching, startup launch, system tray minimization, execution notifications, blocked triggers, and factory reset.
-- **`Auth.tsx`:** Split-screen login/registration. Left panel shows the value proposition and a cursor-following light. Right panel is the form. Focus mode hides the left panel and centers the form. Includes real-time password strength meter, requirements checklist, and inline email/password validation. Handles mock Google OAuth and loading states.
-- **`Account.tsx`:** Bento-grid dashboard. Layout uses CSS Grid (`col-span-`). Clicking a card opens a focused modal overlay (no backdrop-blur for performance). Uses Framer Motion `layout` to smoothly animate the expansion and shrinking of cards. Includes mock sync history, connected devices, and community upload stats.
+- **`Auth.tsx`:** Split-screen login/registration. Handles real Supabase Email/Password auth and Google OAuth. Includes real-time password strength, requirements checklist, and inline validation. Features "Forgot Password" PKCE flow.
+- **`Account.tsx`:** Bento-grid dashboard. Contains the Cloud Sync Engine. Split into `refreshLocal`, `refreshRemote`, and `scanBrokenPaths` for instant UI diffing. Tracks `pendingDeletions`, `autoSyncEdits`, and `remoteOnlyShortcuts`. Includes the Cloud Vault modal (restore/delete/revert) and the Sync Center modal (Errors, Ready, Deleted, Cloud tabs).
+- **`Library.tsx`:** Cloud-aware shortcut dashboard. Runs a background diff to show `Synced`, `Not Synced`, `Edited Locally`, or `Needs Setup` badges on cards. Includes "Sync Now" and "Restore from Cloud" in the 3-dot menu.
+- **`cloudSync.ts`:** Central hub for cloud operations. Contains `areShortcutsEqual` (deep compare), `sanitizeShortcutForUpload` (generates hints), `hydrateDownloadedShortcut` (resolves paths), and `uploadShortcutToCloud` (handles RLS collision fallbacks).
 
 ### C2. Motion layer (`src/utils/motion.ts`)
 
@@ -413,6 +421,9 @@ npm run build
 33. **Windows-Rejected Combos Go Into Blocked Triggers:** When `globalShortcut.register()` returns false during a Test Hotkey run, the combo is added to `lazycow-blocked-triggers` and the error message explains how to remove it (in case the user has remapped the key at the OS level). Do not hardcode a list of "Windows-reserved combos" — we can't enumerate them reliably across Windows versions, keyboard layouts, and user remappings. Use the OS itself as the source of truth.
 34. **`shell:` Values Are Pseudo-Paths — Three Validators Must Skip Them:** `launch_app` values that start with `shell:` (UWP AUMIDs and shell folders) have no file on disk. `fs.statSync` fails, `.endsWith('.exe')` fails. The three validators that must short-circuit before doing either check are: `findFirstBrokenPath` in `main.ts`, the `launch_app` case in `useActionValidation.ts`, and the broken-path pre-flight in `Library.tsx`. `isUwpPath` in `src/types/actions.ts` is the single source of truth for the check. If you add a new validator that walks `launch_app` values, use the same helper — do not re-implement the prefix check inline.
 35. **System-Component Heuristic Is a Name Match, Not a Category:** `isLikelySystemComponent` matches redistributable names. It deliberately does not match "Microsoft Visual Studio" or "Microsoft Edge" — those are real user apps. Every pattern added must be checked against a false-positive list first. If in doubt, do not add it — a user can always hide an app; they cannot unsee a wall of VC++ redistributables.
+36. **Google OAuth Uses Deep Linking with Local Fallback:** Auth redirects use `lazycow://auth/callback` to wake the app, but fall back to `http://localhost:54321` so the browser can receive an HTML success response and stop spinning. `main.ts` handles both. Never remove the local server fallback — it is required for a good UX in the browser.
+37. **Path Sanitization Strips Values but Keeps Hints:** Uploading a shortcut preserves the absolute path. Downloading a shortcut checks if that path exists locally. If it does not, `hydrateDownloadedShortcut` clears the value and uses the `hint` to auto-resolve apps or show a "Needs Setup" placeholder. Do not upload empty strings and force the user to rebuild the action from scratch.
+38. **RLS Collisions Generate New IDs:** If an upload fails with a Postgres RLS error (`42501`), it means the shortcut ID belongs to a different user (e.g., logged in via Google vs Email). `uploadShortcutToCloud` catches this, generates a new `sc-<uuid>` ID, and retries. Always update `localStorage` with the returned ID.
 
 ---
 
@@ -439,13 +450,11 @@ npm run build
 * **Responsive Layout:** Window has a hard minimum of 800×600. Main sidebar auto-collapses below 900px; ActionSidebar auto-collapses below 1100px. Manual collapse choice persists; auto-collapse is forced only while the window is narrow.
 * **Native Context Menu:** Right-click any input, textarea, or contentEditable → Cut/Copy/Paste/Select All. Works in dev and production.
 * **Collapsed Search Popover:** When ActionSidebar is collapsed, clicking the search icon opens a centered command-palette-style popover (`CollapsedSearchPopover.tsx`) rendered via React `createPortal`. Live filtering by name or category, grouped results, keyboard support (`Esc` to close, `Enter` to add first result).
-* **Cloud UI (Auth & Account):** Complete UI implementation of the authentication flow (split-screen, live validation, password strength) and the account dashboard (Bento grid, interactive focus modes, history timeline). Backend is currently mocked; Supabase integration is pending.
+* **Cloud Sync & Auth (Supabase):** Complete implementation of the GitHub-like sync engine. Features real Email/Password + Google OAuth, diffing (local vs remote), manual & auto-sync controls, pending deletion tracking, per-shortcut auto-sync opt-in, and a full Cloud Vault (restore/delete). Includes the Path Sanitization Engine (auto-resolves apps on new devices) and RLS collision fallback. 
 
 ### B. Remaining Cloud & Community Roadmap
-1. **Supabase Backend:** Initialize Supabase client, create Postgres schema (`profiles`, `shortcuts`, `reviews`), and wire up Email/Password + Google OAuth.
-2. **Community Page UI:** Build the marketplace grid, search bar, leaderboard banner, and download preview modal.
-3. **Sanitization Engine:** Implement `sanitizeShortcutForUpload` (strips local paths, adds uploader hints) and `hydrateDownloadedShortcut` (maps hints to local paths).
-4. **Cloud Sync:** Wire the "Auto Sync" toggle and "Sync Now" button to the Supabase database.
+1. **Community Page UI:** Build the marketplace grid, search bar, leaderboard banner, and download preview modal.
+2. **Wire Community Page:** Connect the UI to the Cloud Vault and Supabase DB for sharing public shortcuts.
 
 ### C. Remaining Desktop Roadmap
 1. **Shortcut Export / Import (.json):** Allow users to export shortcuts as `.lazycow` or `.json` files to back up or share offline, with an Import button to restore them.
@@ -455,6 +464,13 @@ npm run build
 5. **Scheduled / Automatic Triggers:** Time-based shortcut execution (e.g., Run "Work Setup" every weekday at 9:00 AM) using node-cron or Windows Task Scheduler.
 
 ### C. Recently Completed
+
+**Session 20 (Cloud Sync Phase 3, Google OAuth, Path Sanitization — commit `e93f80d`):**
+- **Phase 1-3 Cloud Sync:** Added `is_secured_custom` to the DB schema. Fixed `handleRestore` to use `persistShortcuts`. Auto-sync defaults OFF and only pushes new shortcuts; edits require manual sync. Added pending deletion tracking (`lazycow-pending-deletions`) and per-shortcut auto-sync opt-in (`lazycow-auto-sync-edits`). Implemented instant diffing via `refreshLocal` / `refreshRemote` split. Added explicit network error states and Cloud Vault statuses. Fixed UI squishing/scrollbars in Sync Center.
+- **Library Badges:** Added Synced/Not Synced/Edited Locally labels + Sync Now / Restore from Cloud in the 3-dot menu. Added "Needs Setup" badge for cross-device shortcuts with missing paths.
+- **Google OAuth:** Configured Google Cloud and Supabase. Implemented deep linking (`lazycow://`) and local server fallback for OAuth redirects.
+- **Path Sanitization Engine:** Added `hint` field to `ActionItem`. `sanitizeShortcutForUpload` generates hints; `hydrateDownloadedShortcut` auto-resolves paths or clears them if missing, using the App Drawer to find apps on a new device.
+- **RLS ID Collision Fix:** `uploadShortcutToCloud` catches RLS errors and generates new IDs (fixes Email vs Google login conflicts).
 
 **Session 14 (storage durability + Surface 2 motion — commits `1e38363` + `d87af72`):**
 - **Data-loss fix (disk mirror).** Chromium's async `localStorage` writes could be lost on hard kill — reproduced twice with cold-cache timing. New `src/utils/shortcutStorage.ts` mirrors every shortcut write to `userData/shortcuts.json` via synchronous IPC (`fs.writeFileSync`); Library mount recovers from disk when `localStorage` is empty. Six write call sites swapped from `localStorage.setItem` to `persistShortcuts`. Two new IPC handlers, two preload bridges, two type declarations.

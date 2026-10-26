@@ -1,12 +1,13 @@
 # LazyCow — Active Missions
 ## Mission: Cloud Sync & Auth (Supabase)
-Status: IN PROGRESS
-- [ ] Step 0: Docs & Handoff updated.
-- [ ] Step 1: Supabase Client setup + UI Auth flow (Google OAuth & Email).
-- [ ] Step 2: Database Schema & RLS setup.
-- [ ] Step 3: Sanitization Engine (strip paths, save hints, resolve paths on download).
-- [ ] Step 4: UI Updates (Hint input in Builder, "Needs Setup" badge in Library).
-- [ ] Step 5: Auto-sync logic & conflict resolution (last-write-wins).
+Status: PHASE 1-3 COMPLETE (Session 20)
+- [x] Step 1: Supabase Client setup + UI Auth flow (Google OAuth & Email).
+- [x] Step 2: Database Schema & RLS setup + `is_secured_custom` column.
+- [x] Step 3: Sanitization Engine (strip paths, save hints, resolve paths on download).
+- [x] Step 4: UI Updates (Hint input in Builder, "Needs Setup" badge in Library, Library Sync buttons).
+- [x] Step 5: Auto-sync logic (off by default, new-only, manual edits), pending deletions, GitHub-like diff engine.
+- [x] Step 6: Google OAuth Deep Linking + Local server fallback.
+- [ ] Step 7: Community Page UI & wiring.
 ## Mission: Session 18 — Cloud Architecture & Auth UI
 Status: COMPLETE (Commit pending)
 - [x] Plan Supabase DB schema (profiles, shortcuts, reviews).
