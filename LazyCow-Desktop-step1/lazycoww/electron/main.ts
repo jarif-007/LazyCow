@@ -53,6 +53,8 @@ if (!gotSingleInstanceLock) {
 // This forces the taskbar to use our icon and name instead of "Electron".
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.lazycow.app')
+  // Register the custom protocol for Supabase OAuth deep linking
+  app.setAsDefaultProtocolClient('lazycow')
 }
 
 // ── OS Lock: LazyCow is exclusively designed for Microsoft Windows ──
@@ -229,7 +231,13 @@ app.on('before-quit', () => {
 
 // A second launch attempt was blocked by the single-instance lock.
 // Bring the existing window to the foreground instead of opening a new one.
-app.on('second-instance', () => {
+app.on('second-instance', (_event, commandLine) => {
+  // Check if the second instance was triggered by our OAuth deep link
+  const url = commandLine.find((arg) => arg.startsWith('lazycow://'))
+  if (url && win) {
+    win.webContents.send('auth-callback', url)
+  }
+
   if (win) {
     if (win.isMinimized()) win.restore()
     win.show()
@@ -2541,4 +2549,12 @@ app.whenReady().then(() => {
   })
   createWindow()
   createTray()
+
+  // Handle deep link if the app was launched by the OAuth callback (cold start)
+  const deepLink = process.argv.find((arg) => arg.startsWith('lazycow://'))
+  if (deepLink && win) {
+    win.webContents.on('did-finish-load', () => {
+      win?.webContents.send('auth-callback', deepLink)
+    })
+  }
 })

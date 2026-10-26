@@ -123,5 +123,6 @@ interface Window {
     onHotkeyNeedsConfirm: (callback: (shortcutId: string) => void) => () => void
     onShortcutStarted: (callback: (info: { shortcutId: string }) => void) => () => void
     onHotkeyRegisterFailed: (callback: (info: { shortcutId: string; hotkey: string }) => void) => () => void
+    onAuthCallback: (callback: (url: string) => void) => () => void
   }
 }

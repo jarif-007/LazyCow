@@ -132,4 +132,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('hotkey-register-failed', listener)
     return () => ipcRenderer.removeListener('hotkey-register-failed', listener)
   },
+
+  onAuthCallback: (callback: (url: string) => void) => {
+    const listener = (_event: unknown, url: string) => callback(url)
+    ipcRenderer.on('auth-callback', listener)
+    return () => ipcRenderer.removeListener('auth-callback', listener)
+  },
 })
