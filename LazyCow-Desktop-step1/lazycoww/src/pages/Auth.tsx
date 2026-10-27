@@ -493,8 +493,21 @@ export const Auth: React.FC<AuthProps> = ({ onLogin, initialMessage }) => {
 
                                 {/* Error Message */}
                                 {authError === "INVALID_CREDENTIALS" ? (
-                                    <div className="text-red-500 text-xs text-center font-medium bg-red-500/10 p-2 rounded-lg mt-2 flex flex-col gap-1 items-center">
+                                    <div className="text-red-500 text-xs text-center font-medium bg-red-500/10 p-2 rounded-lg mt-2 flex flex-col gap-2 items-center">
                                         <span>Invalid email or password.</span>
+                                        <div className="flex flex-col gap-1">
+                                            <button 
+                                                type="button"
+                                                onClick={handleForgotPassword}
+                                                className="underline font-bold hover:text-red-400 transition-colors"
+                                            >
+                                                Forgot your password?
+                                            </button>
+                                            <span className="text-[11px] text-red-400/80">
+                                                (If you signed up with Google, click here to set a password for email login.)
+                                            </span>
+                                        </div>
+                                        <div className="w-full h-px bg-red-500/20 my-1" />
                                         <button 
                                             type="button"
                                             onClick={() => handleTabSwitch(false)}

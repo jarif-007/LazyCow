@@ -153,7 +153,7 @@ export async function uploadShortcutToCloud(shortcut: SavedShortcut): Promise<Sa
         updated_at: new Date().toISOString(),
     };
 
-    let { error } = await supabase.from('shortcuts').upsert(payload);
+    const { error } = await supabase.from('shortcuts').upsert(payload);
 
     if (error) {
         // If RLS violation, it means the ID belongs to another user (e.g. logging in
@@ -197,6 +197,54 @@ export async function downloadShortcutsFromCloud(): Promise<SavedShortcut[]> {
         isSecuredCustom: row.is_secured_custom ?? false,
         createdAt: row.created_at,
     }));
+}
+
+/**
+ * Generates a unique ID for this specific PC and stores it in localStorage.
+ * We also try to grab the hostname (PC name) for display purposes.
+ */
+export function getOrCreateDeviceId(): { id: string; name: string } {
+    const storageKey = 'lazycow-device-id';
+    const nameKey = 'lazycow-device-name';
+    let id = localStorage.getItem(storageKey);
+    let name = localStorage.getItem(nameKey);
+
+    if (!id) {
+        id = `dev-${crypto.randomUUID()}`;
+        localStorage.setItem(storageKey, id);
+    }
+    if (!name) {
+        name = `Windows PC (${id.slice(4, 8)})`;
+        localStorage.setItem(nameKey, name);
+    }
+    return { id, name };
+}
+
+export async function updateDevicePresence() {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+    
+    const device = getOrCreateDeviceId();
+    await supabase.from('user_devices').upsert({
+        id: device.id,
+        user_id: session.user.id,
+        device_name: device.name,
+        last_active: new Date().toISOString(),
+    });
+}
+
+export async function getConnectedDevices() {
+    const { data, error } = await supabase
+        .from('user_devices')
+        .select('*')
+        .order('last_active', { ascending: false });
+    if (error) throw error;
+    return data || [];
+}
+
+export async function removeDevice(id: string) {
+    const { error } = await supabase.from('user_devices').delete().eq('id', id);
+    if (error) throw error;
 }
 
 /**

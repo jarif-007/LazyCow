@@ -12,6 +12,8 @@ import {
 import { readSecuredDoublePressSeconds } from '../utils/security';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
+import { AccountSettingsModal } from '../components/AccountSettingsModal';
+import { getConnectedDevices, updateDevicePresence, removeDevice, getOrCreateDeviceId } from '../utils/cloudSync';
 
 // ==========================================
 // REUSABLE INFO ICON COMPONENT
@@ -59,7 +61,7 @@ export const Account: React.FC<AccountProps> = ({ onEditShortcut }) => {
     const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set());
 
     // --- Real Data State ---
-    const [user, setUser] = useState({ name: 'Loading...', email: '', initials: '..' });
+    const [user, setUser] = useState({ name: 'Loading...', email: '', initials: '..', provider: 'email' });
 
     // The Diff Engine States — split for instant pending updates.
     // localShortcuts: read sync from localStorage on mount, refreshed on every
@@ -100,6 +102,11 @@ export const Account: React.FC<AccountProps> = ({ onEditShortcut }) => {
     // Cloud Vault State
     const [showVault, setShowVault] = useState(false);
     const [isVaultLoading, setIsVaultLoading] = useState(false);
+
+    // Account Settings & Devices State
+    const [showSettings, setShowSettings] = useState(false);
+    const [devices, setDevices] = useState<{ id: string; device_name: string; last_active: string }[]>([]);
+    const [currentDeviceId] = useState(() => getOrCreateDeviceId().id);
 
     useEffect(() => {
         document.body.style.overflow = (focusedCard || infoCard || showVault) ? 'hidden' : 'unset';
@@ -178,10 +185,16 @@ export const Account: React.FC<AccountProps> = ({ onEditShortcut }) => {
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.user) {
             const email = session.user.email || '';
-            const derivedName = email.split('@')[0];
-            const capitalizedName = derivedName.charAt(0).toUpperCase() + derivedName.slice(1);
+            
+            // Try to fetch the custom display name from profiles table
+            const { data: profile } = await supabase.from('profiles').select('display_name').eq('id', session.user.id).single();
+            
+            const finalName = profile?.display_name || email.split('@')[0];
+            const capitalizedName = finalName.charAt(0).toUpperCase() + finalName.slice(1);
             const initials = capitalizedName.substring(0, 2).toUpperCase();
-            setUser({ name: capitalizedName, email: email, initials: initials });
+            const provider = session.user.app_metadata?.provider || 'email';
+            
+            setUser({ name: capitalizedName, email: email, initials: initials, provider });
         }
     }, []);
 
@@ -192,6 +205,8 @@ export const Account: React.FC<AccountProps> = ({ onEditShortcut }) => {
         void fetchUser();
         void refreshRemote();
         void scanBrokenPaths();
+        void updateDevicePresence();
+        void getConnectedDevices().then(setDevices).catch(console.error);
     }, [fetchUser, refreshRemote, scanBrokenPaths]);
 
     // ── Local shortcuts changed (save in Builder, delete in Library, etc.).
@@ -902,19 +917,50 @@ export const Account: React.FC<AccountProps> = ({ onEditShortcut }) => {
                         <InfoIcon onClick={(e) => openInfo(e, 'profile')} />
                     </div>
                     <div className="flex-1 flex flex-col justify-center space-y-2">
-                        <button className="w-full text-left px-3 py-2 text-sm font-medium text-foreground hover:bg-muted rounded-lg transition-colors flex items-center justify-between"><span className="truncate">Account Settings</span><span className="material-symbols-outlined text-muted-foreground text-[16px] shrink-0">chevron_right</span></button>
-                        <button className="w-full text-left px-3 py-2 text-sm font-medium text-foreground hover:bg-muted rounded-lg transition-colors flex items-center justify-between"><span className="truncate">Manage Subscription</span><span className="material-symbols-outlined text-muted-foreground text-[16px] shrink-0">chevron_right</span></button>
+                        <button onClick={() => setShowSettings(true)} className="w-full text-left px-3 py-2 text-sm font-medium text-foreground hover:bg-muted rounded-lg transition-colors flex items-center justify-between">
+                            <span className="truncate">Account Settings</span>
+                            <span className="material-symbols-outlined text-muted-foreground text-[16px] shrink-0">chevron_right</span>
+                        </button>
+                        <button className="w-full text-left px-3 py-2 text-sm font-medium text-foreground hover:bg-muted rounded-lg transition-colors flex items-center justify-between opacity-50 cursor-not-allowed">
+                            <span className="truncate">Manage Subscription</span>
+                            <span className="material-symbols-outlined text-muted-foreground text-[16px] shrink-0">chevron_right</span>
+                        </button>
                     </div>
                 </div>
 
                 {/* DEVICES CARD */}
                 <div className="md:col-span-4 bg-card border border-border rounded-2xl p-6 shadow-sm flex flex-col min-w-0">
                     <div className="flex items-start justify-between mb-4 gap-2 shrink-0"><h3 className="text-base font-bold text-foreground leading-tight min-w-0 flex-1 truncate">Connected Devices</h3><div className="shrink-0 mt-0.5"><InfoIcon onClick={(e) => openInfo(e, 'devices')} /></div></div>
-                    <div className="flex-1 flex flex-col gap-3 overflow-y-auto custom-scrollbar">
-                        <div className="flex items-center justify-between bg-background border border-border p-3 rounded-lg gap-3">
-                            <div className="flex items-center gap-2 min-w-0"><span className="material-symbols-outlined text-muted-foreground shrink-0">desktop_windows</span><span className="text-[13px] font-semibold text-foreground leading-tight truncate">This PC (Current Session)</span></div>
-                            <span className={`text-[10px] font-bold px-2 py-1 rounded-md shrink-0 bg-emerald-500/10 text-emerald-500`}>Active</span>
-                        </div>
+                    <div className="flex-1 flex flex-col gap-2 overflow-y-auto custom-scrollbar pr-1">
+                        {devices.map(dev => {
+                            const isCurrent = dev.id === currentDeviceId;
+                            return (
+                                <div key={dev.id} className="flex items-center justify-between bg-background border border-border p-3 rounded-lg gap-3">
+                                    <div className="flex flex-col min-w-0">
+                                        <div className="flex items-center gap-2">
+                                            <span className="material-symbols-outlined text-muted-foreground shrink-0 text-[18px]">desktop_windows</span>
+                                            <span className="text-[13px] font-semibold text-foreground leading-tight truncate">{dev.device_name}</span>
+                                        </div>
+                                        <span className="text-[10px] text-muted-foreground ml-6">
+                                            {isCurrent ? 'Active now' : `Last active: ${new Date(dev.last_active).toLocaleDateString()}`}
+                                        </span>
+                                    </div>
+                                    {isCurrent ? (
+                                        <span className={`text-[10px] font-bold px-2 py-1 rounded-md shrink-0 bg-emerald-500/10 text-emerald-500`}>This PC</span>
+                                    ) : (
+                                        <button onClick={async () => {
+                                            if(confirm('Sign out this device?')) {
+                                                await removeDevice(dev.id);
+                                                setDevices(prev => prev.filter(d => d.id !== dev.id));
+                                            }
+                                        }} className="text-[10px] font-bold px-2 py-1 rounded-md shrink-0 bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-colors">
+                                            Revoke
+                                        </button>
+                                    )}
+                                </div>
+                            );
+                        })}
+                        {devices.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No other devices connected.</p>}
                     </div>
                 </div>
 
@@ -1120,6 +1166,14 @@ export const Account: React.FC<AccountProps> = ({ onEditShortcut }) => {
                 </AnimatePresence>,
                 document.body
             )}
+
+            <AccountSettingsModal 
+                isOpen={showSettings} 
+                onClose={() => { setShowSettings(false); fetchUser(); }} 
+                userEmail={user.email}
+                authProvider={user.provider}
+                onSignOut={async () => { await supabase.auth.signOut(); }} 
+            />
 
             {/* --- CLOUD VAULT MODAL --- */}
             {createPortal(
