@@ -1,0 +1,652 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { Sidebar } from './components/Sidebar';
+import { Library } from './pages/Library';
+import { Builder } from './pages/Builder';
+import Settings from './pages/Settings';
+import { Account } from './pages/Account';
+import { Auth } from './pages/Auth';
+import { SavedShortcut } from './types/actions';
+import { persistSetting } from './utils/settingsStorage';
+import { supabase } from './utils/supabase';
+
+type ThemeName = 'coffee' | 'ocean' | 'forest';
+type ThemeMode = 'system' | 'light' | 'dark';
+
+
+function hexToHSL(hex: string): string {
+  hex = hex.replace('#', '');
+  const r = parseInt(hex.substring(0, 2), 16) / 255;
+  const g = parseInt(hex.substring(2, 4), 16) / 255;
+  const b = parseInt(hex.substring(4, 6), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  let h = 0, s = 0;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+      case g: h = ((b - r) / d + 2) / 6; break;
+      case b: h = ((r - g) / d + 4) / 6; break;
+    }
+  }
+  return `${Math.round(h * 360)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%`;
+}
+
+function App() {
+  const [activeTab, setActiveTab] = useState<string>('library');
+  // Mock Authentication State (in the future, this reads from Supabase)
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [recoveryMode, setRecoveryMode] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [recoveryError, setRecoveryError] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [authMessage, setAuthMessage] = useState<string | null>(null);
+
+  const PASSWORD_REQUIREMENTS = [
+    { id: 'length', label: 'At least 8 characters', regex: /.{8,}/ },
+    { id: 'uppercase', label: 'One uppercase letter', regex: /[A-Z]/ },
+    { id: 'lowercase', label: 'One lowercase letter', regex: /[a-z]/ },
+    { id: 'number', label: 'One number', regex: /[0-9]/ },
+    { id: 'special', label: 'One special character', regex: /[^A-Za-z0-9]/ },
+  ];
+
+  const metRequirements = PASSWORD_REQUIREMENTS.map(req => ({
+    ...req,
+    met: req.regex.test(newPassword)
+  }));
+  const passwordStrength = metRequirements.filter(r => r.met).length;
+  const passwordsMatch = newPassword === confirmPassword;
+  const showPasswordMismatch = confirmPassword.length > 0 && !passwordsMatch;
+  const [customColorMode, setCustomColorMode] = useState<boolean>(false);
+  const [customTheme, setCustomTheme] = useState<ThemeName>('coffee');
+  const [themeMode, setThemeMode] = useState<ThemeMode>('system');
+  const [systemIsDark, setSystemIsDark] = useState<boolean>(false);
+  const [systemAccent, setSystemAccent] = useState<string>('#0078D4');
+  const [appReady, setAppReady] = useState(false);
+  // `sidebarCollapsed` = what the user sees.
+  // `manualCollapse` = user's explicit choice (persists across resizes).
+  // The visible state is: manualCollapse OR window-too-narrow.
+  const [manualCollapse, setManualCollapse] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [libraryRefreshKey, setLibraryRefreshKey] = useState(0);
+  const [builderKey, setBuilderKey] = useState(0);
+
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [pendingTab, setPendingTab] = useState<string | null>(null);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+   const [editShortcut, setEditShortcut] = useState<SavedShortcut | null>(null);
+  // When set, Builder auto-scrolls to + flashes this action after mounting.
+  // Set by Library's "Fix Paths" button so the user lands on the broken action.
+  const [focusActionId, setFocusActionId] = useState<string | undefined>(undefined);
+
+  // Gate: prevents the theme-persistence effects from overwriting localStorage
+  // with defaults before the load effect has finished hydrating state.
+  const [themeHydrated, setThemeHydrated] = useState(false);
+
+  // ── Auto-collapse sidebars based on window width ──
+  // Below 900px: main sidebar forces to collapsed icon mode.
+  // Below 1100px: ActionSidebar (in Builder) forces to collapsed icon mode.
+  const [isMainSidebarAutoCollapsed, setIsMainSidebarAutoCollapsed] = useState(false);
+  const [isActionSidebarAutoCollapsed, setIsActionSidebarAutoCollapsed] = useState(false);
+
+  useEffect(() => {
+    const checkWidth = () => {
+      const w = window.innerWidth;
+      const mainAuto = w < 900;
+      const actionAuto = w < 1100;
+      setIsMainSidebarAutoCollapsed(mainAuto);
+      setIsActionSidebarAutoCollapsed(actionAuto);
+      // Visible state = (user's manual choice) OR (window too narrow to show text)
+      setSidebarCollapsed((prev) => {
+        const next = mainAuto || manualCollapse;
+        return prev === next ? prev : next;
+      });
+    };
+    // rAF-throttle: fire at most once per animation frame during resize.
+    let rafId: number | null = null;
+    const onResize = () => {
+      if (rafId !== null) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        checkWidth();
+      });
+    };
+    checkWidth();
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
+  }, [manualCollapse]);
+
+  // ── Handle Auth Callback (Email Confirmation, Password Reset, & OAuth) ──
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.onAuthCallback(async (url) => {
+      console.log("[App] Received auth callback URL:", url);
+      try {
+        // The URL looks like: lazycow://auth/callback?code=...
+        const parsedUrl = new URL(url);
+        const code = parsedUrl.searchParams.get('code');
+        
+        if (code) {
+          const { error } = await supabase.auth.exchangeCodeForSession(code);
+          if (!error) {
+            console.log("[App] Successfully logged in via deep link!");
+            setIsAuthenticated(true);
+          } else {
+            console.error("[App] Auth callback error:", error);
+          }
+        }
+      } catch (err) {
+        console.error("[App] Failed to process auth callback:", err);
+      }
+    });
+    return () => unsubscribe?.();
+  }, []);
+
+  // ── Listen to Supabase Auth State ──
+  useEffect(() => {
+    // Check initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setIsAuthenticated(!!session);
+    });
+
+    // Listen for changes (login, logout, token refresh, password recovery)
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setRecoveryMode(true);
+      }
+      setIsAuthenticated(!!session);
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
+
+  // ── Load saved preferences ──
+  useEffect(() => {
+    const savedCustomMode = localStorage.getItem('lazycow-custom-color-mode') === 'true';
+    const savedCustomTheme = (localStorage.getItem('lazycow-custom-theme') as ThemeName) || 'coffee';
+    const savedThemeMode = (localStorage.getItem('lazycow-theme-mode') as ThemeMode) || 'system';
+
+    setCustomColorMode(savedCustomMode);
+    setCustomTheme(savedCustomTheme);
+    setThemeMode(savedThemeMode);
+
+    // Apply dark mode immediately from saved state
+    if (savedThemeMode === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else if (savedThemeMode === 'light') {
+      document.documentElement.classList.remove('dark');
+    }
+    // For 'system', we'll let the electron listener handle it
+
+    // Mark hydration complete — allow persistence effects to run from here on.
+    setThemeHydrated(true);
+  }, []);
+
+  // ── Splash screen ──
+  useEffect(() => {
+    const init = async () => {
+      // 1.8s minimum load time to show off the liquid metal animation
+      // and give Electron enough time to warm up caches.
+      const minLoadTime = new Promise((r) => setTimeout(r, 2500));
+      const maxTimeout = new Promise((r) => setTimeout(r, 3000));
+
+      await Promise.race([
+        Promise.all([document.fonts.ready.catch(() => {}), minLoadTime]),
+        maxTimeout,
+      ]);
+      
+      const splash = document.getElementById('splash-screen');
+      if (splash) splash.classList.add('hidden');
+      setTimeout(() => { if (splash) splash.remove(); }, 500);
+      setAppReady(true);
+    };
+    init();
+  }, []);
+
+  // ── Listen for system theme ──
+  useEffect(() => {
+    if (window.electronAPI) {
+      window.electronAPI.onSystemTheme((theme) => {
+        setSystemIsDark(theme === 'dark');
+        // Only apply system theme if mode is 'system'
+        const savedMode = localStorage.getItem('lazycow-theme-mode') as ThemeMode || 'system';
+        if (savedMode === 'system') {
+          if (theme === 'dark') {
+            document.documentElement.classList.add('dark');
+          } else {
+            document.documentElement.classList.remove('dark');
+          }
+        }
+      });
+    }
+  }, []);
+
+  // ── Get system accent + listen for changes ──
+  useEffect(() => {
+    if (!window.electronAPI || customColorMode) return;
+
+    // Get initial accent
+    window.electronAPI.getSystemAccent().then((hex) => {
+      setSystemAccent(hex);
+      document.documentElement.style.setProperty('--primary', hexToHSL(hex));
+      // Cache the exact Windows accent color so the splash screen can use it next time
+      persistSetting('lazycow-system-accent', hex);
+    });
+
+    // Listen for real-time changes
+    window.electronAPI.onSystemAccent((hex) => {
+      setSystemAccent(hex);
+      if (!customColorMode) {
+        document.documentElement.style.setProperty('--primary', hexToHSL(hex));
+      }
+      // Cache the new accent to disk immediately so the splash screen is correct next time
+      persistSetting('lazycow-system-accent', hex);
+    });
+  }, [customColorMode]);
+  // ── Compute dark mode for icon display ──
+  const darkMode = document.documentElement.classList.contains('dark');
+
+  // ── Apply custom theme classes ──
+  useEffect(() => {
+    const body = document.body;
+
+    body.classList.remove('theme-coffee', 'theme-ocean', 'theme-forest');
+
+    if (customColorMode) {
+      body.classList.add(`theme-${customTheme}`);
+      document.documentElement.style.removeProperty('--primary');
+    } else {
+      document.documentElement.style.setProperty('--primary', hexToHSL(systemAccent));
+    }
+
+    // Only persist AFTER the load effect has hydrated state, otherwise the
+    // initial default (customColorMode=false, theme=coffee) is written
+    // immediately on mount and clobbers the user's saved choice.
+    if (themeHydrated) {
+      persistSetting('lazycow-custom-color-mode', String(customColorMode));
+      persistSetting('lazycow-custom-theme', customTheme);
+    }
+  }, [customColorMode, customTheme, systemAccent, themeHydrated]);
+
+  // ── Force re-render when dark class changes ──
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setTick((t) => t + 1);
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  // ── Handlers ──
+  const applyThemeMode = (mode: ThemeMode) => {
+    setThemeMode(mode);
+
+    if (mode === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else if (mode === 'light') {
+      document.documentElement.classList.remove('dark');
+    } else {
+      // System — follow what electron says
+      if (systemIsDark) {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    }
+
+    // Guard against writing before load-hydration has settled.
+    if (themeHydrated) {
+      persistSetting('lazycow-theme-mode', mode);
+    }
+  };
+
+  const setCustomColorModeHandler = (enabled: boolean) => {
+    setCustomColorMode(enabled);
+    // The class-apply effect writes lazycow-custom-color-mode once state
+    // commits. We intentionally do NOT write a legacy lazycow-dark key —
+    // nothing reads it on load, so it can only cause drift.
+  };
+
+  const setCustomThemeHandler = (theme: ThemeName) => {
+    setCustomTheme(theme);
+    localStorage.setItem('lazycow-custom-theme', theme);
+  };
+
+  const toggleDarkMode = () => {
+    const isDark = document.documentElement.classList.contains('dark');
+    const nextMode: ThemeMode = isDark ? 'light' : 'dark';
+    if (isDark) document.documentElement.classList.remove('dark');
+    else document.documentElement.classList.add('dark');
+    setThemeMode(nextMode);
+    if (themeHydrated) persistSetting('lazycow-theme-mode', nextMode);
+  };
+
+  // Clear any in-flight edit state when the user leaves Builder. Editing a
+  // shortcut is a single-session action — once the user navigates away, the
+  // Builder should come back as a fresh "new shortcut" form on next visit.
+  // Without this, `editShortcut` stays set and re-hydrates the form when
+  // the user returns, making it look like an old edit is still active.
+  const clearBuilderEditState = useCallback(() => {
+    setEditShortcut(null);
+    setFocusActionId(undefined);
+    setBuilderKey((k) => k + 1);
+  }, []);
+
+  const handleTabClick = useCallback((tab: string) => {
+    if (activeTab === 'builder' && hasUnsavedChanges && tab !== 'builder') {
+      setPendingTab(tab);
+      setShowConfirmModal(true);
+      return;
+    }
+    // Leaving Builder (with no unsaved changes) — reset the edit session.
+    if (activeTab === 'builder' && tab !== 'builder') {
+      clearBuilderEditState();
+    }
+    setActiveTab(tab);
+    if (tab === 'library') setLibraryRefreshKey((k) => k + 1);
+  }, [activeTab, hasUnsavedChanges, clearBuilderEditState]);
+
+  const handleConfirmLeave = () => {
+    setShowConfirmModal(false);
+    setHasUnsavedChanges(false);
+    clearBuilderEditState();
+    if (pendingTab) { setActiveTab(pendingTab); setPendingTab(null); }
+    setLibraryRefreshKey((k) => k + 1);
+  };
+
+  const handleCancelLeave = useCallback(() => {
+    setShowConfirmModal(false);
+    setPendingTab(null);
+  }, []);
+
+  // Escape closes the unsaved-changes prompt. Capture phase so it fires
+  // before any in-modal keystroke handlers.
+  useEffect(() => {
+    if (!showConfirmModal) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        handleCancelLeave();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [showConfirmModal, handleCancelLeave]);
+  const handleEditShortcut = (shortcut: SavedShortcut, focusActionIdArg?: string) => {
+    setEditShortcut(shortcut);
+    setFocusActionId(focusActionIdArg);
+    setActiveTab('builder');
+  };
+  const handleSaveSuccess = () => {
+    setHasUnsavedChanges(false);
+    setEditShortcut(null);
+    setFocusActionId(undefined);
+    setLibraryRefreshKey((k) => k + 1);
+    setBuilderKey((k) => k + 1);
+  };
+
+  const handleAuthLogin = useCallback(() => {
+    setIsAuthenticated(true);
+  }, []);
+
+  const handleUpdatePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (passwordStrength < 5) {
+      setRecoveryError('Password does not meet all requirements.');
+      return;
+    }
+    if (!passwordsMatch) {
+      setRecoveryError('Passwords do not match.');
+      return;
+    }
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) {
+      setRecoveryError(error.message);
+    } else {
+      // Sign out immediately so the user has to log in manually with their
+      // new password, instead of being silently auto-logged in.
+      await supabase.auth.signOut();
+      setIsAuthenticated(false);
+      setRecoveryMode(false);
+      setNewPassword('');
+      // Pass the success message directly to the Auth component instead of
+      // using a native alert(), which causes Electron to lose focus and
+      // leaves the inputs without a blinking cursor.
+      setAuthMessage('Password updated successfully! Please sign in with your new password.');
+    }
+  };
+
+  const sidebarWidth = sidebarCollapsed ? '64px' : '260px';
+
+  if (recoveryMode) {
+    return (
+      <div className="flex flex-col items-center justify-center w-full h-screen bg-background">
+        <div className="bg-card border border-border rounded-2xl p-8 shadow-2xl max-w-md w-full mx-4">
+          <div className="flex items-center gap-3 mb-4">
+            <span className="material-symbols-outlined text-primary text-[32px]">lock_reset</span>
+            <h1 className="text-xl font-bold text-foreground">Set New Password</h1>
+          </div>
+          <p className="text-sm text-muted-foreground mb-6">
+            Please enter a new password for your account.
+          </p>
+          <form onSubmit={handleUpdatePassword} className="flex flex-col gap-4">
+            
+            {/* New Password Field */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-foreground">New Password</label>
+              <div className="flex items-center w-full bg-background border border-border px-3 py-2 rounded-xl focus-within:ring-2 focus-within:ring-primary focus-within:border-transparent transition-colors">
+                <span className="material-symbols-outlined text-[16px] text-muted-foreground mr-2 select-none">lock</span>
+                <input
+                  type={showNewPassword ? 'text' : 'password'}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                  className="w-full bg-transparent outline-none text-sm text-foreground placeholder:text-muted-foreground/50 tracking-wider"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewPassword(!showNewPassword)}
+                  className="text-muted-foreground hover:text-foreground flex items-center justify-center p-0.5 rounded transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[16px]">
+                    {showNewPassword ? 'visibility_off' : 'visibility'}
+                  </span>
+                </button>
+              </div>
+
+              {/* Password Strength Checklist */}
+              {newPassword.length > 0 && (
+                <div className="mt-1 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="h-1.5 flex-1 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className={`h-full transition-all duration-300 ${passwordStrength <= 2 ? 'bg-red-500' : passwordStrength <= 4 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                        style={{ width: `${(passwordStrength / 5) * 100}%` }}
+                      />
+                    </div>
+                    <span className={`text-[10px] font-bold w-12 text-right ${passwordStrength <= 2 ? 'text-red-500' : passwordStrength <= 4 ? 'text-amber-500' : 'text-emerald-500'}`}>
+                      {passwordStrength <= 2 ? 'Weak' : passwordStrength <= 4 ? 'Fair' : 'Strong'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {metRequirements.map(req => (
+                      <div key={req.id} className="flex items-center gap-1.5">
+                        <span className={`material-symbols-outlined text-[12px] ${req.met ? 'text-emerald-500' : 'text-muted-foreground/40'}`}>
+                          {req.met ? 'check_circle' : 'circle'}
+                        </span>
+                        <span className={`text-[11px] font-body-sm leading-snug ${req.met ? 'text-foreground' : 'text-muted-foreground/60'}`}>
+                          {req.label}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Confirm Password Field */}
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-foreground">Confirm Password</label>
+                {showPasswordMismatch && (
+                  <span className="text-[11px] font-body-sm font-medium text-red-500">Passwords do not match.</span>
+                )}
+              </div>
+              <div className={`flex items-center w-full bg-background border px-3 py-2 rounded-xl focus-within:ring-2 focus-within:ring-primary focus-within:border-transparent transition-colors ${showPasswordMismatch ? 'border-red-500/50' : 'border-border'}`}>
+                <span className="material-symbols-outlined text-[16px] text-muted-foreground mr-2 select-none">lock_reset</span>
+                <input
+                  type={showConfirmPassword ? 'text' : 'password'}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                  className="w-full bg-transparent outline-none text-sm text-foreground placeholder:text-muted-foreground/50 tracking-wider"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="text-muted-foreground hover:text-foreground flex items-center justify-center p-0.5 rounded transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[16px]">
+                    {showConfirmPassword ? 'visibility_off' : 'visibility'}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {recoveryError && <p className="text-red-500 text-xs text-center bg-red-500/10 p-2 rounded-lg">{recoveryError}</p>}
+            
+            <button
+              type="submit"
+              disabled={passwordStrength < 5 || !passwordsMatch || newPassword.length === 0}
+              className={`w-full py-2.5 rounded-xl font-semibold text-sm transition-all mt-2 ${
+                (passwordStrength < 5 || !passwordsMatch || newPassword.length === 0)
+                  ? 'bg-muted text-muted-foreground cursor-not-allowed opacity-70'
+                  : 'bg-primary text-primary-foreground hover:opacity-90'
+              }`}
+            >
+              Update Password
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex w-full h-screen overflow-hidden">
+        <Sidebar
+          activeTab={activeTab}
+          onTabClick={handleTabClick}
+          collapsed={sidebarCollapsed}
+          isAutoCollapsed={isMainSidebarAutoCollapsed}
+          onToggleCollapse={() => setManualCollapse((p) => !p)}
+        />
+
+      <div className="flex-1 flex flex-col relative z-10 min-h-0 overflow-hidden" style={{ marginLeft: sidebarWidth, transition: 'margin-left 0.3s ease' }}>
+        <header className="bg-background/95 w-full h-16 flex items-center justify-between px-margin-page z-10 sticky top-0 border-b border-border/30 shrink-0">
+          <div className="flex items-center">
+            <h1 className="font-title-sm text-title-sm text-foreground tracking-tight transition-colors duration-300 capitalize">
+              {activeTab === 'builder' && editShortcut ? `Editing: ${editShortcut.name}` : `${activeTab} Overview`}
+            </h1>
+          </div>
+          <div className="flex items-center gap-2">
+            {customColorMode && (
+              <>
+                <button aria-label="Coffee Theme" className={`p-2 hover:text-primary hover:bg-muted rounded-full flex items-center justify-center scale-95 duration-150 transition-colors ${customTheme === 'coffee' ? 'text-primary' : 'text-muted-foreground'}`}
+                  onClick={() => setCustomThemeHandler('coffee')}><span className="material-symbols-outlined">coffee</span></button>
+                <button aria-label="Ocean Theme" className={`p-2 hover:text-primary hover:bg-muted rounded-full flex items-center justify-center scale-95 duration-150 transition-colors ${customTheme === 'ocean' ? 'text-primary' : 'text-muted-foreground'}`}
+                  onClick={() => setCustomThemeHandler('ocean')}><span className="material-symbols-outlined">water_drop</span></button>
+                <button aria-label="Forest Theme" className={`p-2 hover:text-primary hover:bg-muted rounded-full flex items-center justify-center scale-95 duration-150 transition-colors ${customTheme === 'forest' ? 'text-primary' : 'text-muted-foreground'}`}
+                  onClick={() => setCustomThemeHandler('forest')}><span className="material-symbols-outlined">forest</span></button>
+                <div className="w-px h-6 bg-border mx-2 transition-colors duration-300" />
+              </>
+            )}
+            <button aria-label="Toggle Dark Mode" className="p-2 text-muted-foreground hover:text-primary transition-colors hover:bg-muted rounded-full flex items-center justify-center scale-95 duration-150"
+              onClick={toggleDarkMode}>
+              <span className="material-symbols-outlined">{darkMode ? 'light_mode' : 'dark_mode'}</span>
+            </button>
+          </div>
+        </header>
+
+       <div className={`page-container ${activeTab === 'library' ? 'active' : ''}`}>
+  {appReady && <Library key={libraryRefreshKey} setActiveTab={handleTabClick} onEditShortcut={handleEditShortcut} customColorMode={customColorMode} isAuthenticated={isAuthenticated} />}
+</div>
+
+        <div className={`page-container ${activeTab === 'builder' ? 'active' : ''}`}>
+          {appReady && (
+            <Builder
+              key={builderKey}
+              editData={editShortcut}
+              focusActionId={focusActionId}
+              isActionSidebarAutoCollapsed={isActionSidebarAutoCollapsed}
+              onUnsavedChanges={setHasUnsavedChanges}
+              onSaveSuccess={handleSaveSuccess}
+            />
+          )}
+        </div>
+
+        <div className={`page-container ${activeTab === 'settings' ? 'active' : ''}`}>
+          {appReady && (
+            <Settings
+              themeMode={themeMode}
+              onThemeModeChange={applyThemeMode}
+              customColorMode={customColorMode}
+              onCustomColorModeChange={setCustomColorModeHandler}
+              customTheme={customTheme}
+              onCustomThemeChange={setCustomThemeHandler}
+            />
+          )}
+        </div>
+
+        <div className={`${activeTab === 'community' ? 'flex-1 flex items-center justify-center' : 'hidden'}`}>
+          <div className="text-center max-w-md p-margin-page">
+            <span className="material-symbols-outlined text-muted-foreground text-5xl mb-4">groups</span>
+            <h2 className="text-xl font-bold font-headline-md text-foreground">Community Hub</h2>
+            <p className="text-muted-foreground mt-2 font-body-md">Coming Soon!</p>
+          </div>
+        </div>
+
+        <div className={`page-container ${activeTab === 'account' ? 'active' : ''}`}>
+          {appReady && (
+            isAuthenticated ? (
+              <Account onEditShortcut={handleEditShortcut} />
+            ) : (
+              <Auth onLogin={handleAuthLogin} initialMessage={authMessage} />
+            )
+          )}
+        </div>
+      </div>
+
+      {showConfirmModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-background/90" onClick={handleCancelLeave} />
+          <div className="relative bg-card border border-border rounded-2xl p-8 shadow-2xl max-w-md w-full mx-4">
+            <div className="flex flex-col items-center text-center gap-4">
+              <span className="material-symbols-outlined text-5xl text-yellow-500">warning</span>
+              <h2 className="font-title-sm text-foreground text-xl">Unsaved Changes</h2>
+              <p className="text-muted-foreground font-body-md">You have unsaved changes in the Builder.</p>
+              <div className="flex gap-3 w-full mt-2">
+                <button onClick={handleCancelLeave} className="flex-1 px-6 py-2.5 border border-border rounded-full font-title-sm hover:bg-muted transition-colors text-foreground">Stay</button>
+                <button onClick={handleConfirmLeave} className="flex-1 px-6 py-2.5 bg-red-500 text-white rounded-full font-title-sm hover:bg-red-600 transition-colors shadow-md">Leave Anyway</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default App;

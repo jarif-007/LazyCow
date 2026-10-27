@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LazyCow Splash Test</title>
+  <style>
+    /* Default (Dark Mode) */
+    :root {
+      --splash-bg: #212121;
+      --splash-bar: #0078D4;
+      /* CHANGED: Bottom is now #1e3a8a (lighter/less dark) */
+      --splash-gradient: linear-gradient(180deg, #bae6fd 0%, #3b82f6 40%, #1e3a8a 100%);
+      --outline-opacity: 0.35;
+    }
+
+    /* Light Mode Overrides - UNTOUCHED */
+    body.light-mode {
+      --splash-bg: #F2F2F2;
+      /* Deep Metallic: Darker Sky Blue -> Rich Blue -> Very Dark Navy */
+      --splash-gradient: linear-gradient(180deg, #0ea5e9 0%, #0369a1 40%, #082f49 100%);
+      --outline-opacity: 0.4;
+    }
+
+    body,
+    html {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background-color: var(--splash-bg);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      transition: background-color 0.3s;
+    }
+
+    /* Controls */
+    .controls {
+      position: absolute;
+      top: 20px;
+      text-align: center;
+    }
+
+    button {
+      padding: 10px 20px;
+      margin: 5px;
+      font-size: 14px;
+      font-weight: bold;
+      background: var(--splash-bar);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    /* Container */
+    .splash-container {
+      position: relative;
+      width: 360px;
+      height: 360px;
+    }
+
+    /* 1. The Empty Outline */
+    .splash-outline {
+      position: absolute;
+      inset: 0;
+      background: var(--splash-bar);
+      -webkit-mask-image: url('/icon-monogram-outline.svg');
+      -webkit-mask-size: 160%;
+      -webkit-mask-repeat: no-repeat;
+      -webkit-mask-position: center;
+      mask-image: url('/icon-monogram-outline.svg');
+      mask-size: 160%;
+      mask-repeat: no-repeat;
+      mask-position: center;
+      opacity: var(--outline-opacity);
+    }
+
+    /* 2. The Fill Container */
+    .splash-fill-container {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      -webkit-mask-image: url('/icon-monogram-outline.svg');
+      -webkit-mask-size: 160%;
+      -webkit-mask-repeat: no-repeat;
+      -webkit-mask-position: center;
+      mask-image: url('/icon-monogram-outline.svg');
+      mask-size: 160%;
+      mask-repeat: no-repeat;
+      mask-position: center;
+    }
+
+    /* The Water block */
+    .lc-water {
+      position: absolute;
+      inset: 0;
+      background: var(--splash-gradient);
+      /* Force hardware acceleration and bleed out slightly to kill the 1px line */
+      will-change: transform;
+      backface-visibility: hidden;
+      transform: translate3d(0, 105%, 0);
+    }
+
+    /* --- Animations --- */
+
+    /* 1. Initial Load: Bottom to Top */
+    @keyframes fillUp {
+      0% {
+        transform: translate3d(0, 105%, 0);
+      }
+
+      100% {
+        transform: translate3d(0, 0%, 0);
+      }
+    }
+
+    .animate-once {
+      animation: fillUp 1.8s ease-in-out forwards;
+    }
+
+    /* 2. Delayed Load: Loop Top to Bottom */
+    @keyframes fillLoop {
+      0% {
+        transform: translate3d(0, 105%, 0);
+      }
+
+      40% {
+        transform: translate3d(0, 0%, 0);
+      }
+
+      60% {
+        transform: translate3d(0, 0%, 0);
+      }
+
+      90% {
+        transform: translate3d(0, 105%, 0);
+      }
+
+      100% {
+        transform: translate3d(0, 105%, 0);
+      }
+    }
+
+    .animate-loop {
+      animation: fillLoop 3s ease-in-out infinite;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="controls">
+    <button onclick="toggleMode()">Toggle Light/Dark Mode</button>
+    <button onclick="replay()">Replay Initial Animation</button>
+    <button onclick="triggerDelay()">Simulate Slow PC (Trigger Loop)</button>
+  </div>
+
+  <div class="splash-container">
+    <div class="splash-outline"></div>
+    <div class="splash-fill-container">
+      <div class="lc-water animate-once" id="water"></div>
+    </div>
+  </div>
+
+  <script>
+    const water = document.getElementById('water');
+
+    function toggleMode() {
+      document.body.classList.toggle('light-mode');
+    }
+
+    function replay() {
+      water.className = 'lc-water';
+      void water.offsetWidth;
+      water.classList.add('animate-once');
+    }
+
+    function triggerDelay() {
+      water.className = 'lc-water animate-loop';
+    }
+
+    water.addEventListener('animationend', (e) => {
+      if (e.animationName === 'fillUp') {
+        water.classList.remove('animate-once');
+        water.classList.add('animate-loop');
+      }
+    });
+
+    window.addEventListener('DOMContentLoaded', () => {
+      setTimeout(replay, 100);
+    });
+  </script>
+</body>
+
+</html>

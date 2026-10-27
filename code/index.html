@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="
+        default-src 'self';
+        script-src 'self' 'unsafe-inline';
+        style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+        font-src 'self' https://fonts.gstatic.com;
+        img-src 'self' data:;
+        connect-src 'self' ws: https://*.supabase.co;
+      " />
+  <title>LazyCow</title>
+  <link rel="icon" type="image/png" href="/icon-32.png" />
+
+  <!-- Preload fonts for faster loading -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="preload" as="style"
+    href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" />
+  <link rel="preload" as="style"
+    href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" />
+
+  <!-- Material Symbols for Icons -->
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
+    rel="stylesheet" />
+  <!-- Google Fonts -->
+  <link
+    href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet" />
+
+  <style>
+    /* ── Splash Screen CSS ── */
+
+    /* Default (Light Mode) */
+    :root {
+      --splash-bg: #F5F0EA;
+      --splash-title: #5C3A1E;
+      --splash-loader: #E0D5C7;
+      --splash-bar: #8B5E3C;
+
+      /* 
+        Dynamically generate the metallic gradient from the active theme color.
+        This ensures the liquid is always brown for Coffee, green for Forest, etc.
+      */
+      --splash-gradient: linear-gradient(180deg,
+          color-mix(in srgb, white 40%, var(--splash-bar)) 0%,
+          color-mix(in srgb, black 15%, var(--splash-bar)) 40%,
+          color-mix(in srgb, black 75%, var(--splash-bar)) 100%);
+      --outline-opacity: 0.4;
+    }
+
+    /* Dark Mode Overrides */
+    html.dark {
+      --splash-bg: #1F1712;
+      --splash-title: #D4A574;
+      --splash-loader: #3D2A1A;
+      --splash-bar: #D98A26;
+
+      /* 
+        Dark mode gradient: Brighter top, vibrant middle, lifted dark bottom.
+        No hardcoded colors = no theme intrusion.
+      */
+      --splash-gradient: linear-gradient(180deg,
+          color-mix(in srgb, white 75%, var(--splash-bar)) 0%,
+          color-mix(in srgb, white 10%, var(--splash-bar)) 40%,
+          color-mix(in srgb, black 30%, var(--splash-bar)) 100%);
+      --outline-opacity: 0.35;
+    }
+
+    #splash-screen {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background-color: var(--splash-bg);
+      transition: opacity 0.4s ease-out, visibility 0.4s ease-out;
+    }
+
+    #splash-screen.hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .splash-content {
+      text-align: center;
+    }
+
+    /* The CSS Mask Container */
+    .splash-logo-container {
+      position: relative;
+      width: 360px;
+      height: 360px;
+      margin-bottom: 24px;
+    }
+
+    /* 1. The Empty Outline */
+    .splash-outline {
+      position: absolute;
+      inset: 0;
+      background: var(--splash-bar);
+      -webkit-mask-image: url('/icon-monogram-outline.svg');
+      -webkit-mask-size: 160%;
+      -webkit-mask-repeat: no-repeat;
+      -webkit-mask-position: center;
+      mask-image: url('/icon-monogram-outline.svg');
+      mask-size: 160%;
+      mask-repeat: no-repeat;
+      mask-position: center;
+      opacity: var(--outline-opacity);
+    }
+
+    /* 2. The Fill Container */
+    .splash-fill-container {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      -webkit-mask-image: url('/icon-monogram-outline.svg');
+      -webkit-mask-size: 160%;
+      -webkit-mask-repeat: no-repeat;
+      -webkit-mask-position: center;
+      mask-image: url('/icon-monogram-outline.svg');
+      mask-size: 160%;
+      mask-repeat: no-repeat;
+      mask-position: center;
+    }
+
+    /* The Water Block */
+    .lc-water {
+      position: absolute;
+      inset: 0;
+      background: var(--splash-gradient);
+      /* Force hardware acceleration and bleed out to kill the 1px flicker line */
+      will-change: transform;
+      backface-visibility: hidden;
+      transform: translate3d(0, 105%, 0);
+    }
+
+    /* --- ANIMATIONS --- */
+    /* 
+      HOW TO ADJUST SPEED:
+      Change the "2.5s" below to make the initial load faster or slower.
+      Change the "1.25s" below to adjust the idle looping speed.
+    */
+
+    /* 1. Initial Load: Bottom to Top */
+    @keyframes fillUp {
+      0% {
+        transform: translate3d(0, 105%, 0);
+      }
+
+      100% {
+        transform: translate3d(0, 0%, 0);
+      }
+    }
+
+    .animate-once {
+      animation: fillUp 2.5s ease-in-out forwards;
+    }
+
+    /* 2. Idle Loop: Starts at top, drains to bottom, fills back up */
+    @keyframes fillLoop {
+      0% {
+        transform: translate3d(0, 0%, 0);
+      }
+
+      30% {
+        transform: translate3d(0, 0%, 0);
+      }
+
+      60% {
+        transform: translate3d(0, 105%, 0);
+      }
+
+      70% {
+        transform: translate3d(0, 105%, 0);
+      }
+
+      100% {
+        transform: translate3d(0, 0%, 0);
+      }
+    }
+
+    .animate-loop {
+      animation: fillLoop 1.25s ease-in-out infinite;
+    }
+  </style>
+
+  <script>
+    // ── Synchronous theme bootstrap ──
+    (function () {
+      try {
+        // Read from synchronous disk store first (survives hard kills)
+        var diskSettings = window.electronAPI?.readSettingsSync() || {};
+
+        function getSetting(key) {
+          if (diskSettings[key] !== undefined) {
+            try { localStorage.setItem(key, diskSettings[key]); } catch (e) { }
+            return diskSettings[key];
+          }
+          return localStorage.getItem(key);
+        }
+
+        var customMode = getSetting('lazycow-custom-color-mode') === 'true';
+        var customTheme = getSetting('lazycow-custom-theme') || 'coffee';
+        var themeMode = getSetting('lazycow-theme-mode') || 'system';
+
+        var isDark = false;
+        if (themeMode === 'dark') isDark = true;
+        else if (themeMode === 'light') isDark = false;
+        else isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+        document.documentElement.classList.toggle('dark', isDark);
+
+        var palette = {
+          coffee: {
+            light: { bg: '#F5F0EA', title: '#5C3A1E', loader: '#E0D5C7', bar: '#A14B12' },
+            dark: { bg: '#1F1712', title: '#D4A574', loader: '#3D2A1A', bar: '#D98A26' }
+          },
+          ocean: {
+            light: { bg: '#EFF4FA', title: '#1E3A5F', loader: '#D0E0EB', bar: '#14A3C7' },
+            dark: { bg: '#0F1826', title: '#7EC5D8', loader: '#1B2A42', bar: '#26B4D9' }
+          },
+          forest: {
+            light: { bg: '#F1F5F1', title: '#1F4D2A', loader: '#D0E5D0', bar: '#248F56' },
+            dark: { bg: '#121F19', title: '#7EC986', loader: '#1B2E1B', bar: '#40BF80' }
+          },
+          windows: {
+            light: { bg: '#F2F2F2', title: '#1A1A1A', loader: '#E0E0E0', bar: '#0078D4' },
+            dark: { bg: '#212121', title: '#FFFFFF', loader: '#3D3D3D', bar: '#0078D4' }
+          }
+        };
+
+        var key = customMode ? customTheme : 'windows';
+        var colors = isDark ? palette[key].dark : palette[key].light;
+
+        // If using the default Windows theme, use the exact system accent color 
+        if (key === 'windows') {
+          try {
+            var cachedAccent = getSetting('lazycow-system-accent');
+            if (cachedAccent) {
+              colors.bar = cachedAccent;
+            }
+          } catch (e) { }
+        }
+
+        var root = document.documentElement;
+        root.style.setProperty('--splash-bg', colors.bg);
+        root.style.setProperty('--splash-title', colors.title);
+        root.style.setProperty('--splash-loader', colors.loader);
+        root.style.setProperty('--splash-bar', colors.bar);
+      } catch (e) {
+        /* fall back to defaults defined in :root — harmless */
+      }
+    })();
+  </script>
+</head>
+
+<body>
+  <!-- Splash Screen -->
+  <div id="splash-screen">
+    <div class="splash-content">
+      <div class="splash-logo-container">
+        <!-- 1. The Empty Outline -->
+        <div class="splash-outline"></div>
+
+        <!-- 2. The Liquid Metal Fill -->
+        <div class="splash-fill-container">
+          <div class="lc-water animate-once" id="splash-water"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="root"></div>
+
+  <script>
+    // If the app takes too long to load, switch to the looping animation 
+    const splashWater = document.getElementById('splash-water');
+    if (splashWater) {
+      splashWater.addEventListener('animationend', (e) => {
+        if (e.animationName === 'fillUp') {
+          splashWater.classList.remove('animate-once');
+          splashWater.classList.add('animate-loop');
+        }
+      });
+    }
+  </script>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+
+</html>
