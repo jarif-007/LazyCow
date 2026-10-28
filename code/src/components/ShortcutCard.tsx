@@ -1,0 +1,435 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { motion } from 'motion/react';
+import { SavedShortcut, LAYOUTS } from '../types/actions';
+import { SPRING_ENTER, FADE_ENTER, MODAL_OFFSET_Y } from '../utils/motion';
+
+interface ShortcutCardProps {
+  shortcut: SavedShortcut;
+  shade: 'light' | 'medium' | 'dark';
+  onShadeChange: (shade: 'light' | 'medium' | 'dark') => void;
+  onEditFlow: (s: SavedShortcut, focusActionId?: string) => void;
+  onRename: (id: string) => void;
+  onDelete: (id: string) => void;
+  onRun: (id: string) => void;
+  onCancel: (id: string) => void;
+  onDuplicate: (s: SavedShortcut) => void;
+  hasHotkeyConflict?: boolean;
+  hasBrokenPath?: boolean;
+  cloudState?: 'unauthenticated' | 'loading' | 'synced' | 'not-synced' | 'edited' | 'broken';
+  onSyncNow?: (id: string) => void;
+  onRestoreFromCloud?: (id: string) => void;
+  isSyncing?: boolean;
+  /** First broken path action id (when hasBrokenPath is true). Passed to onEditFlow. */
+  brokenActionId?: string;
+  isCancelling?: boolean;
+  execution?: {
+    status: 'idle' | 'running' | 'success' | 'error' | 'cancelled';
+    currentStepIndex: number;
+    errors?: string[];
+    durationMs?: number;
+    cancelledAfter?: string;
+    layoutResults?: Array<{
+      zoneId: string;
+      actionTitle: string;
+      status: 'placed' | 'fallback_centered' | 'not_found' | 'skipped';
+      reason?: string;
+    }>;
+  };
+  customColorMode: boolean;
+  onToggleSecured: (id: string) => void;
+  /** 0-based index of the card within the Library grid. Used to cap the
+   *  entrance stagger so the Nth card doesn't wait N × 30ms. */
+  staggerIndex?: number;
+  /** When true, replaces the staggered slide-in with a shared cross-fade. */
+  reducedMotion?: boolean;
+  /** When true, the card is in multi-select mode — clicks toggle selection. */
+  selectionMode?: boolean;
+  /** When true (and selectionMode), this card is currently selected. */
+  isSelected?: boolean;
+}
+
+export const ShortcutCard: React.FC<ShortcutCardProps> = ({
+  shortcut, shade, onShadeChange, onEditFlow, onRename, onDelete, onRun, onCancel, onDuplicate,
+   hasHotkeyConflict, hasBrokenPath, brokenActionId, isCancelling, execution, customColorMode,
+  onToggleSecured, staggerIndex = 0, reducedMotion = false,
+  selectionMode = false, isSelected = false,
+  cloudState, onSyncNow, onRestoreFromCloud, isSyncing = false,
+}) => {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuWrapperRef = useRef<HTMLDivElement>(null);
+
+  // Close the 3-dot menu on outside-click or Escape. Only listens while
+  // the menu is open, so there's no cost when it isn't. mousedown (not
+  // click) so the close happens before any subsequent focus/click work
+  // and before the menu item's own handler can fire against a stale DOM.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuWrapperRef.current && !menuWrapperRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
+
+  const execState = execution || { status: 'idle' as const, currentStepIndex: -1, errors: [] as string[] };
+  const stepLabels = shortcut.actions.map((a) => `> ${a.title}: ${a.value}`);
+
+  const shadeClasses = {
+    light: 'from-card-light to-card-medium text-card-light-fg',
+    medium: 'from-card-medium to-card-dark text-card-medium-fg',
+    dark: 'from-card-dark to-primary text-card-dark-fg',
+  }[shade];
+
+  const isRunning = execState.status === 'running';
+  const showLog = execState.status === 'running' || execState.status === 'success' || execState.status === 'error' || execState.status === 'cancelled';
+
+  // Each card owns its own entrance delay — see Library.tsx for why the
+  // parent doesn't drive a stagger. Capped at index 8 so a 30-card Library
+  // finishes its reveal in ~240ms + the spring duration, not seconds.
+  // Reduced motion drops the delay and swaps the spring for a plain fade.
+  const cappedStaggerIndex = Math.min(staggerIndex, 8);
+  const entranceVariants = {
+    hidden: reducedMotion ? { opacity: 0 } : { opacity: 0, y: MODAL_OFFSET_Y },
+    visible: reducedMotion
+      ? { opacity: 1, transition: FADE_ENTER }
+      : { opacity: 1, y: 0, transition: { ...SPRING_ENTER, duration: 0.5, delay: cappedStaggerIndex * 0.15 } },
+  };
+
+  return (
+    <motion.div
+      data-card-id={shortcut.id}
+      className={`card-themeable bg-gradient-to-br ${shadeClasses} border rounded-xl p-5 group shadow-sm flex flex-col gap-4 relative transition-all ${
+        selectionMode
+          ? isSelected
+            ? 'border-primary ring-2 ring-primary ring-offset-2 ring-offset-background'
+            : 'border-border'
+          : 'border-border hover:shadow-md hover:-translate-y-1'
+      }`}
+      initial="hidden"
+      animate="visible"
+      variants={entranceVariants}
+    >
+      {/* Selection overlay — blocks all inner interactions while in
+          selection mode. Plain <div>, so the drag-select hit-test at
+          window level still picks it up (it doesn't match the
+          'input, textarea, select, button' skip filter). */}
+      {selectionMode && (
+        <div className="absolute inset-0 z-20 rounded-xl cursor-pointer" aria-hidden />
+      )}
+
+      {/* Selection checkbox — absolutely positioned so it sits above the
+          overlay (z-30) without disturbing card layout when toggling modes. */}
+      {selectionMode && (
+        <div
+          className={`absolute top-3 right-3 z-30 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
+            isSelected
+              ? 'bg-primary border-primary'
+              : 'bg-card border-border'
+          }`}
+          aria-hidden
+        >
+          {isSelected && (
+            <span className="material-symbols-outlined text-[12px] font-bold leading-none" style={{ color: 'hsl(var(--primary-foreground))' }}>
+              check
+            </span>
+          )}
+        </div>
+      )}
+      {/* Header */}
+      <div className="flex justify-between items-start">
+        <div>
+          <h3 className="font-title-sm">{shortcut.name}</h3>
+          <p className="text-body-md text-current/70 mt-1">{shortcut.description}</p>
+        </div>
+
+        <div ref={menuWrapperRef} className="flex items-center gap-1 relative">
+          {customColorMode && (
+            <div className={`flex items-center gap-1 bg-background/95 rounded-full px-2 py-1 border border-border transition-all duration-200 absolute right-8 ${menuOpen ? 'opacity-100 visible translate-x-0' : 'opacity-0 invisible translate-x-[10px]'}`}>
+              {(['light', 'medium', 'dark'] as const).map((s) => (
+                <button key={s}
+                  className={`w-4 h-4 rounded-full border border-border hover:scale-110 transition-transform ${s === 'light' ? 'bg-card-light' : s === 'medium' ? 'bg-card-medium' : 'bg-card-dark'}`}
+                  onClick={() => onShadeChange(s)}
+                  title={`${s.charAt(0).toUpperCase() + s.slice(1)} Shade`}
+                />
+              ))}
+            </div>
+          )}
+          <button
+            className={`p-1 rounded-full transition-colors ${menuOpen ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+            onClick={() => setMenuOpen((p) => !p)}
+            disabled={isRunning}
+            title={isRunning ? 'Cannot edit while running' : 'Menu'}
+          >
+            <span className="material-symbols-outlined">more_vert</span>
+          </button>
+
+          {menuOpen && !isRunning && (
+            <div className="absolute right-0 top-10 bg-card border border-border rounded-xl shadow-xl z-30 py-1 min-w-[160px]">
+              <button onClick={() => { setMenuOpen(false); onEditFlow(shortcut); }} className="w-full text-left px-4 py-2.5 text-body-sm text-foreground hover:bg-muted/50 flex items-center gap-2">
+                <span className="material-symbols-outlined text-[18px]">edit</span> Edit Flow
+              </button>
+              <button onClick={() => { setMenuOpen(false); onDuplicate(shortcut); }} className="w-full text-left px-4 py-2.5 text-body-sm text-foreground hover:bg-muted/50 flex items-center gap-2">
+                <span className="material-symbols-outlined text-[18px]">content_copy</span> Duplicate
+              </button>
+              
+              {cloudState === 'edited' && onRestoreFromCloud && (
+                <button
+                  onClick={() => { setMenuOpen(false); onRestoreFromCloud(shortcut.id); }}
+                  className="w-full text-left px-4 py-2.5 text-body-sm text-foreground hover:bg-muted/50 flex items-center gap-2"
+                >
+                  <span className="material-symbols-outlined text-[18px]">history</span> Restore from Cloud
+                </button>
+              )}
+
+              {cloudState && cloudState !== 'unauthenticated' && cloudState !== 'loading' && (
+                <button
+                  onClick={() => { setMenuOpen(false); onSyncNow?.(shortcut.id); }}
+                  disabled={isSyncing || cloudState === 'synced' || cloudState === 'broken'}
+                  className={`w-full text-left px-4 py-2.5 text-body-sm flex items-center justify-between gap-2 transition-colors ${
+                    (isSyncing || cloudState === 'synced' || cloudState === 'broken')
+                      ? 'text-muted-foreground opacity-60 cursor-not-allowed'
+                      : 'text-foreground hover:bg-muted/50'
+                  }`}
+                  title={cloudState === 'broken' ? 'Fix broken paths before syncing' : undefined}
+                >
+                  <span className="flex items-center gap-2">
+                    <span className={`material-symbols-outlined text-[18px] ${isSyncing ? 'animate-spin' : ''}`}>
+                      {isSyncing ? 'progress_activity' : 'cloud_upload'}
+                    </span>
+                    {isSyncing ? 'Syncing...' : 'Sync Now'}
+                  </span>
+                  {cloudState === 'synced' && <span className="text-[10px] text-emerald-500 font-semibold">Up to date</span>}
+                  {cloudState === 'broken' && <span className="text-[10px] text-red-500 font-semibold">Broken path</span>}
+                </button>
+              )}
+              <button onClick={() => { onToggleSecured(shortcut.id); }} className="w-full text-left px-4 py-2.5 text-body-sm text-foreground hover:bg-muted/50 flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[18px]">lock</span> Secured
+                </span>
+                <span className={`material-symbols-outlined text-[18px] ${shortcut.secured ? 'text-primary' : 'text-muted-foreground/40'}`}>
+                  {shortcut.secured ? 'toggle_on' : 'toggle_off'}
+                </span>
+              </button>
+              <button onClick={() => { setMenuOpen(false); onRename(shortcut.id); }} className="w-full text-left px-4 py-2.5 text-body-sm text-foreground hover:bg-muted/50 flex items-center gap-2">
+                <span className="material-symbols-outlined text-[18px]">drive_file_rename_outline</span> Rename
+              </button>
+              <hr className="border-border my-1" />
+              <button onClick={() => { setMenuOpen(false); onDelete(shortcut.id); }} className="w-full text-left px-4 py-2.5 text-body-sm text-red-500 hover:bg-red-500/10 flex items-center gap-2">
+                <span className="material-symbols-outlined text-[18px]">delete</span> Delete
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Action Icons */}
+      <div className="flex items-center gap-2">
+        {shortcut.actions.slice(0, 4).map((act, idx) => (
+          <div key={idx} className="bg-background/70 border border-border/50 rounded-lg p-2.5" title={act.title}>
+            <span className="material-symbols-outlined text-[20px]">{act.icon}</span>
+          </div>
+        ))}
+        {shortcut.actions.length > 4 && (
+          <span className="text-body-sm text-muted-foreground">+{shortcut.actions.length - 4}</span>
+        )}
+      </div>
+
+      {/* Hotkey + Window Layout badge */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="font-code-sm font-medium bg-background/50 border border-border/50 px-3 py-1.5 rounded-md shadow-sm">
+          {shortcut.hotkey || 'No Hotkey'}
+        </span>
+        {hasHotkeyConflict && (
+          <span className="inline-flex items-center gap-1 bg-amber-500/15 text-amber-500 border border-amber-500/30 text-[11px] font-medium px-2 py-0.5 rounded-md" title="Hotkey conflict: Failed to register global shortcut">
+            <span className="material-symbols-outlined text-[13px]">warning</span> Conflict
+          </span>
+        )}
+        {hasBrokenPath && (
+          <span className="inline-flex items-center gap-1 bg-amber-500/15 text-amber-500 border border-amber-500/30 text-[11px] font-medium px-2 py-0.5 rounded-md" title="This shortcut references a file or folder that no longer exists. Open Edit Flow to fix.">
+            <span className="material-symbols-outlined text-[13px]">warning</span> Broken Path
+          </span>
+        )}
+        {shortcut.secured && (
+          <span className="inline-flex items-center gap-1 bg-background/50 text-foreground border border-border/50 text-[11px] font-medium px-2 py-0.5 rounded-md" title="Secured shortcut — confirmation required before running.">
+            <span className="material-symbols-outlined text-[13px]">lock</span> Secured
+          </span>
+        )}
+        {cloudState === 'synced' && (
+          <span className="inline-flex items-center gap-1 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 text-[11px] font-medium px-2 py-0.5 rounded-md" title="Shortcut is synced to the cloud.">
+            <span className="material-symbols-outlined text-[13px]">cloud_done</span> Synced
+          </span>
+        )}
+        {cloudState === 'not-synced' && (
+          <span className="inline-flex items-center gap-1 bg-amber-500/10 text-amber-500 border border-amber-500/20 text-[11px] font-medium px-2 py-0.5 rounded-md" title="Shortcut is not in the cloud yet.">
+            <span className="material-symbols-outlined text-[13px]">cloud_off</span> Not Synced
+          </span>
+        )}
+        {cloudState === 'edited' && (
+          <span className="inline-flex items-center gap-1 bg-amber-500/10 text-amber-500 border border-amber-500/20 text-[11px] font-medium px-2 py-0.5 rounded-md" title="Local changes made since last cloud sync.">
+            <span className="material-symbols-outlined text-[13px]">cloud_sync</span> Edited Locally
+          </span>
+        )}
+        {shortcut.actions.some(a => ['launch_app', 'open_file', 'open_folder'].includes(a.type) && !a.value && a.hint) && (
+          <span className="inline-flex items-center gap-1 bg-red-500/10 text-red-500 border border-red-500/20 text-[11px] font-medium px-2 py-0.5 rounded-md" title="This shortcut contains files from another device. Please update the paths.">
+            <span className="material-symbols-outlined text-[13px]">build</span> Needs Setup
+          </span>
+        )}
+        {(() => {
+          const wl = shortcut.windowLayout;
+          if (!wl?.enabled || !wl.layoutId) return null;
+          const layoutDef = LAYOUTS.find((l) => l.id === wl.layoutId);
+          if (!layoutDef) return null;
+          const assignedCount = Object.keys(wl.assignments).length;
+          return (
+            <span
+              className="inline-flex items-center gap-1 bg-background/50 text-foreground border border-border/50 text-[11px] font-medium px-2 py-0.5 rounded-md"
+              title={`Arranges apps into ${layoutDef.label} — ${assignedCount} of ${layoutDef.zoneCount} zone${layoutDef.zoneCount !== 1 ? 's' : ''} assigned`}
+            >
+              <span className="material-symbols-outlined text-[13px]">grid_view</span>
+              {layoutDef.label}
+            </span>
+          );
+        })()}
+      </div>
+
+      {/* Execution Log */}
+      {showLog && (
+        <div className="w-full bg-card-dark text-card-dark-fg font-code-sm p-4 rounded-lg flex flex-col gap-1.5 shadow-inner transition-all duration-300 mt-auto">
+          {stepLabels.map((step, idx) => {
+            let cls = 'opacity-40';
+            if (execState.status === 'running') {
+              if (idx === execState.currentStepIndex) cls = 'opacity-100 font-bold';
+              else if (idx < execState.currentStepIndex) cls = 'opacity-60';
+            } else if (execState.status === 'success' || execState.status === 'error' || execState.status === 'cancelled') {
+              cls = 'opacity-60';
+            }
+            return <span key={idx} className={`transition-all duration-300 ${cls}`}>{step}</span>;
+          })}
+          {execState.status === 'success' && (
+            <>
+              <div className="mt-2 pt-2 border-t border-white/10 flex items-center justify-between text-green-400 font-semibold">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                  <span className="text-[12px] uppercase tracking-wider">Sequence Complete</span>
+                </div>
+                {execState.durationMs !== undefined && (
+                  <span className="text-[12px] font-normal opacity-80">
+                    {(execState.durationMs / 1000).toFixed(1)}s
+                  </span>
+                )}
+              </div>
+              {execState.layoutResults && execState.layoutResults.length > 0 && (() => {
+                const placed = execState.layoutResults.filter((r) => r.status === 'placed').length;
+                const total = execState.layoutResults.length;
+                const allPlaced = placed === total;
+                return (
+                  <div className={`mt-1 text-[11px] font-normal ${allPlaced ? 'text-green-400/80' : 'text-amber-400/90'}`}>
+                    {allPlaced
+                      ? `Window layout: ${placed} of ${total} apps placed`
+                      : `Window layout: ${placed} of ${total} placed — some apps couldn't be arranged`}
+                  </div>
+                );
+              })()}
+            </>
+          )}
+          {execState.status === 'error' && (
+            <div className="mt-2 pt-2 border-t border-white/10 flex flex-col gap-1 text-red-400 font-semibold">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[16px]">error</span>
+                  <span className="text-[12px] uppercase tracking-wider">
+                    {(execState.errors || []).length} of {shortcut.actions.length} step{(shortcut.actions.length !== 1) ? 's' : ''} failed
+                  </span>
+                </div>
+                {execState.durationMs !== undefined && (
+                  <span className="text-[12px] font-normal opacity-80">
+                    {(execState.durationMs / 1000).toFixed(1)}s
+                  </span>
+                )}
+              </div>
+              {(execState.errors || []).map((err, i) => (
+                <span key={i} className="text-[11px] font-normal opacity-80 normal-case">{err}</span>
+              ))}
+            </div>
+          )}
+          {execState.status === 'cancelled' && (
+            <div className="mt-2 pt-2 border-t border-white/10 flex items-center justify-between text-amber-400 font-semibold">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-[16px]">cancel</span>
+                <span className="text-[12px] uppercase tracking-wider">
+                  Cancelled after: {execState.cancelledAfter || 'unknown step'}
+                </span>
+              </div>
+              {execState.durationMs !== undefined && (
+                <span className="text-[12px] font-normal opacity-80">
+                  {(execState.durationMs / 1000).toFixed(1)}s
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+           {/* Action Button — Run / Cancel / Cancelling */}
+      {isRunning ? (
+        isCancelling ? (
+          <button
+            disabled
+            className="w-full mt-auto bg-amber-500 text-white py-3 rounded-lg font-title-sm text-body-md cursor-wait flex items-center justify-center gap-2 shadow-md opacity-90"
+          >
+            <span className="material-symbols-outlined text-[20px] animate-spin">progress_activity</span>
+            Cancelling...
+          </button>
+        ) : (
+          <button
+            onClick={() => onCancel(shortcut.id)}
+            className="w-full mt-auto bg-red-500 text-white py-3 rounded-lg font-title-sm text-body-md hover:bg-red-600 transition-colors flex items-center justify-center gap-2 shadow-md"
+          >
+            <span className="material-symbols-outlined text-[20px]">stop_circle</span>
+            Cancel Execution
+          </button>
+        )
+      ) : (
+        <button
+          onClick={() => {
+            if (hasBrokenPath) {
+              // Clicking the broken-path button takes the user straight
+              // into the Builder to fix it, instead of being a dead end.
+              // The brokenActionId hints Builder to auto-scroll + flash
+              // the first broken action.
+              onEditFlow(shortcut, brokenActionId);
+              return;
+            }
+            onRun(shortcut.id);
+          }}
+          title={hasBrokenPath ? 'Open Edit Flow to fix broken paths' : undefined}
+          className={`w-full mt-auto py-3 rounded-lg font-title-sm text-body-md transition-opacity flex items-center justify-center gap-2 ${
+            hasBrokenPath
+              ? 'bg-amber-500/90 text-white hover:bg-amber-500'
+              : 'bg-primary text-primary-foreground opacity-90 group-hover:opacity-100'
+          }`}
+        >
+          {hasBrokenPath ? (
+            <>
+              <span className="material-symbols-outlined text-[18px]">build</span>
+              Fix Paths
+            </>
+          ) : execState.status === 'success' || execState.status === 'cancelled' ? (
+            'Run Again'
+          ) : (
+            'Run Shortcut'
+          )}
+        </button>
+      )}
+    </motion.div>
+  );
+};
