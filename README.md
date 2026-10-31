@@ -8,5 +8,5 @@ It launches applications, opens browser tabs, and prepares predefined study/work
 
 - Open multiple applications
 - Open browser tabs automatically
-- Workspace automation
+
 - Workflow launcher

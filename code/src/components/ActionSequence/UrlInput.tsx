@@ -1,4 +1,4 @@
-mport React from 'react';
+import React from 'react';
 import { ActionItem } from '../../types/actions';
 
 interface UrlInputProps {

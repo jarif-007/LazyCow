@@ -1,4 +1,4 @@
-mport React, { useState } from 'react';
+import React, { useState } from 'react';
 import { CatalogItem, actionCatalog, categoryOrder } from '../types/actions';
 import { CollapsedSearchPopover } from './CollapsedSearchPopover';
 

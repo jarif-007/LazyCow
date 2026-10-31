@@ -1,0 +1,31 @@
+# Operating System
+.DS_Store
+Thumbs.db
+
+# Node dependencies
+node_modules/
+
+# Production and build outputs
+dist/
+dist-electron/
+release/
+*.tsbuildinfo
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+# AI tooling artifacts (do not commit)
+graphify-out/
+GRAPH_REPORT.md
+CLAUDE.md
+.claude/
+
+# Graphify cache
+.graphify*
+.claude/
+graphify-out/
+GRAPH_REPORT.md
+CLAUDE.md
